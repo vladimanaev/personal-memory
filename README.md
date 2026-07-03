@@ -65,6 +65,17 @@ Plan with memory:
 "Pull the relevant history before we decide whether to revisit project alpha."
 ```
 
+Pull from connected sources:
+
+```text
+"Pull recent memories from Gmail and Slack."
+"Use the connector settings to ingest memory-worthy updates from the last week."
+"Every 4 hours, pull Gmail and Slack and log anything memory-worthy."
+```
+
+Connector pulls use the skill system and connector prompts to fetch, filter,
+deduplicate, and update memories over time.
+
 Agents should retrieve through the local memory CLI, write through `memory add`,
 and cite the memory files they used. The full agent contract is in
 [AGENTS.md](AGENTS.md).
