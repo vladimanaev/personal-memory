@@ -30,46 +30,44 @@ npm start
 
 ## Use It
 
-Capture a memory:
+Open Claude Code or Codex with this repository as the working directory, then
+ask naturally. The agent reads the repo instructions, uses the memory skills,
+and calls the local CLI behind the scenes.
 
 ```bash
-npm run memory -- add \
-  --title "Project kickoff" \
-  --type meeting \
-  --people jane-doe \
-  --teams platform-team \
-  --tags roadmap \
-  --date 2026-07-03 \
-  --body "Discussed goals, open questions, decisions, and follow-ups."
+cd personal-memory
+claude
 ```
 
-Recall context:
+Or open this folder as the workspace in Codex.
 
-```bash
-npm run memory -- query \
-  "what did we decide about project alpha?" \
-  "project alpha decision" \
-  --deep
-```
-
-Browse by metadata:
-
-```bash
-npm run memory -- list --type decision --since 2026-01-01
-npm run memory -- person jane-doe
-npm run memory -- digest --person jane-doe
-```
-
-Use it with an agent:
+Capture:
 
 ```text
-"Log this 1:1..."
-"What do I know about Jane's promotion readiness?"
-"Find the decision we made about project alpha."
+"Log this 1:1 with Jane: promotion readiness, scope gaps, and a follow-up for next Friday."
+"Remember that the platform team decided to defer project alpha until Q4."
+"Capture this incident summary and tag it with reliability."
 ```
 
-Agents should use the CLI for capture and recall, then cite the memory files
-they used. The full agent contract is in [AGENTS.md](AGENTS.md).
+Recall:
+
+```text
+"What do I know about Jane's promotion readiness?"
+"Find the decision we made about project alpha."
+"Help me prep for my next 1:1 with Jane using memory."
+```
+
+Plan with memory:
+
+```text
+"Use memory to summarize open hiring threads from this quarter."
+"What context should I remember before the roadmap review?"
+"Pull the relevant history before we decide whether to revisit project alpha."
+```
+
+Agents should retrieve through the local memory CLI, write through `memory add`,
+and cite the memory files they used. The full agent contract is in
+[AGENTS.md](AGENTS.md).
 
 ## Why This Exists
 
@@ -85,10 +83,14 @@ Key properties:
 - **Hybrid retrieval**: semantic search, BM25 lexical search, and rank fusion.
 - **Structured filters**: query by person, team, tag, date, and memory type.
 - **Deduped capture**: source IDs and near-duplicate checks avoid noisy repeats.
-- **Agent-aware**: skills and guardrails tell agents when to capture or recall.
+- **Agent-native**: skills and guardrails tell agents when to capture or recall.
 - **Local UI**: browse, search, inspect the graph, and edit connector config.
 
-## Commands
+## CLI Reference
+
+Most users should interact with Personal Memory through an agent. The CLI is the
+local engine that agents call, and it is useful when debugging, scripting, or
+checking connector/index health.
 
 ```text
 memory add --title "..." --type <type> [--people a,b] [--teams x,y]
@@ -111,7 +113,7 @@ memory connectors
 memory ui [--port n] [--no-open]
 ```
 
-In this repository, run those commands as `npm run memory -- <command>`.
+For debugging, run those commands as `npm run memory -- <command>`.
 
 Supported memory types:
 
