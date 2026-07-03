@@ -47,6 +47,50 @@ import { renderGraphView } from "./graph.js";
  * @property {string} [body]
  * @property {string} raw
  * @property {string} [error]
+ *
+ * @typedef {Object} SlugSuggestion
+ * @property {"person"|"team"|"tag"} kind
+ * @property {string} from
+ * @property {string} to
+ * @property {number} confidence
+ * @property {number} affectedEntries
+ * @property {number} fromCount
+ * @property {number} toCount
+ * @property {number} sharedEntries
+ * @property {string|null} lastSeen
+ * @property {string[]} reasons
+ *
+ * @typedef {Object} GraphAudit
+ * @property {string} generatedAt
+ * @property {Record<string, number>} counts
+ * @property {Record<string, number>} suggestionCounts
+ * @property {SlugSuggestion[]} suggestions
+ *
+ * @typedef {Object} MaintenanceState
+ * @property {"never"|"running"|"success"|"error"} status
+ * @property {string} [lastStarted]
+ * @property {string} [lastFinished]
+ * @property {string} [error]
+ * @property {number} [cleanupOlderThanDays]
+ * @property {number} [durationMs]
+ * @property {{ tableExists: boolean, cleanupOlderThan: string, stats: { compaction: Record<string, number>, prune: Record<string, number> } | null }} [optimize]
+ * @property {Record<string, number>} [suggestionCounts]
+ * @property {string} [auditGeneratedAt]
+ *
+ * @typedef {Object} MaintenanceSnapshot
+ * @property {MaintenanceState} state
+ * @property {GraphAudit|null} audit
+ * @property {boolean} running
+ * @property {string|null} nextRunAt
+ * @property {number} intervalMs
+ *
+ * @typedef {Object} SlugMergeResult
+ * @property {boolean} dryRun
+ * @property {"person"|"team"|"tag"} kind
+ * @property {string} from
+ * @property {string} to
+ * @property {number} affectedEntries
+ * @property {{ id: string, date: string, title: string, path: string }[]} entries
  */
 
 const TYPE_ORDER = [
@@ -77,6 +121,16 @@ const state = {
   facets: { type: "", person: "", team: "", tag: "", since: "", until: "" },
   /** @type {Connector[]|null} lazy-loaded on first visit; null = not fetched */
   connectors: null,
+  /** @type {MaintenanceSnapshot|null} lazy-loaded on first visit */
+  maintenance: null,
+  maintenanceLoading: false,
+  maintenanceError: "",
+  /** @type {Record<string, SlugMergeResult>} */
+  mergePreviews: {},
+  /** @type {Record<string, string>} */
+  mergeErrors: {},
+  confirmingMerge: "",
+  mergeBusy: "",
 };
 
 // ---------- helpers ----------
@@ -235,12 +289,13 @@ function splitFrontmatter(text) {
 
 // ---------- routing ----------
 
-/** @returns {{ view: "record" } | { view: "entry", id: string } | { view: "graph" } | { view: "connectors" } | { view: "connector", name: string }} */
+/** @returns {{ view: "record" } | { view: "entry", id: string } | { view: "graph" } | { view: "connectors" } | { view: "connector", name: string } | { view: "maintenance" }} */
 function route() {
   const h = location.hash;
   if (h.startsWith("#/entry/")) return { view: "entry", id: decodeURIComponent(h.slice(8)) };
   if (h.startsWith("#/entries")) return { view: "record" }; // legacy alias — old links keep working
   if (h.startsWith("#/graph")) return { view: "graph" };
+  if (h.startsWith("#/maintenance")) return { view: "maintenance" };
   if (h.startsWith("#/connector/")) return { view: "connector", name: decodeURIComponent(h.slice(12)) };
   if (h.startsWith("#/connectors")) return { view: "connectors" };
   return { view: "record" };
@@ -267,6 +322,7 @@ function renderHeader() {
     <nav>
       <a href="#/" ${r.view === "record" || r.view === "entry" ? 'aria-current="page"' : ""}>Record</a>
       <a href="#/graph" ${r.view === "graph" ? 'aria-current="page"' : ""}>Graph</a>
+      <a href="#/maintenance" ${r.view === "maintenance" ? 'aria-current="page"' : ""}>Maintenance</a>
       <a href="#/connectors" ${r.view === "connectors" || r.view === "connector" ? 'aria-current="page"' : ""}>Connectors</a>
     </nav>
     <span class="header-spacer"></span>
@@ -934,6 +990,194 @@ function connectorActivity(/** @type {Connector} */ c) {
   return parts.length ? `<span class="cstate">${parts.join("")}</span>` : "";
 }
 
+// ---------- maintenance ----------
+
+/** @param {string|undefined|null} ts */
+function shortDateTime(ts) {
+  return ts ? ts.slice(0, 16).replace("T", " ") : "never";
+}
+
+/** @param {number|undefined} ms */
+function duration(ms) {
+  if (ms === undefined) return "—";
+  if (ms < 1000) return `${ms} ms`;
+  return `${(ms / 1000).toFixed(1)} s`;
+}
+
+/** @param {SlugSuggestion|SlugMergeResult} s */
+function mergeKey(s) {
+  return `${s.kind}:${s.from}:${s.to}`;
+}
+
+async function loadMaintenance() {
+  state.maintenanceLoading = true;
+  state.maintenanceError = "";
+  try {
+    const res = await fetch("/api/maintenance");
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error ?? `failed to load /api/maintenance (${res.status})`);
+    state.maintenance = /** @type {MaintenanceSnapshot} */ (data);
+  } catch (err) {
+    state.maintenanceError = err instanceof Error ? err.message : String(err);
+  }
+  state.maintenanceLoading = false;
+}
+
+async function reloadRecordData() {
+  const res = await fetch("/api/data");
+  if (!res.ok) throw new Error(`failed to load /api/data (${res.status})`);
+  const data = await res.json();
+  state.entries = data.entries;
+  state.index = data.index;
+}
+
+function scheduleMaintenancePoll() {
+  window.setTimeout(async () => {
+    await loadMaintenance();
+    if (route().view === "maintenance") render();
+    if (state.maintenance?.running) scheduleMaintenancePoll();
+  }, 1200);
+}
+
+async function runMaintenanceNow() {
+  state.maintenanceError = "";
+  const res = await fetch("/api/maintenance/run", { method: "POST" });
+  const data = await res.json();
+  if (!res.ok) {
+    state.maintenanceError = data.error ?? `maintenance run failed (${res.status})`;
+  } else {
+    state.maintenance = /** @type {MaintenanceSnapshot} */ (data);
+  }
+  render();
+  if (state.maintenance?.running) scheduleMaintenancePoll();
+}
+
+/** @param {SlugSuggestion} s @param {boolean} dryRun */
+async function postSlugMerge(s, dryRun) {
+  const key = mergeKey(s);
+  state.mergeBusy = key;
+  state.mergeErrors[key] = "";
+  render();
+  try {
+    const res = await fetch("/api/maintenance/slugs/merge", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kind: s.kind, from: s.from, to: s.to, dryRun, confirm: !dryRun }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error ?? `merge failed (${res.status})`);
+    if (dryRun) {
+      state.mergePreviews[key] = /** @type {SlugMergeResult} */ (data);
+    } else {
+      state.confirmingMerge = "";
+      state.mergePreviews = {};
+      await Promise.all([reloadRecordData(), loadMaintenance()]);
+    }
+  } catch (err) {
+    state.mergeErrors[key] = err instanceof Error ? err.message : String(err);
+  }
+  state.mergeBusy = "";
+  if (route().view === "maintenance") render();
+}
+
+/** @param {MaintenanceSnapshot} m */
+function maintenanceStatusHtml(m) {
+  const st = m.state;
+  const opt = st.optimize;
+  const prune = opt?.stats?.prune;
+  const compaction = opt?.stats?.compaction;
+  const suggestions = st.suggestionCounts ?? m.audit?.suggestionCounts ?? {};
+  return `
+    <div class="mstatus">
+      <div class="mline"><span class="mk">status</span><span class="status ${st.status === "success" ? "ok" : st.status === "error" ? "warn" : ""}">${esc(st.status)}</span></div>
+      <div class="mline"><span class="mk">last started</span><span>${esc(shortDateTime(st.lastStarted))}</span></div>
+      <div class="mline"><span class="mk">last finished</span><span>${esc(shortDateTime(st.lastFinished))}</span></div>
+      <div class="mline"><span class="mk">next run</span><span>${esc(shortDateTime(m.nextRunAt))}</span></div>
+      <div class="mline"><span class="mk">duration</span><span>${esc(duration(st.durationMs))}</span></div>
+      <div class="mline"><span class="mk">cleanup window</span><span>${st.cleanupOlderThanDays ?? 7} days</span></div>
+      <div class="mline"><span class="mk">slug suggestions</span><span>${suggestions.person ?? 0} people · ${suggestions.team ?? 0} teams · ${suggestions.tag ?? 0} tags</span></div>
+      <div class="mline"><span class="mk">lancedb</span><span>${opt ? (opt.tableExists ? "optimized" : "no table") : "not run"}</span></div>
+      <div class="mline"><span class="mk">prune</span><span>${prune ? `${prune.oldVersionsRemoved ?? 0} versions · ${prune.bytesRemoved ?? 0} bytes` : "—"}</span></div>
+      <div class="mline"><span class="mk">compaction</span><span>${compaction ? `${compaction.filesRemoved ?? 0} files removed · ${compaction.filesAdded ?? 0} files added` : "—"}</span></div>
+      ${st.error ? `<div class="mline merror"><span class="mk">error</span><span>${esc(st.error)}</span></div>` : ""}
+    </div>`;
+}
+
+/** @param {SlugSuggestion} s */
+function suggestionRow(s) {
+  const key = mergeKey(s);
+  const preview = state.mergePreviews[key];
+  const confirming = state.confirmingMerge === key;
+  const busy = state.mergeBusy === key;
+  const err = state.mergeErrors[key];
+  const previewRows = preview
+    ? `<div class="mpreview">
+        <div class="mk">${preview.affectedEntries} affected entr${preview.affectedEntries === 1 ? "y" : "ies"}</div>
+        ${preview.entries
+          .slice(0, 8)
+          .map(
+            (e) =>
+              `<div class="mentry"><span class="ldate">${esc(e.date)}</span><span>${esc(e.title)}</span><span class="path">${esc(e.path)}</span></div>`,
+          )
+          .join("")}
+        ${preview.entries.length > 8 ? `<div class="mentry more">+${preview.entries.length - 8} more</div>` : ""}
+      </div>`
+    : "";
+  const actions = confirming
+    ? `<span class="mactions"><button class="chip chip-primary" data-mmerge="${esc(key)}" ${busy ? "disabled" : ""}>confirm</button><button class="chip" data-mcancel-confirm>cancel</button></span>`
+    : `<span class="mactions"><button class="chip" data-mpreview="${esc(key)}" ${busy ? "disabled" : ""}>dry-run</button><button class="chip" data-mconfirm="${esc(key)}" ${busy ? "disabled" : ""}>merge</button></span>`;
+  return `
+    <div class="mrow" data-suggestion="${esc(key)}">
+      <span class="mdate">${esc(s.lastSeen ?? "—")}</span>
+      <span class="mmain">
+        <span class="mtop">
+          <span class="badge">${esc(s.kind)}</span>
+          <code>${esc(s.from)}</code>
+          <span class="arrow">→</span>
+          <code>${esc(s.to)}</code>
+          <span class="score">${s.confidence.toFixed(2)}</span>
+          ${actions}
+        </span>
+        <span class="msnippet">${s.affectedEntries} affected · ${s.fromCount} source uses · ${s.toCount} target uses · ${s.sharedEntries} shared · ${esc(s.reasons.join("; "))}</span>
+        ${previewRows}
+        ${err ? `<span class="merr">${esc(err)}</span>` : ""}
+      </span>
+    </div>`;
+}
+
+function renderMaintenance() {
+  const main = $("#main");
+  if (state.maintenance === null && !state.maintenanceLoading && !state.maintenanceError) {
+    main.innerHTML = `<div class="loading">loading…</div>`;
+    loadMaintenance().then(render);
+    return;
+  }
+  if (state.maintenanceError) {
+    main.innerHTML = `<div class="error-banner">${esc(state.maintenanceError)}</div>`;
+    return;
+  }
+  const m = state.maintenance;
+  if (!m) {
+    main.innerHTML = `<div class="loading">loading…</div>`;
+    return;
+  }
+  const suggestions = m.audit?.suggestions ?? [];
+  main.innerHTML = `
+    <div class="maintenance-head">
+      <div class="colophon">scheduled graph maintenance <span class="sep">·</span> audit ${esc(shortDateTime(m.audit?.generatedAt))}</div>
+      <button class="chip" id="mrun" ${m.running ? "disabled" : ""}>${m.running ? "running…" : "run now"}</button>
+    </div>
+    ${maintenanceStatusHtml(m)}
+    <h2>Merge Suggestions</h2>
+    ${
+      suggestions.length
+        ? `<div class="ledger l-top mledger">${suggestions.map(suggestionRow).join("")}</div>`
+        : `<div class="empty">no merge suggestions</div>`
+    }
+  `;
+  $("#mrun").addEventListener("click", runMaintenanceNow);
+}
+
 async function loadConnectorList() {
   const res = await fetch("/api/connectors");
   if (!res.ok) throw new Error(`failed to load /api/connectors (${res.status})`);
@@ -1124,6 +1368,7 @@ function render() {
   document.body.classList.toggle("view-graph", r.view === "graph");
   if (r.view === "record") renderRecord();
   else if (r.view === "graph") renderGraphView($("#main"), state.entries, { typeOrder: TYPE_ORDER, openEntry: openEntryModal });
+  else if (r.view === "maintenance") renderMaintenance();
   else if (r.view === "connectors") renderConnectors();
   else if (r.view === "connector") renderConnector(r.name);
   else renderEntry(r.id);
@@ -1164,6 +1409,34 @@ document.addEventListener("click", (ev) => {
     state.notice = "";
     state.facets = { type: "", person: "", team: "", tag: "", since: "", until: "" };
     refreshSearchPanel();
+    return;
+  }
+  const previewEl = t.closest("[data-mpreview]");
+  if (previewEl instanceof HTMLElement) {
+    ev.preventDefault();
+    const s = state.maintenance?.audit?.suggestions.find((x) => mergeKey(x) === previewEl.dataset.mpreview);
+    if (s) postSlugMerge(s, true);
+    return;
+  }
+  const confirmEl = t.closest("[data-mconfirm]");
+  if (confirmEl instanceof HTMLElement) {
+    ev.preventDefault();
+    state.confirmingMerge = confirmEl.dataset.mconfirm ?? "";
+    render();
+    return;
+  }
+  const mergeEl = t.closest("[data-mmerge]");
+  if (mergeEl instanceof HTMLElement) {
+    ev.preventDefault();
+    const s = state.maintenance?.audit?.suggestions.find((x) => mergeKey(x) === mergeEl.dataset.mmerge);
+    if (s) postSlugMerge(s, false);
+    return;
+  }
+  const cancelConfirmEl = t.closest("[data-mcancel-confirm]");
+  if (cancelConfirmEl) {
+    ev.preventDefault();
+    state.confirmingMerge = "";
+    render();
     return;
   }
   const copyEl = t.closest("[data-copy]");

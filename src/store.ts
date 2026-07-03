@@ -1,6 +1,7 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import * as lancedb from "@lancedb/lancedb";
+import type { OptimizeStats } from "@lancedb/lancedb";
 import { getEmbedder, type Embedder } from "./embed.js";
 import { chunkEntry, hashEntry, loadAllEntries, INDEX_DIR } from "./ingest.js";
 import { packSlugs, type MemoryEntry, type MemoryRecord } from "./schema.js";
@@ -142,6 +143,24 @@ export interface IndexStatus {
   staleEntries: number;
   missingEntries: number;
   chunkRows: number;
+}
+
+export interface OptimizeIndexResult {
+  tableExists: boolean;
+  cleanupOlderThan: string;
+  stats: OptimizeStats | null;
+}
+
+export async function optimizeIndex(cleanupOlderThanDays = 7): Promise<OptimizeIndexResult> {
+  await mkdir(INDEX_DIR, { recursive: true });
+  const db = await lancedb.connect(INDEX_DIR);
+  const table = await openTable(db);
+  const cleanupOlderThan = new Date(Date.now() - cleanupOlderThanDays * 24 * 60 * 60 * 1000);
+  if (!table) {
+    return { tableExists: false, cleanupOlderThan: cleanupOlderThan.toISOString(), stats: null };
+  }
+  const stats = await table.optimize({ cleanupOlderThan });
+  return { tableExists: true, cleanupOlderThan: cleanupOlderThan.toISOString(), stats };
 }
 
 /**

@@ -7,6 +7,8 @@ import { spawn } from "node:child_process";
 import { loadAllEntries, ROOT } from "./ingest.js";
 import { search, indexStatus, type SearchFilters } from "./store.js";
 import { loadConnectors, loadConnectorState, writeConnector, relConnector } from "./connectors.js";
+import { getMaintenanceSnapshot, launchMaintenanceRun, startMaintenanceScheduler } from "./scheduled-maintenance.js";
+import { mergeSlugs, type SlugKind } from "./graph-maintenance.js";
 
 const UI_DIR = fileURLToPath(new URL("./ui/", import.meta.url));
 
@@ -110,6 +112,10 @@ async function apiConnectors(res: ServerResponse): Promise<void> {
   sendJson(res, 200, { connectors });
 }
 
+async function apiMaintenance(res: ServerResponse): Promise<void> {
+  sendJson(res, 200, await getMaintenanceSnapshot());
+}
+
 async function readBody(req: IncomingMessage, maxBytes = 256 * 1024): Promise<string> {
   const chunks: Buffer[] = [];
   let size = 0;
@@ -150,6 +156,64 @@ async function apiPutConnector(
     return;
   }
   sendJson(res, 200, { ok: true, name });
+}
+
+function slugKind(value: unknown): SlugKind | null {
+  return value === "person" || value === "team" || value === "tag" ? value : null;
+}
+
+async function apiRunMaintenance(res: ServerResponse): Promise<void> {
+  const started = await launchMaintenanceRun(log);
+  sendJson(res, started ? 202 : 200, await getMaintenanceSnapshot());
+}
+
+async function apiMergeSlugs(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  let raw: string;
+  try {
+    raw = await readBody(req, 32 * 1024);
+  } catch (err) {
+    sendJson(res, (err as { status?: number }).status ?? 500, {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return;
+  }
+  let body: unknown;
+  try {
+    body = JSON.parse(raw || "{}");
+  } catch {
+    sendJson(res, 400, { error: "invalid JSON body" });
+    return;
+  }
+  if (!body || typeof body !== "object") {
+    sendJson(res, 400, { error: "expected JSON object" });
+    return;
+  }
+  const data = body as Record<string, unknown>;
+  const kind = slugKind(data.kind);
+  const from = typeof data.from === "string" ? data.from : "";
+  const to = typeof data.to === "string" ? data.to : "";
+  const dryRun = data.dryRun !== false;
+  const confirm = data.confirm === true;
+  if (!kind || !from || !to) {
+    sendJson(res, 400, { error: "kind, from, and to are required" });
+    return;
+  }
+  if (!dryRun && !confirm) {
+    sendJson(res, 400, { error: "confirmed merges require confirm: true" });
+    return;
+  }
+  try {
+    const result = await mergeSlugs({
+      kind,
+      from,
+      to,
+      dryRun,
+      createTarget: data.createTarget === true,
+    });
+    sendJson(res, 200, result);
+  } catch (err) {
+    sendJson(res, 400, { error: err instanceof Error ? err.message : String(err) });
+  }
 }
 
 function openBrowser(url: string): void {
@@ -194,6 +258,15 @@ export function startServer(opts: { port: number; open: boolean }): Promise<neve
       } else if (url.pathname === "/api/connectors") {
         if (req.method === "GET") await apiConnectors(res);
         else sendJson(res, 405, { error: "method not allowed" });
+      } else if (url.pathname === "/api/maintenance") {
+        if (req.method === "GET") await apiMaintenance(res);
+        else sendJson(res, 405, { error: "method not allowed" });
+      } else if (url.pathname === "/api/maintenance/run") {
+        if (req.method === "POST") await apiRunMaintenance(res);
+        else sendJson(res, 405, { error: "method not allowed" });
+      } else if (url.pathname === "/api/maintenance/slugs/merge") {
+        if (req.method === "POST") await apiMergeSlugs(req, res);
+        else sendJson(res, 405, { error: "method not allowed" });
       } else if (url.pathname.startsWith("/api/connectors/")) {
         const name = url.pathname.slice("/api/connectors/".length);
         if (!CONNECTOR_NAME.test(name)) sendJson(res, 404, { error: "not found" });
@@ -230,6 +303,7 @@ export function startServer(opts: { port: number; open: boolean }): Promise<neve
         .catch((err) =>
           log("warn", "warmup failed", { error: err instanceof Error ? err.message : String(err) }),
         );
+      startMaintenanceScheduler(log);
       if (opts.open) openBrowser(url);
     });
   });

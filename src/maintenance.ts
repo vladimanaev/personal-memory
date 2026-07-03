@@ -2,6 +2,7 @@ import { loadAllEntries } from "./ingest.js";
 import { indexStatus } from "./store.js";
 import { lexicalStatus } from "./lexical.js";
 import type { MemoryEntry } from "./schema.js";
+import { analyzeGraphHygiene, writeGraphMaintenanceAudit } from "./graph-maintenance.js";
 
 /**
  * Read-only hygiene report: digest debt (scopes with many unsummarized raw
@@ -45,44 +46,6 @@ function digestDebt(entries: MemoryEntry[], threshold: number): Scope[] {
     .sort((a, b) => b.uncovered - a.uncovered);
 }
 
-function editDistance(a: string, b: string): number {
-  const dp = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
-  for (let j = 0; j <= b.length; j++) dp[0]![j] = j;
-  for (let i = 1; i <= a.length; i++) {
-    for (let j = 1; j <= b.length; j++) {
-      dp[i]![j] = Math.min(
-        dp[i - 1]![j]! + 1,
-        dp[i]![j - 1]! + 1,
-        dp[i - 1]![j - 1]! + (a[i - 1] === b[j - 1] ? 0 : 1),
-      );
-    }
-  }
-  return dp[a.length]![b.length]!;
-}
-
-function suspiciousPairs(counts: Map<string, number>): [string, string][] {
-  const slugs = [...counts.keys()].sort();
-  const pairs: [string, string][] = [];
-  for (let i = 0; i < slugs.length; i++) {
-    for (let j = i + 1; j < slugs.length; j++) {
-      const a = slugs[i]!;
-      const b = slugs[j]!;
-      const prefix = b.startsWith(`${a}-`) || a.startsWith(`${b}-`);
-      const close = Math.abs(a.length - b.length) <= 2 && editDistance(a, b) <= 2;
-      const reordered =
-        a.split("-").sort().join("-") === b.split("-").sort().join("-");
-      if (prefix || close || reordered) pairs.push([a, b]);
-    }
-  }
-  return pairs;
-}
-
-function slugCounts(entries: MemoryEntry[], field: "people" | "teams"): Map<string, number> {
-  const m = new Map<string, number>();
-  for (const e of entries) for (const s of e[field]) m.set(s, (m.get(s) ?? 0) + 1);
-  return m;
-}
-
 export async function runMaintenance(threshold: number): Promise<void> {
   const entries = await loadAllEntries();
 
@@ -124,13 +87,20 @@ export async function runMaintenance(threshold: number): Promise<void> {
   }
 
   console.log("\n## Slug hygiene");
-  let flagged = 0;
-  for (const field of ["people", "teams"] as const) {
-    const counts = slugCounts(entries, field);
-    for (const [a, b] of suspiciousPairs(counts)) {
-      console.log(`${field}: '${a}' (${counts.get(a)}) vs '${b}' (${counts.get(b)}) — same ${field.slice(0, -1)}?`);
-      flagged++;
+  const audit = analyzeGraphHygiene(entries);
+  await writeGraphMaintenanceAudit(audit);
+  if (audit.suggestions.length === 0) {
+    console.log("(no suspiciously-similar slugs)");
+  } else {
+    for (const s of audit.suggestions) {
+      console.log(
+        `${s.kind}: '${s.from}' (${s.fromCount}) → '${s.to}' (${s.toCount})` +
+          ` — confidence ${s.confidence.toFixed(2)}, affected ${s.affectedEntries}, last seen ${s.lastSeen ?? "n/a"}`,
+      );
+      console.log(`  reasons: ${s.reasons.join("; ")}`);
+      console.log(
+        `  preview: npx tsx src/cli.ts slugs merge --kind ${s.kind} --from ${s.from} --to ${s.to} --dry-run`,
+      );
     }
   }
-  if (flagged === 0) console.log("(no suspiciously-similar slugs)");
 }

@@ -1,9 +1,7 @@
 #!/usr/bin/env -S npx tsx
-import { parseArgs, promisify } from "node:util";
-import { relative, join } from "node:path";
+import { parseArgs } from "node:util";
+import { relative } from "node:path";
 import { rm } from "node:fs/promises";
-import { existsSync } from "node:fs";
-import { execFile } from "node:child_process";
 import { FrontmatterSchema, type Frontmatter } from "./schema.js";
 import {
   loadAllEntries,
@@ -13,10 +11,11 @@ import {
   findEntryBySourceIds,
   normalizeSourceId,
   ROOT,
-  MEMORY_DIR,
 } from "./ingest.js";
 import { search, findSimilar, syncIndex, applyFilters, type SearchFilters } from "./store.js";
 import type { MemoryEntry } from "./schema.js";
+import { commitMemoryRepo } from "./memory-git.js";
+import { mergeSlugs, type SlugKind } from "./graph-maintenance.js";
 
 const rel = (p: string) => relative(ROOT, p);
 const list = (s?: string) =>
@@ -185,18 +184,6 @@ async function cmdAdd(argv: string[]) {
   console.log(`  indexed (+${stats.added} changed, ${stats.unchanged} unchanged)`);
   const captured = await markCapturedConnectors(capturedConnectors);
   if (captured.length) console.log(`  connector captured: ${captured.join(", ")}`);
-}
-
-const execFileP = promisify(execFile);
-
-/** Stage + commit everything in the nested memory repo; false if absent/clean. */
-async function commitMemoryRepo(message: string): Promise<boolean> {
-  if (!existsSync(join(MEMORY_DIR, ".git"))) return false;
-  await execFileP("git", ["-C", MEMORY_DIR, "add", "-A", "."]);
-  const { stdout } = await execFileP("git", ["-C", MEMORY_DIR, "status", "--porcelain"]);
-  if (!stdout.trim()) return false;
-  await execFileP("git", ["-C", MEMORY_DIR, "commit", "-q", "-m", message]);
-  return true;
 }
 
 async function cmdRemove(argv: string[]) {
@@ -410,6 +397,56 @@ async function cmdMaintenance(argv: string[]) {
   await runMaintenance(threshold);
 }
 
+function requireSlugKind(value: unknown): SlugKind {
+  if (value === "person" || value === "team" || value === "tag") return value;
+  throw new Error("--kind must be one of: person, team, tag");
+}
+
+async function cmdSlugs(argv: string[]) {
+  const sub = argv[0];
+  if (sub !== "merge") {
+    throw new Error("usage: memory slugs merge --kind person|team|tag --from <slug> --to <slug> [--dry-run] [--create-target]");
+  }
+  const { values } = parseArgs({
+    args: argv.slice(1),
+    options: {
+      kind: { type: "string" },
+      from: { type: "string" },
+      to: { type: "string" },
+      "dry-run": { type: "boolean" },
+      "create-target": { type: "boolean" },
+    },
+  });
+  const kind = requireSlugKind(values.kind);
+  const from = values.from as string | undefined;
+  const to = values.to as string | undefined;
+  if (!from || !to) throw new Error("slugs merge requires --from and --to");
+
+  const result = await mergeSlugs({
+    kind,
+    from,
+    to,
+    dryRun: Boolean(values["dry-run"]),
+    createTarget: Boolean(values["create-target"]),
+  });
+
+  const verb = result.dryRun ? "would merge" : "merged";
+  console.log(`✓ ${verb} ${kind} '${from}' → '${to}'`);
+  console.log(`  affected entries: ${result.affectedEntries}`);
+  for (const e of result.entries.slice(0, 20)) {
+    console.log(`  ${e.date}  ${e.id}  (${e.path})`);
+  }
+  if (result.entries.length > 20) console.log(`  … +${result.entries.length - 20} more`);
+  if (!result.dryRun && result.index) {
+    console.log(`  index synced (+${result.index.added} changed, ${result.index.unchanged} unchanged)`);
+    console.log(
+      `  memory repo checkpoints: before=${result.beforeCommit ? "committed" : "clean/absent"} after=${
+        result.afterCommit ? "committed" : "clean/absent"
+      }`,
+    );
+  }
+}
+
 async function cmdConnectorsMarkPulled(argv: string[]) {
   const { values, positionals } = parseArgs({
     args: argv,
@@ -527,6 +564,8 @@ Usage:
   memory person <slug>
   memory digest --person <slug> | --quarter <YYYY-Qn> | --tag <slug>
   memory maintenance [--threshold N]  # read-only report: digest debt, index health, slug hygiene (default 15)
+  memory slugs merge --kind person|team|tag --from <slug> --to <slug> [--dry-run] [--create-target]
+            # explicit slug merge; rewrites frontmatter arrays, syncs index, checkpoints memory/.git
   memory connectors                  # list + validate connectors/<name>.md (fetch config + extraction prompt per source)
   memory connectors mark-pulled <name> [--at ISO_TIMESTAMP]
             # record that a connector sweep completed; captures are recorded by memory add
@@ -546,6 +585,7 @@ async function main() {
     case "person": return cmdPerson(rest);
     case "digest": return cmdDigest(rest);
     case "maintenance": return cmdMaintenance(rest);
+    case "slugs": return cmdSlugs(rest);
     case "connectors": return cmdConnectors(rest);
     case "ui": return cmdUi(rest);
     case undefined:

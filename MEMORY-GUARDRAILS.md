@@ -15,6 +15,10 @@ not with Write/Edit tools, not with shell redirection, not "just this once".
   `--source-ids` (updates in place), or `add --update <id>` for manual notes.
 - **Delete** ONLY through `npx tsx src/cli.ts remove <id>` — it syncs the index
   and checkpoints the nested `memory/.git` repo so the content stays recoverable.
+- **Slug merges** ONLY through
+  `npx tsx src/cli.ts slugs merge --kind person|team|tag --from <slug> --to <slug>`
+  — it rewrites just the affected frontmatter arrays, syncs the index, and
+  checkpoints `memory/.git` before and after.
 - **Recall** goes ONLY through `cli.ts query | person | list` (see CLAUDE.md /
   AGENTS.md rule #1) — never Grep/Glob/Read to discover entries.
 
@@ -35,7 +39,7 @@ four things a manual write skips:
 
 | Path | Agent may write? | How |
 |---|---|---|
-| `memory/entries/**` | ❌ never | `cli.ts add` / `add --update <id>` / `cli.ts remove <id>` only |
+| `memory/entries/**` | ❌ never by hand | `cli.ts add` / `add --update <id>` / `cli.ts remove <id>` / `cli.ts slugs merge` only |
 | `memory/summaries/**` | ✏️ only the `## Synthesis` section of a scaffold `digest` created — then run `cli.ts index` | Edit tool |
 | `memory/connectors/**` | ✅ private connector overrides | Edit tool or web UI |
 | `.index/**` | ❌ never | rebuildable derivative; `cli.ts index` regenerates |
