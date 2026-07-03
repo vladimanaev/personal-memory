@@ -1,98 +1,94 @@
-# Personal Memory
 <p align="center">
   <img src="docs/assets/memory-graph.png" alt="Sanitized Personal Memory graph view" width="900">
+  <br>
+  <em>Sanitized demo graph view.</em>
 </p>
 
-Personal Memory is a local-first RAG memory store for people, projects, decisions,
-meetings, incidents, hiring context, and long-running work history. It gives
-agents such as Codex and Claude Code a grounded way to remember and recall
-context without sending your private memory corpus to a hosted service.
+# Personal Memory
 
-The source of truth is plain Markdown. The search layer is rebuildable. The
-default embeddings run on your machine.
+Personal Memory is a local-first RAG memory store for people, projects,
+decisions, meetings, incidents, hiring context, and long-running work history.
+It gives agents such as Codex and Claude Code a grounded way to remember and
+recall context without sending your private memory corpus to a hosted service.
 
-## Highlights
-
-- **Fully local by default**: Markdown entries, LanceDB index, BM25 lexical
-  search, and embeddings all live on disk.
-- **Agent-friendly workflows**: dedicated capture and recall skills tell agents
-  when to log memories and when to retrieve grounded context.
-- **Hybrid retrieval**: semantic search and lexical search are fused, with
-  filters for people, teams, tags, dates, and entry type.
-- **Deduplicated capture**: source IDs and near-duplicate checks prevent repeated
-  Slack, Gmail, calendar, or manual captures from creating noisy duplicates.
-- **Readable storage**: every memory is a Markdown file with strict frontmatter.
-- **Private personalization**: `memory/` is gitignored from the main repo and can
-  be versioned locally in its own nested git repository.
-- **Local web UI**: browse memories, search, view graph relationships, and edit
-  connector configuration from a local-only interface.
+Markdown is the source of truth. The search index is rebuildable. Embeddings run
+locally by default.
 
 ## Quick Start
 
-Requirements:
-
-- Node.js 20 or newer
-- npm
+Requires Node.js 20 or newer.
 
 ```bash
-nvm use 20
+git clone https://github.com/vladimanaev/personal-memory.git
+cd personal-memory
 npm install
-npx tsx src/cli.ts index
+npm run index
+npm start
 ```
 
-Open the local UI:
+`npm start` opens the local UI at `http://127.0.0.1:4664`.
+
+## Use It
+
+Capture a memory:
 
 ```bash
-npx tsx src/cli.ts ui
-```
-
-By default the UI starts on `http://localhost:4664`.
-
-## Basic Usage
-
-Add a memory:
-
-```bash
-npx tsx src/cli.ts add \
-  --title "1:1 with Jane about growth path" \
-  --type 1on1 \
+npm run memory -- add \
+  --title "Project kickoff" \
+  --type meeting \
   --people jane-doe \
   --teams platform-team \
-  --tags growth,career \
-  --date 2026-05-20 \
-  --body "Discussed scope, strengths, concerns, decisions, and follow-ups."
+  --tags roadmap \
+  --date 2026-07-03 \
+  --body "Discussed goals, open questions, decisions, and follow-ups."
 ```
 
-Search memories:
+Recall context:
 
 ```bash
-npx tsx src/cli.ts query \
-  "is Jane ready for a larger role?" \
-  "Jane promotion readiness" \
-  --person jane-doe \
-  -k 8
+npm run memory -- query \
+  "what did we decide about project alpha?" \
+  "project alpha decision" \
+  --deep
 ```
 
 Browse by metadata:
 
 ```bash
-npx tsx src/cli.ts list --type decision --since 2026-04-01
-npx tsx src/cli.ts person jane-doe
-npx tsx src/cli.ts digest --person jane-doe
+npm run memory -- list --type decision --since 2026-01-01
+npm run memory -- person jane-doe
+npm run memory -- digest --person jane-doe
 ```
 
-Keep the index in sync:
+Use it with an agent:
 
-```bash
-npx tsx src/cli.ts index
-npx tsx src/cli.ts index --force
+```text
+"Log this 1:1..."
+"What do I know about Jane's promotion readiness?"
+"Find the decision we made about project alpha."
 ```
 
-## CLI Reference
+Agents should use the CLI for capture and recall, then cite the memory files
+they used. The full agent contract is in [AGENTS.md](AGENTS.md).
 
-The examples above run the CLI through `npx tsx src/cli.ts`. The reference below
-uses the installed binary name, `memory`; in this repository you can substitute
-`npx tsx src/cli.ts` or `npm run memory --`.
+## Why This Exists
+
+Long-running work creates context that does not fit in chat history: people,
+decisions, feedback, planning threads, hiring notes, operational incidents, and
+follow-ups. Personal Memory keeps that context in a local, queryable record that
+an agent can retrieve before answering.
+
+Key properties:
+
+- **Local-first**: entries, index, and default embeddings stay on disk.
+- **Plain Markdown**: every memory is readable and portable.
+- **Hybrid retrieval**: semantic search, BM25 lexical search, and rank fusion.
+- **Structured filters**: query by person, team, tag, date, and memory type.
+- **Deduped capture**: source IDs and near-duplicate checks avoid noisy repeats.
+- **Agent-aware**: skills and guardrails tell agents when to capture or recall.
+- **Local UI**: browse, search, inspect the graph, and edit connector config.
+
+## Commands
 
 ```text
 memory add --title "..." --type <type> [--people a,b] [--teams x,y]
@@ -115,6 +111,8 @@ memory connectors
 memory ui [--port n] [--no-open]
 ```
 
+In this repository, run those commands as `npm run memory -- <command>`.
+
 Supported memory types:
 
 ```text
@@ -124,7 +122,7 @@ achievement, feedback, meeting, note, summary
 
 ## How It Works
 
-Personal Memory keeps durable content and derived search state separate:
+Personal Memory separates durable content from derived search state:
 
 - `memory/entries/YYYY/MM/<id>.md` stores raw memory entries.
 - `memory/summaries/<id>.md` stores additive summaries created by `digest`.
@@ -153,90 +151,63 @@ The index combines:
 - reciprocal rank fusion
 - metadata prefilters and source-of-truth validation
 
-If the index is deleted, it can be rebuilt from Markdown:
+Rebuild the index at any time:
 
 ```bash
 rm -rf .index
-npx tsx src/cli.ts index --force
+npm run index -- --force
 ```
 
-## Working With Agents
-
-This repository is designed for coding agents that operate over the local folder.
-The important conventions live in:
-
-- `AGENTS.md` - shared rules for capture, recall, citations, and local-only use
-- `skills/log-memory/SKILL.md` - how agents should create or update memories
-- `skills/recall-memory/SKILL.md` - how agents should retrieve grounded context
-- `.claude/commands/remember.md` and `.claude/commands/recall.md` - slash command
-  wrappers for Claude Code
-
-Agents should retrieve through the CLI instead of searching `memory/` directly,
-and should write entries through `memory add` instead of hand-editing files.
-
-## Connectors
-
-Connectors define how external sources should be captured. A connector file has
-two parts:
-
-- frontmatter with mechanical fetch configuration
-- Markdown body with the extraction instructions an agent should apply
-
-Public templates live in `connectors/`. Private overrides live in
-`memory/connectors/` and replace templates of the same name.
-
-Validate connector configuration:
-
-```bash
-npx tsx src/cli.ts connectors
-```
-
-## Privacy Model
+## Privacy
 
 The default setup is intentionally local:
 
 - `memory/` is ignored by the main git repository.
 - `.index/` is ignored and can be regenerated.
+- The UI binds to `127.0.0.1`.
 - Embeddings run locally with `Xenova/bge-small-en-v1.5`.
 - No API backend is used unless you explicitly set `MEMORY_EMBEDDINGS`.
 
 Optional remote embedding backends can be enabled deliberately:
 
 ```bash
-MEMORY_EMBEDDINGS=openai npx tsx src/cli.ts index --force
-MEMORY_EMBEDDINGS=voyage npx tsx src/cli.ts index --force
+MEMORY_EMBEDDINGS=openai npm run index -- --force
+MEMORY_EMBEDDINGS=voyage npm run index -- --force
 ```
 
 Do not publish a populated `memory/` directory or screenshots containing private
 names, events, or relationships unless you have intentionally sanitized them.
 
-## Development
+## Agent Workflows
 
-Install dependencies:
+This repository is designed for coding agents that operate over the local
+folder. The important conventions live in:
+
+- [AGENTS.md](AGENTS.md) - shared rules for capture, recall, citations, and
+  local-only use
+- [MEMORY-GUARDRAILS.md](MEMORY-GUARDRAILS.md) - write safety contract for
+  `memory/`
+- [skills/log-memory/SKILL.md](skills/log-memory/SKILL.md) - creating or
+  updating memories
+- [skills/recall-memory/SKILL.md](skills/recall-memory/SKILL.md) - retrieving
+  grounded context
+- [.claude/commands/remember.md](.claude/commands/remember.md) and
+  [.claude/commands/recall.md](.claude/commands/recall.md) - Claude Code slash
+  commands
+
+Agents should retrieve through the CLI instead of searching `memory/` directly,
+and should write entries through `memory add` instead of hand-editing files.
+
+## Development
 
 ```bash
 npm install
-```
-
-Run the CLI:
-
-```bash
 npm run memory -- help
-```
-
-Type-check the project:
-
-```bash
 npm run typecheck
-```
-
-Generate or refresh the index:
-
-```bash
 npm run index
 ```
 
-## Project Layout
+Project layout:
 
 ```text
 src/                      TypeScript CLI, indexing, schema, server, and UI APIs
@@ -246,21 +217,12 @@ connectors/               Public connector templates
 memory/                   Private memories and connector overrides (gitignored)
 .index/                   Rebuildable local index (gitignored)
 .claude/                  Claude Code commands, hooks, and settings
-MEMORY-GUARDRAILS.md      Safety rules for writes under memory/
-AGENTS.md                 Cross-agent operating instructions
+docs/assets/              Public README assets
 ```
 
-## Contributing
+## Community
 
-Contributions should preserve the local-first design:
-
-- Do not require a hosted database or hosted embedding service for the default
-  path.
-- Do not commit personal memory data, connector overrides, `.index/`, or
-  generated model caches.
-- Keep CLI behavior scriptable and citation-friendly.
-- Run `npm run typecheck` before submitting changes.
-
-## License
-
-Licensed under the [Apache License 2.0](LICENSE).
+- Contributing: [CONTRIBUTING.md](CONTRIBUTING.md)
+- Security reports: [SECURITY.md](SECURITY.md)
+- Code of conduct: [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
+- License: [Apache License 2.0](LICENSE)

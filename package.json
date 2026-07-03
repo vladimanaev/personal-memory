@@ -9,6 +9,7 @@
     "memory": "./src/cli.ts"
   },
   "scripts": {
+    "start": "tsx src/cli.ts ui",
     "memory": "tsx src/cli.ts",
     "index": "tsx src/cli.ts index",
     "typecheck": "tsc --noEmit && tsc -p src/ui"
