@@ -27,6 +27,23 @@
   --cat-tag: #199e70;
   --cat-team: #9085e9;
   --cat-entry: #c98500;
+  /* entry-type categorical — same reference hue families. Paired types share a
+     family; the softer member is a once-declared surface tint that re-derives
+     per theme via color-mix. Sub-3:1 tints rely on the labeled legend/tooltip.
+     todo's orange steps are swapped vs --cat-person so a todo dot never shares
+     a person circle's exact hex within one theme. */
+  --type-meeting: #199e70;
+  --type-decision: #9085e9;
+  --type-1on1: #e87ba4;
+  --type-todo: #eb6834;
+  --type-hiring: #c98500;
+  --type-incident: #e66767;
+  --type-achievement: #008300;
+  --type-note: #8f9a23; /* olive — quiet but not gray; notes dominate the corpus */
+  --type-event: color-mix(in oklab, var(--type-meeting) 80%, var(--surface));
+  --type-pending-decision: color-mix(in oklab, var(--type-decision) 80%, var(--surface));
+  --type-feedback: color-mix(in oklab, var(--type-1on1) 80%, var(--surface));
+  --type-summary: color-mix(in oklab, var(--type-note) 55%, var(--surface));
 }
 
 :root[data-theme="light"] {
@@ -52,6 +69,14 @@
   --cat-tag: #1baf7a;
   --cat-team: #4a3aa7;
   --cat-entry: #eda100;
+  /* type bases only — neutrals and tints re-resolve from the dark block */
+  --type-meeting: #1baf7a;
+  --type-decision: #4a3aa7;
+  --type-1on1: #d55181;
+  --type-todo: #d95926;
+  --type-hiring: #eda100;
+  --type-incident: #e34948;
+  --type-note: #83892a;
 }
 
 * {
@@ -111,7 +136,7 @@ input {
 /* ---------- layout ---------- */
 
 .wrap {
-  max-width: 880px;
+  max-width: 1380px;
   margin: 0 auto;
   padding: 0 24px 96px;
 }
@@ -695,6 +720,17 @@ h2 {
   color: var(--accent-text);
 }
 
+/* colored type dot on a badge — text stays muted, only the dot wears --tc */
+.tdot::before {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--tc, var(--muted));
+  margin-right: 5px;
+}
+
 .ltitle {
   font-weight: 600;
   font-size: 15px;
@@ -1040,11 +1076,6 @@ mark {
 
 /* ---------- graph view (force-directed, single hue: shape/tone = kind) ---------- */
 
-/* the graph route gets a wide shell — the canvas needs the room */
-body.view-graph .wrap {
-  max-width: 1380px;
-}
-
 .graph-layout {
   display: grid;
   grid-template-columns: 220px minmax(0, 1fr);
@@ -1099,14 +1130,20 @@ body.view-graph .wrap {
 }
 
 /* enabled = normal ink; disabled = receded (accent stays reserved for interaction) */
-.gtype[aria-pressed="true"] {
+.gtype[aria-pressed="true"],
+.gtchip[aria-pressed="true"] {
   color: var(--ink-2);
   border-color: var(--border);
 }
 
-.gtype[aria-pressed="false"] {
+.gtype[aria-pressed="false"],
+.gtchip[aria-pressed="false"] {
   color: var(--muted);
   opacity: 0.55;
+}
+
+.gtchip .gglyph {
+  color: var(--tc, var(--muted));
 }
 
 .gsum {
@@ -1239,8 +1276,22 @@ body.view-graph .wrap {
 }
 
 .gn-entry .nshape {
-  fill: var(--cat-entry);
+  fill: var(--tc, var(--cat-entry));
 }
+
+/* per-type color token — consumed by graph dots, legend glyphs, badge dots */
+.gt-event { --tc: var(--type-event); }
+.gt-decision { --tc: var(--type-decision); }
+.gt-todo { --tc: var(--type-todo); }
+.gt-pending-decision { --tc: var(--type-pending-decision); }
+.gt-1on1 { --tc: var(--type-1on1); }
+.gt-hiring { --tc: var(--type-hiring); }
+.gt-incident { --tc: var(--type-incident); }
+.gt-achievement { --tc: var(--type-achievement); }
+.gt-feedback { --tc: var(--type-feedback); }
+.gt-meeting { --tc: var(--type-meeting); }
+.gt-note { --tc: var(--type-note); }
+.gt-summary { --tc: var(--type-summary); }
 
 .glabel {
   fill: var(--ink-2);
@@ -1316,6 +1367,26 @@ body.view-graph .wrap {
   font-size: 11.5px;
   font-variant-numeric: tabular-nums;
   flex: none;
+}
+
+/* ---------- record page (merged overview + entries) ---------- */
+
+.record-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 40px;
+  align-items: start;
+  margin-top: 28px;
+}
+
+.record-rail h2 {
+  margin-top: 32px;
+}
+
+@media (max-width: 980px) {
+  .record-main {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 /* ---------- connectors ---------- */

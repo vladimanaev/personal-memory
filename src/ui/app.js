@@ -49,8 +49,8 @@ import { renderGraphView } from "./graph.js";
  */
 
 const TYPE_ORDER = [
-  "event", "decision", "1on1", "hiring", "incident",
-  "achievement", "feedback", "meeting", "note", "summary",
+  "event", "decision", "todo", "pending-decision", "1on1", "hiring",
+  "incident", "achievement", "feedback", "meeting", "note", "summary",
 ];
 
 const state = {
@@ -234,15 +234,15 @@ function splitFrontmatter(text) {
 
 // ---------- routing ----------
 
-/** @returns {{ view: "overview" } | { view: "entries" } | { view: "entry", id: string } | { view: "graph" } | { view: "connectors" } | { view: "connector", name: string }} */
+/** @returns {{ view: "record" } | { view: "entry", id: string } | { view: "graph" } | { view: "connectors" } | { view: "connector", name: string }} */
 function route() {
   const h = location.hash;
   if (h.startsWith("#/entry/")) return { view: "entry", id: decodeURIComponent(h.slice(8)) };
-  if (h.startsWith("#/entries")) return { view: "entries" };
+  if (h.startsWith("#/entries")) return { view: "record" }; // legacy alias — old links keep working
   if (h.startsWith("#/graph")) return { view: "graph" };
   if (h.startsWith("#/connector/")) return { view: "connector", name: decodeURIComponent(h.slice(12)) };
   if (h.startsWith("#/connectors")) return { view: "connectors" };
-  return { view: "overview" };
+  return { view: "record" };
 }
 
 // ---------- shared render pieces ----------
@@ -264,13 +264,12 @@ function renderHeader() {
   $("#header").innerHTML = `
     <a class="wordmark" href="#/">Personal Memory</a>
     <nav>
-      <a href="#/" ${r.view === "overview" ? 'aria-current="page"' : ""}>Overview</a>
-      <a href="#/entries" ${r.view === "entries" || r.view === "entry" ? 'aria-current="page"' : ""}>Entries</a>
+      <a href="#/" ${r.view === "record" || r.view === "entry" ? 'aria-current="page"' : ""}>Record</a>
       <a href="#/graph" ${r.view === "graph" ? 'aria-current="page"' : ""}>Graph</a>
       <a href="#/connectors" ${r.view === "connectors" || r.view === "connector" ? 'aria-current="page"' : ""}>Connectors</a>
     </nav>
     <span class="header-spacer"></span>
-    ${r.view !== "entries" ? `<input class="hq" id="hq" type="search" placeholder="search the record" aria-label="search the record" />` : ""}
+    ${r.view !== "record" ? `<input class="hq" id="hq" type="search" placeholder="search the record" aria-label="search the record" />` : ""}
     ${status}
     <button class="tbtn" id="tbtn" aria-label="switch theme" title="switch theme">
       <svg class="i-sun" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M4.9 4.9l2.2 2.2M16.9 16.9l2.2 2.2M2 12h3M19 12h3M4.9 19.1l2.2-2.2M16.9 7.1l2.2-2.2"/></svg>
@@ -290,7 +289,7 @@ function renderHeader() {
       state.hits = null;
       state.notice = "";
       state.semanticOnArrive = true;
-      location.hash = "#/entries";
+      location.hash = "#/";
     });
   }
 }
@@ -322,8 +321,8 @@ function rcol(x, y, w, h) {
 }
 
 /** @param {{ t: string, n: number }[]} byType */
-function typeBarChart(byType) {
-  const W = 760;
+/** @param {{ t: string, n: number }[]} byType @param {number} [W] */
+function typeBarChart(byType, W = 760) {
   const labelW = 108;
   const x0 = labelW + 14;
   const plotW = W - x0 - 48;
@@ -360,9 +359,8 @@ function typeBarChart(byType) {
   </svg>`;
 }
 
-/** @param {{ m: string, n: number }[]} months */
-function monthColChart(months) {
-  const W = 760;
+/** @param {{ m: string, n: number }[]} months @param {number} [W] */
+function monthColChart(months, W = 760) {
   const x0 = 30;
   const plotTop = 12;
   const baseY = 128;
@@ -428,7 +426,7 @@ function ledgerRow({ entry: e, score, chunk }, hiQ, opts = {}) {
       <span class="ldate">${esc(e.date)}</span>
       <span class="lmain">
         <span class="ltop">
-          <span class="badge">${esc(e.type)}</span>
+          <span class="badge tdot gt-${esc(e.type)}">${esc(e.type)}</span>
           <span class="ltitle">${hi(e.title, hiQ)}</span>
           ${score !== undefined ? `<span class="score">${score.toFixed(3)}</span>` : ""}
         </span>
@@ -451,14 +449,12 @@ function pathWithCopy(path) {
   return `<span class="path">${esc(path)}</span><button class="copy" data-copy="${esc(path)}" aria-label="copy path ${esc(path)}">copy</button>`;
 }
 
-// ---------- overview ----------
+// ---------- record: aggregates rail (the old overview, sans recent feed) ----------
 
-function renderOverview() {
+const RAIL_CHART_W = 340;
+
+function railHtml() {
   const es = state.entries;
-  if (es.length === 0) {
-    $("#main").innerHTML = `<div class="empty">the record is empty — log a first memory with <code>memory add</code> or <code>/remember</code>, then run <code>memory index</code></div>`;
-    return;
-  }
   const people = countBy(es, (e) => e.people);
   const teams = countBy(es, (e) => e.teams);
   const tags = countBy(es, (e) => e.tags);
@@ -514,18 +510,14 @@ function renderOverview() {
     .filter(Boolean)
     .join(`<span class="sep">·</span>`);
 
-  $("#main").innerHTML = `
+  return `
     <div class="colophon">${colophon}</div>
 
-    <h2>Recent</h2>
-    <div class="ledger l-top">${es.slice(0, 6).map((e) => ledgerRow({ entry: e }, "", { compact: true })).join("")}</div>
-    <div class="see-all"><a href="#/entries">all entries →</a></div>
-
     <h2>By type</h2>
-    <div class="card">${typeBarChart(byType)}</div>
+    <div class="card">${typeBarChart(byType, RAIL_CHART_W)}</div>
 
     <h2>Entries over time</h2>
-    <div class="card">${monthColChart(months)}</div>
+    <div class="card">${monthColChart(months, RAIL_CHART_W)}</div>
 
     <h2>People</h2>
     <div class="ptable">
@@ -553,7 +545,28 @@ function renderOverview() {
   `;
 }
 
-// ---------- entries ----------
+// ---------- record: merged page (search + results, aggregates rail) ----------
+
+function renderRecord() {
+  if (state.entries.length === 0) {
+    $("#main").innerHTML = `<div class="empty">the record is empty — log a first memory with <code>memory add</code> or <code>/remember</code>, then run <code>memory index</code></div>`;
+    return;
+  }
+  $("#main").innerHTML = `
+    <div class="record-main">
+      <section id="search-panel"></section>
+      <aside class="record-rail">${railHtml()}</aside>
+    </div>`;
+  renderSearchPanel();
+}
+
+/** re-render just the search panel — the rail's aggregates don't depend on filters */
+function refreshSearchPanel() {
+  if (document.getElementById("search-panel")) renderSearchPanel({ focus: false });
+  else render();
+}
+
+// ---------- record: search panel (the old entries view) ----------
 
 /** @param {Entry[]} entries */
 function applyFacets(entries) {
@@ -683,7 +696,8 @@ async function runSemantic() {
   renderResults();
 }
 
-function renderEntries() {
+/** @param {{ focus?: boolean }} [opts] */
+function renderSearchPanel(opts = {}) {
   const f = state.facets;
   /** @param {string} name @param {string[]} opts @param {string} cur */
   const sel = (name, opts, cur) => `
@@ -699,7 +713,7 @@ function renderEntries() {
     (x) => x.n > 0,
   );
 
-  $("#main").innerHTML = `
+  $("#search-panel").innerHTML = `
     <div class="searchbar">
       <input id="q" type="search" placeholder="filter as you type — Enter for semantic search" value="${esc(state.q)}" autocomplete="off" />
       <button id="deep-toggle" class="deep-toggle" aria-pressed="${state.deep}" title="deep recall — ~40 generously-ranked candidates to sift">deep</button>
@@ -759,7 +773,7 @@ function renderEntries() {
     });
   }
   renderResults();
-  if (route().view === "entries") input.focus({ preventScroll: true });
+  if (opts.focus !== false) input.focus({ preventScroll: true });
   if (state.semanticOnArrive) {
     state.semanticOnArrive = false;
     runSemantic();
@@ -783,12 +797,12 @@ function renderEntry(id) {
     xs.length ? `<div class="chips">${xs.map((x) => chip(fk, x)).join("")}</div>` : `<span class="none">—</span>`;
 
   $("#main").innerHTML = `
-    <a class="back" href="#/entries">← entries</a>
+    <a class="back" href="#/">← record</a>
     <div class="detail">
       <h1>${esc(e.title)}</h1>
       <div class="byline">
         <span>${esc(e.date)}</span>
-        <span class="badge">${esc(e.type)}</span>
+        <span class="badge tdot gt-${esc(e.type)}">${esc(e.type)}</span>
         ${e.updated ? `<span>updated ${esc(e.updated)}</span>` : ""}
         <span>id: <code>${esc(e.id)}</code></span>
       </div>
@@ -1070,9 +1084,8 @@ function render() {
   }
   const r = route();
   document.body.classList.toggle("view-graph", r.view === "graph");
-  if (r.view === "overview") renderOverview();
-  else if (r.view === "entries") renderEntries();
-  else if (r.view === "graph") renderGraphView($("#main"), state.entries);
+  if (r.view === "record") renderRecord();
+  else if (r.view === "graph") renderGraphView($("#main"), state.entries, { typeOrder: TYPE_ORDER });
   else if (r.view === "connectors") renderConnectors();
   else if (r.view === "connector") renderConnector(r.name);
   else renderEntry(r.id);
@@ -1086,7 +1099,7 @@ document.addEventListener("click", (ev) => {
   if (typeEl instanceof HTMLElement) {
     ev.preventDefault();
     state.facets.type = typeEl.dataset.ftype ?? "";
-    render();
+    refreshSearchPanel();
     if (state.mode === "semantic") runSemantic();
     return;
   }
@@ -1100,8 +1113,8 @@ document.addEventListener("click", (ev) => {
     state.q = "";
     state.mode = "instant";
     state.hits = null;
-    if (route().view === "entries") render();
-    else location.hash = "#/entries";
+    if (route().view === "record") refreshSearchPanel();
+    else location.hash = "#/";
     return;
   }
   const clearEl = t.closest("[data-clear-filters]");
@@ -1112,7 +1125,7 @@ document.addEventListener("click", (ev) => {
     state.hits = null;
     state.notice = "";
     state.facets = { type: "", person: "", team: "", tag: "", since: "", until: "" };
-    render();
+    refreshSearchPanel();
     return;
   }
   const copyEl = t.closest("[data-copy]");
@@ -1136,8 +1149,8 @@ document.addEventListener("keydown", (ev) => {
   const t = /** @type {HTMLElement} */ (ev.target);
   if (t instanceof HTMLInputElement || t instanceof HTMLSelectElement || t instanceof HTMLTextAreaElement) return;
   ev.preventDefault();
-  if (route().view === "entries") $("#q").focus();
-  else location.hash = "#/entries"; // renderEntries focuses the input
+  if (route().view === "record") document.getElementById("q")?.focus(); // no #q on an empty record
+  else location.hash = "#/"; // renderSearchPanel focuses the input
 });
 
 const tooltip = document.getElementById("tooltip");

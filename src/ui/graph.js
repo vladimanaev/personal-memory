@@ -16,6 +16,7 @@
  * @property {string} id namespaced: e:<entry-id> p:<person> t:<tag> m:<team>
  * @property {NodeKind} kind
  * @property {string} label
+ * @property {string} etype entry type (entry nodes only; "" for entities)
  * @property {number} deg
  * @property {number} r
  * @property {number} links edge count in the current projection (spring normalizer)
@@ -47,6 +48,9 @@ const KINDS = [
 const gstate = {
   /** @type {Record<NodeKind, boolean>} */
   types: { person: true, tag: true, team: true, entry: false },
+  /** entry-type filter — only an explicit false hides, so new types stay visible */
+  /** @type {Record<string, boolean>} */
+  entryTypes: {},
   q: "",
   /** @type {string|null} */
   selected: null,
@@ -119,7 +123,7 @@ function buildGraph(entries) {
   const ensure = (id, kind, label) => {
     let n = nodes.get(id);
     if (!n) {
-      n = { id, kind, label, deg: 0, r: 4, links: 0, entryIds: [], x: 0, y: 0, vx: 0, vy: 0, fx: null, fy: null };
+      n = { id, kind, label, etype: "", deg: 0, r: 4, links: 0, entryIds: [], x: 0, y: 0, vx: 0, vy: 0, fx: null, fy: null };
       nodes.set(id, n);
     }
     return n;
@@ -127,6 +131,7 @@ function buildGraph(entries) {
 
   for (const e of entries) {
     const en = ensure(`e:${e.id}`, "entry", e.title);
+    en.etype = e.type;
     /** @type {string[]} */
     const members = [];
     /** @param {string[]} slugs @param {"p"|"t"|"m"} ns @param {NodeKind} kind */
@@ -165,10 +170,13 @@ function buildGraph(entries) {
  * entries chip only adds/removes the entry-node layer and its membership edges.
  * @param {{ nodes: Map<string, GNode>, edges: GEdge[], memberships: string[][] }} model
  * @param {Record<NodeKind, boolean>} types
+ * @param {Record<string, boolean>} entryTypes
  * @returns {{ nodes: GNode[], edges: GEdge[], hasCo: boolean }}
  */
-function projectGraph(model, types) {
-  const visible = [...model.nodes.values()].filter((n) => types[n.kind]);
+function projectGraph(model, types, entryTypes) {
+  const visible = [...model.nodes.values()].filter(
+    (n) => types[n.kind] && (n.kind !== "entry" || entryTypes[n.etype] !== false),
+  );
   const ids = new Set(visible.map((n) => n.id));
   /** @type {Map<string, GEdge>} */
   const co = new Map();
@@ -337,7 +345,7 @@ function glyph(kind) {
 function nodeMarkup(n, labeled) {
   const tip =
     n.kind === "entry"
-      ? `${n.label} — entry`
+      ? `${n.label} — ${n.etype}`
       : `${n.label} — ${n.kind} — ${n.deg} entr${n.deg === 1 ? "y" : "ies"}`;
   const shape =
     n.kind === "team"
@@ -347,7 +355,8 @@ function nodeMarkup(n, labeled) {
     labeled && n.kind !== "entry"
       ? `<text class="glabel" y="${n.r + 12}" text-anchor="middle">${esc(trunc(n.label))}</text>`
       : "";
-  return `<g class="gnode gn-${n.kind}" data-node="${esc(n.id)}" tabindex="0" role="button"
+  const typeClass = n.kind === "entry" && n.etype !== "" ? ` gt-${n.etype}` : "";
+  return `<g class="gnode gn-${n.kind}${typeClass}" data-node="${esc(n.id)}" tabindex="0" role="button"
     data-tip="${esc(tip)}" aria-label="${esc(tip)}">${shape}${label}</g>`;
 }
 
@@ -356,8 +365,11 @@ function nodeMarkup(n, labeled) {
 /**
  * @param {HTMLElement} mainEl
  * @param {GraphEntry[]} entries
+ * @param {{ typeOrder?: string[] }} [opts]
+ *   typeOrder: canonical entry-type display order (app.js TYPE_ORDER)
  */
-export function renderGraphView(mainEl, entries) {
+export function renderGraphView(mainEl, entries, opts = {}) {
+  const typeOrder = opts.typeOrder ?? [];
   if (entries.length === 0) {
     mainEl.innerHTML = `<div class="empty">the record is empty — log a first memory with <code>memory add</code> or <code>/remember</code>, then run <code>memory index</code></div>`;
     return;
@@ -370,20 +382,23 @@ export function renderGraphView(mainEl, entries) {
   const kindCounts = { person: 0, tag: 0, team: 0, entry: 0 };
   for (const n of model.nodes.values()) kindCounts[n.kind]++;
 
-  mainEl.innerHTML = `
-    <div class="graph-layout">
-      <aside class="graph-side">
-        <span class="k">nodes</span>
-        <div class="chips gchips">
-          ${KINDS.map(
-            ({ kind, plural }) =>
-              `<button class="chip gtype" data-kind="${kind}" aria-pressed="${gstate.types[kind]}">${glyph(kind)}${plural}<span class="n">${kindCounts[kind]}</span></button>`,
-          ).join("")}
-        </div>
-        <div class="gsum" id="gsum"></div>
-        <input class="gq" id="gq" type="search" placeholder="find a node" aria-label="find a node" value="${esc(gstate.q)}" />
-        <div class="graph-detail" id="graph-detail"></div>
-      </aside>
+  /** non-empty entry types in canonical order, unknown types appended */
+  /** @type {Map<string, number>} */
+  const typeCounts = new Map();
+  for (const e of entries) typeCounts.set(e.type, (typeCounts.get(e.type) ?? 0) + 1);
+  const typeList = [...typeOrder.filter((t) => typeCounts.has(t)), ...[...typeCounts.keys()].filter((t) => !typeOrder.includes(t))];
+
+  const kindChips = KINDS.map(
+    ({ kind, plural }) =>
+      `<button class="chip gtype" data-kind="${kind}" aria-pressed="${gstate.types[kind]}">${glyph(kind)}${plural}<span class="n">${kindCounts[kind]}</span></button>`,
+  ).join("");
+  const typeLegend = `
+        <div class="gtypelegend" id="gtypelegend" role="group" aria-label="filter entry types" hidden>
+          <span class="k">entry types</span>
+          <div class="chips gchips" id="gtypes"></div>
+        </div>`;
+  const findInput = `<input class="gq" id="gq" type="search" placeholder="find a node" aria-label="find a node" value="${esc(gstate.q)}" />`;
+  const canvas = `
       <div class="graph-canvas">
         <svg id="gcanvas" viewBox="0 0 ${W} ${H}" role="group" aria-label="memory graph">
           <g id="gview">
@@ -397,7 +412,19 @@ export function renderGraphView(mainEl, entries) {
           <button class="gzbtn" id="gz-fit" aria-label="reset zoom">fit</button>
         </div>
         <div class="gempty" id="gempty" hidden>nothing to show — enable a node type</div>
-      </div>
+      </div>`;
+
+  mainEl.innerHTML = `
+    <div class="graph-layout">
+      <aside class="graph-side">
+        <span class="k">nodes</span>
+        <div class="chips gchips">${kindChips}</div>
+        ${typeLegend}
+        <div class="gsum" id="gsum"></div>
+        ${findInput}
+        <div class="graph-detail" id="graph-detail"></div>
+      </aside>
+      ${canvas}
     </div>`;
 
   const svg = /** @type {SVGSVGElement} */ (/** @type {unknown} */ (mainEl.querySelector("#gcanvas")));
@@ -407,6 +434,8 @@ export function renderGraphView(mainEl, entries) {
   const sumEl = /** @type {HTMLElement} */ (mainEl.querySelector("#gsum"));
   const emptyEl = /** @type {HTMLElement} */ (mainEl.querySelector("#gempty"));
   const detailEl = /** @type {HTMLElement} */ (mainEl.querySelector("#graph-detail"));
+  const legendEl = /** @type {HTMLElement} */ (mainEl.querySelector("#gtypelegend"));
+  const typesEl = /** @type {HTMLElement} */ (mainEl.querySelector("#gtypes"));
 
   // current projection + element refs (rebuilt on chip toggles)
   /** @type {GNode[]} */
@@ -523,7 +552,7 @@ export function renderGraphView(mainEl, entries) {
       .sort((a, b) => b.date.localeCompare(a.date))
       .map(
         (e) =>
-          `<a class="gentry" href="#/entry/${encodeURIComponent(e.id)}"><span class="gdate">${esc(e.date)}</span>${esc(trunc(e.title, 42))}</a>`,
+          `<a class="gentry" href="#/entry/${encodeURIComponent(e.id)}"><span class="gdate">${esc(e.date)}</span><span class="badge tdot gt-${esc(e.type)}">${esc(e.type)}</span>${esc(trunc(e.title, 34))}</a>`,
       )
       .join("");
     detailEl.innerHTML = `
@@ -533,9 +562,22 @@ export function renderGraphView(mainEl, entries) {
       <div class="gentries">${rows}</div>`;
   }
 
+  /** the type legend filters entry nodes only — hidden while the entry layer is off */
+  function renderTypeLegend() {
+    legendEl.hidden = !gstate.types.entry;
+    typesEl.innerHTML = typeList
+      .map(
+        (t) =>
+          `<button class="chip gtchip gt-${esc(t)}" data-etype="${esc(t)}" aria-pressed="${gstate.entryTypes[t] !== false}">
+            <svg class="gglyph" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="2.8" fill="currentColor"/></svg>${esc(t)}<span class="n">${typeCounts.get(t)}</span>
+          </button>`,
+      )
+      .join("");
+  }
+
   /** rebuild the projection + SVG contents (initial render and chip toggles) */
   function refresh() {
-    const proj = projectGraph(model, gstate.types);
+    const proj = projectGraph(model, gstate.types, gstate.entryTypes);
     nodes = proj.nodes;
     edges = proj.edges;
     hasCo = proj.hasCo;
@@ -615,7 +657,18 @@ export function renderGraphView(mainEl, entries) {
       gstate.types[kind] = !gstate.types[kind];
       chip.setAttribute("aria-pressed", String(gstate.types[kind]));
       refresh();
+      renderTypeLegend();
     });
+  });
+
+  // delegated: the chips container is re-filled by renderTypeLegend
+  typesEl.addEventListener("click", (ev) => {
+    const chip = ev.target instanceof Element ? ev.target.closest(".gtchip") : null;
+    const t = chip?.getAttribute("data-etype");
+    if (!chip || !t) return;
+    gstate.entryTypes[t] = gstate.entryTypes[t] === false;
+    chip.setAttribute("aria-pressed", String(gstate.entryTypes[t]));
+    refresh();
   });
 
   const qInput = /** @type {HTMLInputElement} */ (mainEl.querySelector("#gq"));
@@ -791,4 +844,5 @@ export function renderGraphView(mainEl, entries) {
   });
 
   refresh();
+  renderTypeLegend();
 }
