@@ -48,6 +48,7 @@ models/
 
 # ---- Agent skills (vendored; pinned by skills-lock.json, restore with `npx impeccable install`) ----
 .agents/skills/impeccable/
+.agent-mail/
 # impeccable live-mode session journals — local recovery state, not source
 .impeccable/live/sessions/
 
