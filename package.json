@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "Local RAG personal memory store",
+  "license": "Apache-2.0",
   "type": "module",
   "bin": {
     "memory": "./src/cli.ts"

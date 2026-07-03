@@ -263,5 +263,4 @@ Contributions should preserve the local-first design:
 
 ## License
 
-No license file is currently included. Add a `LICENSE` file before publishing or
-accepting external contributions.
+Licensed under the [Apache License 2.0](LICENSE).
