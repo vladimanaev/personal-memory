@@ -1,8 +1,7 @@
+# Personal Memory
 <p align="center">
   <img src="docs/assets/memory-graph.png" alt="Sanitized Personal Memory graph view" width="900">
 </p>
-
-# Personal Memory
 
 Personal Memory is a local-first RAG memory store for people, projects, decisions,
 meetings, incidents, hiring context, and long-running work history. It gives
