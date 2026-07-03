@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { readFile } from "node:fs/promises";
 import { join, relative } from "node:path";
+import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { loadAllEntries, ROOT } from "./ingest.js";
@@ -17,6 +18,39 @@ const STATIC: Record<string, { file: string; mime: string }> = {
   "/graph.js": { file: "graph.js", mime: "text/javascript; charset=utf-8" },
   "/style.css": { file: "style.css", mime: "text/css; charset=utf-8" },
 };
+
+type LogValue = string | number | boolean | undefined;
+
+const DEFAULT_SLOW_MS = 1000;
+
+function slowRequestMs(): number {
+  const raw = process.env.MEMORY_UI_SLOW_MS;
+  if (!raw?.trim()) return DEFAULT_SLOW_MS;
+  const value = Number(raw);
+  return Number.isFinite(value) && value >= 0 ? value : DEFAULT_SLOW_MS;
+}
+
+function formatLogValue(value: Exclude<LogValue, undefined>): string {
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return /^[A-Za-z0-9._~:/-]+$/.test(value) ? value : JSON.stringify(value);
+}
+
+function log(level: "info" | "warn" | "error", message: string, fields: Record<string, LogValue> = {}): void {
+  const suffix = Object.entries(fields)
+    .filter((entry): entry is [string, Exclude<LogValue, undefined>] => entry[1] !== undefined)
+    .map(([key, value]) => `${key}=${formatLogValue(value)}`)
+    .join(" ");
+  const line = `${new Date().toISOString()} ${level} ${message}${suffix ? ` ${suffix}` : ""}`;
+  if (level === "error") console.error(line);
+  else if (level === "warn") console.warn(line);
+  else console.log(line);
+}
+
+function logError(message: string, err: unknown, fields: Record<string, LogValue> = {}): void {
+  const error = err instanceof Error ? err.message : String(err);
+  log("error", message, { ...fields, error });
+  if (err instanceof Error && err.stack) console.error(err.stack);
+}
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, {
@@ -125,7 +159,27 @@ function openBrowser(url: string): void {
 
 export function startServer(opts: { port: number; open: boolean }): Promise<never> {
   const server = createServer(async (req, res) => {
+    const start = performance.now();
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
+    res.on("finish", () => {
+      const durationMs = Math.round(performance.now() - start);
+      const thresholdMs = slowRequestMs();
+      if (res.statusCode >= 500) {
+        log("error", "request", {
+          method: req.method,
+          path: url.pathname,
+          status: res.statusCode,
+          duration_ms: durationMs,
+        });
+      } else if (res.statusCode >= 400 || durationMs >= thresholdMs) {
+        log("warn", "request", {
+          method: req.method,
+          path: url.pathname,
+          status: res.statusCode,
+          duration_ms: durationMs,
+        });
+      }
+    });
     try {
       const asset = STATIC[url.pathname];
       if (asset) {
@@ -148,12 +202,18 @@ export function startServer(opts: { port: number; open: boolean }): Promise<neve
         sendJson(res, 404, { error: "not found" });
       }
     } catch (err) {
+      logError("request failed", err, { method: req.method, path: url.pathname });
       sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
     }
   });
 
   return new Promise<never>((_, reject) => {
     server.on("error", (err: NodeJS.ErrnoException) => {
+      log("error", "server error", {
+        port: opts.port,
+        code: err.code,
+        error: err.message,
+      });
       if (err.code === "EADDRINUSE") {
         reject(new Error(`port ${opts.port} is already in use — try \`memory ui --port <N>\``));
       } else {
@@ -162,11 +222,13 @@ export function startServer(opts: { port: number; open: boolean }): Promise<neve
     });
     server.listen(opts.port, "127.0.0.1", () => {
       const url = `http://127.0.0.1:${opts.port}`;
-      console.log(`memory ui → ${url}  (Ctrl+C to stop)`);
+      log("info", "server started", { url });
       // Pre-load the embedder so the first real semantic query is instant.
       indexStatus()
         .then((s) => (s.chunkRows > 0 ? search(["warmup"], {}, 1) : undefined))
-        .catch(() => {});
+        .catch((err) =>
+          log("warn", "warmup failed", { error: err instanceof Error ? err.message : String(err) }),
+        );
       if (opts.open) openBrowser(url);
     });
   });
