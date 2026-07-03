@@ -1,0 +1,29 @@
+{
+  "name": "personal-memory",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local RAG personal memory store",
+  "type": "module",
+  "bin": {
+    "memory": "./src/cli.ts"
+  },
+  "scripts": {
+    "memory": "tsx src/cli.ts",
+    "index": "tsx src/cli.ts index",
+    "typecheck": "tsc --noEmit && tsc -p src/ui"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "^3.0.0",
+    "@lancedb/lancedb": "^0.21.0",
+    "gray-matter": "^4.0.3",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}

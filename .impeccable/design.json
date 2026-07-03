@@ -1,0 +1,389 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-07-01T12:00:00.000Z",
+  "title": "Design System: Personal Memory",
+  "extensions": {
+    "colorMeta": {
+      "paper": {
+        "role": "neutral",
+        "displayName": "Paper",
+        "canonical": "#f9f9f7",
+        "darkValue": "#0f0f0e",
+        "tonalRamp": [
+          "#262622",
+          "#3d3d38",
+          "#55554e",
+          "#6e6d64",
+          "#88877c",
+          "#a3a296",
+          "#c1c0b4",
+          "#f9f9f7"
+        ]
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "Surface",
+        "canonical": "#fcfcfb",
+        "darkValue": "#191918",
+        "tonalRamp": [
+          "#262625",
+          "#3d3d3b",
+          "#555552",
+          "#6e6e6a",
+          "#888883",
+          "#a3a39d",
+          "#c1c1ba",
+          "#fcfcfb"
+        ]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Ink",
+        "canonical": "#0b0b0b",
+        "darkValue": "#ececea",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#262626",
+          "#3d3d3d",
+          "#555555",
+          "#6e6e6e",
+          "#888888",
+          "#a3a3a3",
+          "#e8e8e8"
+        ]
+      },
+      "ink-secondary": {
+        "role": "neutral",
+        "displayName": "Ink Secondary",
+        "canonical": "#52514e",
+        "darkValue": "#c3c2b7",
+        "tonalRamp": [
+          "#1b1b1a",
+          "#2e2e2c",
+          "#42413f",
+          "#52514e",
+          "#6c6b67",
+          "#878681",
+          "#a3a29c",
+          "#c0bfb8"
+        ]
+      },
+      "muted": {
+        "role": "neutral",
+        "displayName": "Muted",
+        "canonical": "#6e6d66",
+        "tonalRamp": [
+          "#2d2c2a",
+          "#44433f",
+          "#5c5b55",
+          "#75736c",
+          "#898781",
+          "#a19f98",
+          "#bab8b0",
+          "#d3d1c9"
+        ],
+        "darkValue": "#8f8d85"
+      },
+      "grid": {
+        "role": "neutral",
+        "displayName": "Grid",
+        "canonical": "#e1e0d9",
+        "darkValue": "#2c2c2a",
+        "tonalRamp": [
+          "#2c2c2a",
+          "#454440",
+          "#5e5d57",
+          "#787770",
+          "#93918a",
+          "#aeaca4",
+          "#c9c8bf",
+          "#e1e0d9"
+        ]
+      },
+      "baseline": {
+        "role": "neutral",
+        "displayName": "Baseline",
+        "canonical": "#c3c2b7",
+        "darkValue": "#383835",
+        "tonalRamp": [
+          "#383835",
+          "#4d4c47",
+          "#63625b",
+          "#797871",
+          "#908e86",
+          "#a7a59c",
+          "#bebcb2",
+          "#d5d3c9"
+        ]
+      },
+      "working-blue": {
+        "role": "primary",
+        "displayName": "Working Blue",
+        "canonical": "#2a78d6",
+        "darkValue": "#3987e5",
+        "tonalRamp": [
+          "#0c2846",
+          "#123c69",
+          "#18508e",
+          "#1f64b3",
+          "#2a78d6",
+          "#5593e0",
+          "#84b1ea",
+          "#c0d8f5"
+        ]
+      },
+      "working-blue-soft": {
+        "role": "primary",
+        "displayName": "Working Blue Soft",
+        "canonical": "#cde2fb",
+        "darkValue": "#184f95",
+        "tonalRamp": [
+          "#184f95",
+          "#2a66b0",
+          "#477fc4",
+          "#6a99d5",
+          "#8fb3e4",
+          "#b0cbf0",
+          "#cde2fb",
+          "#e6f0fd"
+        ]
+      },
+      "confirm-green": {
+        "role": "tertiary",
+        "displayName": "Confirm Green",
+        "canonical": "#006300",
+        "tonalRamp": [
+          "#003500",
+          "#004a00",
+          "#006300",
+          "#0ca30c",
+          "#3fb63f",
+          "#72c972",
+          "#a5dca5",
+          "#d2eed2"
+        ]
+      },
+      "caution-amber": {
+        "role": "tertiary",
+        "displayName": "Caution Amber",
+        "canonical": "#8a5a00",
+        "tonalRamp": [
+          "#4a3000",
+          "#6a4500",
+          "#8a5a00",
+          "#b57d00",
+          "#dda106",
+          "#fab219",
+          "#fccb60",
+          "#fde4ac"
+        ]
+      },
+      "working-blue-text": {
+        "role": "primary",
+        "displayName": "Working Blue Text",
+        "canonical": "#1c60b4",
+        "darkValue": "#5f9ceb",
+        "tonalRamp": [
+          "#0a2140",
+          "#0f3260",
+          "#144981",
+          "#1c60b4",
+          "#3f7dc7",
+          "#6b9cd9",
+          "#9abdea",
+          "#c9ddf6"
+        ]
+      },
+      "surface-2": {
+        "role": "neutral",
+        "displayName": "Surface 2 (control layer)",
+        "canonical": "#f0f0ed",
+        "darkValue": "#232322",
+        "tonalRamp": [
+          "#232322",
+          "#3a3a38",
+          "#525250",
+          "#6b6b68",
+          "#858582",
+          "#a0a09c",
+          "#bcbcb7",
+          "#f0f0ed"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display",
+        "purpose": "Entry-detail titles only — the largest type in the system."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Section headings; deliberately body-sized, weight and position do the work."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Entry titles inside list rows."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Entry prose, capped at 62ch."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Type badges and sidebar keys — the only uppercase in the system."
+      },
+      "mono": {
+        "displayName": "Mono",
+        "purpose": "File paths, source ids, inline code, kbd hints. Accent voice only, never the layout voice."
+      }
+    },
+    "shadows": [],
+    "motion": [
+      {
+        "name": "state-feedback",
+        "value": "color .15s ease, background-color .15s ease, border-color .15s ease",
+        "purpose": "Hover/focus feedback on interactive elements. The only transitions in the system."
+      },
+      {
+        "name": "skel-pulse",
+        "value": "1.4s ease-in-out infinite (opacity to .55)",
+        "purpose": "Skeleton rows while semantic search is in flight. Flattened under prefers-reduced-motion."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "detail-stack",
+        "value": "720px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Ledger Row",
+      "kind": "card",
+      "refersTo": "lrow",
+      "description": "The signature list item: a hairline ledger line — fixed date column, badge, title, score.",
+      "html": "<a class=\"ds-lrow\" href=\"#\"><span class=\"ds-ldate\">2026-07-01</span><span class=\"ds-lmain\"><span class=\"ds-ltop\"><span class=\"ds-badge\">1on1</span><span class=\"ds-ltitle\">1:1 with Jane — growth plan</span><span class=\"ds-score\">0.843</span></span><span class=\"ds-lsnippet\">Agreed on the staff-eng track; revisit scope after Q3 planning.</span></span></a>",
+      "css": ".ds-lrow { display: grid; grid-template-columns: 92px minmax(0,1fr); gap: 14px; padding: 13px 4px; border-bottom: 1px solid var(--grid, #e1e0d9); text-decoration: none; color: var(--ink, #0b0b0b); font: 15px/1.55 system-ui, sans-serif; } .ds-lrow:hover { background: var(--surface, #fcfcfb); } .ds-ldate { font-size: 12.5px; color: var(--muted, #6e6d66); font-variant-numeric: tabular-nums; padding-top: 2px; } .ds-ltop { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; } .ds-badge { font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--ink-2, #52514e); border: 1px solid var(--grid, #e1e0d9); border-radius: 6px; padding: 1px 6px; } .ds-ltitle { font-weight: 600; font-size: 15px; } .ds-score { font-size: 12px; color: var(--accent-text, #1c60b4); font-variant-numeric: tabular-nums; margin-left: auto; } .ds-lsnippet { display: block; font-size: 13px; color: var(--ink-2, #52514e); margin-top: 4px; }"
+    },
+    {
+      "name": "Search Input",
+      "kind": "input",
+      "refersTo": "search-input",
+      "description": "The primary control — recall starts here. Focus is a quiet border swap to Working Blue.",
+      "html": "<input class=\"ds-input-search\" type=\"search\" placeholder=\"Search the record…\" />",
+      "css": ".ds-input-search { width: 100%; font: 15px/1.55 system-ui, sans-serif; color: var(--ink, #0b0b0b); background: var(--surface, #fcfcfb); border: 1px solid var(--border, rgba(11,11,11,0.1)); border-radius: 10px; padding: 10px 14px; outline: none; } .ds-input-search:focus, .ds-input-search:focus-visible { border-color: var(--accent, #2a78d6); }"
+    },
+    {
+      "name": "Chip",
+      "kind": "chip",
+      "refersTo": "chip",
+      "description": "Pill for people, teams, and tags; count in muted tabular numerals.",
+      "html": "<button class=\"ds-chip\">jane-doe<span class=\"ds-n\">12</span></button>",
+      "css": ".ds-chip { font: 12.5px/1.55 system-ui, sans-serif; color: var(--ink-2, #52514e); background: var(--surface-2, #f0f0ed); border: 1px solid var(--border, rgba(11,11,11,0.12)); border-radius: 999px; padding: 3px 11px; cursor: pointer; } .ds-chip:hover, .ds-chip:focus-visible { color: var(--ink, #0b0b0b); border-color: var(--baseline, #c3c2b7); } .ds-chip .ds-n { color: var(--muted, #6e6d66); font-variant-numeric: tabular-nums; margin-left: 5px; } .ds-chip[aria-pressed=\"true\"] { color: var(--accent-text, #1c60b4); border-color: var(--accent, #2a78d6); }"
+    },
+    {
+      "name": "Type Badge",
+      "kind": "chip",
+      "refersTo": "badge",
+      "description": "Unboxed entry-type mark — letterspaced uppercase text, no border. The only uppercase in the system.",
+      "html": "<span class=\"ds-type-badge\">decision</span>",
+      "css": ".ds-type-badge { font: 600 10.5px/1.55 system-ui, sans-serif; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted, #6e6d66); }"
+    },
+    {
+      "name": "Nav Link (active)",
+      "kind": "nav",
+      "refersTo": "nav-link",
+      "description": "Header navigation; active page gets a surface fill and inset hairline ring.",
+      "html": "<nav class=\"ds-nav\"><a href=\"#\">overview</a><a href=\"#\" aria-current=\"page\">entries</a><a href=\"#\">people</a></nav>",
+      "css": ".ds-nav { display: flex; gap: 4px; font: 14px/1.55 system-ui, sans-serif; } .ds-nav a { text-decoration: none; color: var(--ink-2, #52514e); padding: 4px 10px; border-radius: 6px; } .ds-nav a:hover, .ds-nav a:focus-visible { color: var(--ink, #0b0b0b); } .ds-nav a[aria-current=\"page\"] { color: var(--ink, #0b0b0b); font-weight: 600; background: var(--surface, #fcfcfb); box-shadow: inset 0 0 0 1px var(--border, rgba(11,11,11,0.1)); }"
+    },
+    {
+      "name": "Status Dot",
+      "kind": "chip",
+      "refersTo": "pill",
+      "description": "Index status: colored dot + muted text — passive status never outshouts content.",
+      "html": "<span class=\"ds-status-ok\">indexed 26/26</span> <span class=\"ds-status-warn\">2 stale — run memory index</span>",
+      "css": ".ds-status-ok, .ds-status-warn { display: inline-flex; align-items: center; gap: 6px; font: 12.5px/1.55 system-ui, sans-serif; color: var(--muted, #6e6d66); font-variant-numeric: tabular-nums; } .ds-status-ok::before, .ds-status-warn::before { content: \"\"; width: 7px; height: 7px; border-radius: 999px; } .ds-status-ok::before { background: var(--good, #0ca30c); } .ds-status-warn::before { background: var(--warn-text, #8a5a00); }"
+    },
+    {
+      "name": "Colophon",
+      "kind": "custom",
+      "refersTo": "colophon",
+      "description": "Overview summary line — the ledger states its totals inline, it does not dashboard them.",
+      "html": "<div class=\"ds-colophon\"><b>26</b> entries<span class=\"ds-sep\">·</span><b>45</b> people<span class=\"ds-sep\">·</span><b>81</b> tags<span class=\"ds-sep\">·</span><b>2026-06-28 → 2026-07-01</b></div>",
+      "css": ".ds-colophon { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 10px; font: 14px/1.55 system-ui, sans-serif; color: var(--ink-2, #52514e); font-variant-numeric: tabular-nums; } .ds-colophon b { font-weight: 650; color: var(--ink, #0b0b0b); } .ds-colophon .ds-sep { color: var(--baseline, #c3c2b7); }"
+    },
+    {
+      "name": "Tooltip",
+      "kind": "custom",
+      "refersTo": "tooltip",
+      "description": "The one 'elevated' element — inverted ink instead of a shadow.",
+      "html": "<div class=\"ds-tooltip\"><span class=\"ds-tval\">23 entries</span><br /><span class=\"ds-tlabel\">2026-06</span></div>",
+      "css": ".ds-tooltip { display: inline-block; background: var(--ink, #0b0b0b); color: var(--page, #f9f9f7); border-radius: 8px; padding: 6px 10px; font: 12.5px/1.4 system-ui, sans-serif; max-width: 260px; } .ds-tooltip .ds-tval { font-weight: 650; } .ds-tooltip .ds-tlabel { opacity: 0.75; font-variant-numeric: tabular-nums; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Quiet Ledger",
+    "overview": "This is a private book of record. One person opens it mid-workday to find what he knows about a colleague, a decision, a month — reads the entry, and closes it. The interface behaves like a well-kept ledger: dated rows in a single prose-width column, tabular numerals for every date and count, hairline rules instead of boxes, and one ink color that isn't black. Chrome recedes; the record carries the page. The system is deliberately unspectacular: typography does the hierarchy work — weight and size, never color blocks or decoration. Surfaces separate from the page by a single tone step and a 1px border; nothing floats, glows, or animates.",
+    "keyCharacteristics": [
+      "Single centered column (max 880px), prose capped at 62ch",
+      "Warm-neutral paper with one accent: Working Blue, ≤10% of any screen",
+      "Flat construction: 1px borders and tone steps, zero shadows",
+      "Entries render as hairline ledger rows — fixed 92px date column, month-grouped; cards are reserved for charts",
+      "Tabular numerals on every date, count, and score",
+      "Dark-first: dark is the designed-primary theme (header toggle, localStorage); light inherits through the same tokens; dark ink is off-white, never pure #fff",
+      "Motion is feedback-only: 150ms color/border transitions and a quiet skeleton pulse; prefers-reduced-motion flattens all of it"
+    ],
+    "rules": [
+      {
+        "name": "The One Ink Rule",
+        "body": "Working Blue is the only accent on any screen and covers ≤10% of it. Navigation state, links, scores, and data marks all share it. A second accent hue is prohibited.",
+        "section": "colors"
+      },
+      {
+        "name": "The Ink-on-Its-Own-Paper Rule",
+        "body": "Semantic states (good/warn) are dark text on a faint tint of the same hue — never white-on-saturated badges.",
+        "section": "colors"
+      },
+      {
+        "name": "The Tabular Numerals Rule",
+        "body": "Every date, count, and score renders with font-variant-numeric: tabular-nums. A ledger's numbers align.",
+        "section": "typography"
+      },
+      {
+        "name": "The Label Heading Rule",
+        "body": "Section headings are Label voice — 12px uppercase, +0.06em tracking, Muted — set apart by case, never by size. Only an entry title may exceed body size.",
+        "section": "typography"
+      },
+      {
+        "name": "The Flat Book Rule",
+        "body": "No box-shadows, no blurs, no glassmorphism. If an element must read as 'above', invert its colors (like the tooltip) — don't lift it.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Square Baseline Rule",
+        "body": "Chart bars are solid Working Blue with rounded caps at the data end only — square at the baseline.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do keep Working Blue at ≤10% of any screen; it must always mean something (link, focus, score, data).",
+      "Do use font-variant-numeric: tabular-nums on every date, count, and score.",
+      "Do separate surfaces with a 1px rgba(ink, 0.1) border and a single tone step — that is the entire elevation vocabulary.",
+      "Do show provenance plainly: mono file paths, source ids, and dates on every entry, in Muted or Ink Secondary.",
+      "Do define every color once per theme as a CSS custom property; dark mode remaps tokens, never restyles components.",
+      "Do hold body text at AA contrast (≥4.5:1) in both themes — long reading sessions are the norm.",
+      "Do give every interactive element a visible :focus-visible ring (2px Working Blue, 2px offset) — keyboard is a first-class input.",
+      "Do use Working Blue Text (never base Working Blue) whenever the accent is read as type."
+    ],
+    "donts": [
+      "Don't ship SaaS dashboard clichés (PRODUCT.md, verbatim): no KPI hero cards, gradient accents, icon-tile grids, stat deltas, or 'analytics product' styling.",
+      "Don't ship dev-tool terminal cosplay (PRODUCT.md, verbatim): no scanlines, all-monospace layouts, or neon-on-black. Monospace is an accent voice only.",
+      "Don't add box-shadows, blurs, or glassmorphism anywhere. The Flat Book Rule has no exceptions.",
+      "Don't introduce a second accent hue, fill the type badges, or color entry titles.",
+      "Don't use border-left stripes as category markers — entry types are marked by the outline badge.",
+      "Don't add entrance animations, staggered reveals, or skeleton shimmer. If motion is ever added, it must explain a state change and respect prefers-reduced-motion."
+    ]
+  }
+}

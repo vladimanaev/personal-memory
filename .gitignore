@@ -1,0 +1,91 @@
+# ---- OS ----
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# ---- Editors / IDEs ----
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+*.sublime-project
+*.sublime-workspace
+.project
+.classpath
+.settings/
+
+# ---- Logs & temp ----
+*.log
+*.tmp
+*.temp
+*.bak
+*.pid
+*.seed
+*.out
+logs/
+tmp/
+temp/
+
+# ---- Environment / secrets ----
+.env
+.env.*
+!.env.example
+*.local
+secrets.*
+*.pem
+*.key
+
+# ---- Personal Memory RAG ----
+.index/
+.cache/transformers/
+models/
+
+# ---- Agent skills (vendored; pinned by skills-lock.json, restore with `npx impeccable install`) ----
+.agents/skills/impeccable/
+# impeccable live-mode session journals — local recovery state, not source
+.impeccable/live/sessions/
+
+# ---- Node / JS ----
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnp.*
+dist/
+build/
+coverage/
+.cache/
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# ---- Java / JVM ----
+target/
+*.class
+*.jar
+*.war
+*.ear
+
+# ---- Misc ----
+.history/
+*.orig
+
+# Personal memory data — never push (versioned in its own nested repo)
+memory/

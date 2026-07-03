@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark light" />
+    <script>
+      // set before first paint to avoid a theme flash; dark is the designed-first default
+      document.documentElement.dataset.theme = localStorage.getItem("memory-theme") || "dark";
+    </script>
+    <title>Personal Memory</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%232a78d6'/%3E%3Ctext x='16' y='23' font-family='system-ui,sans-serif' font-size='19' font-weight='650' fill='%23f9f9f7' text-anchor='middle'%3Em%3C/text%3E%3C/svg%3E"
+    />
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <div class="wrap">
+      <header class="site-header" id="header"></header>
+      <main id="main"><div class="loading">loading…</div></main>
+    </div>
+    <div id="tooltip" hidden></div>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
