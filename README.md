@@ -1,7 +1,5 @@
 <p align="center">
   <img src="docs/assets/memory-graph.png" alt="Sanitized Personal Memory graph view" width="900">
-  <br>
-  <em>Sanitized demo graph view.</em>
 </p>
 
 # Personal Memory
