@@ -43,6 +43,7 @@ import { renderGraphView } from "./graph.js";
  * @property {string} [source_id_scheme]
  * @property {Record<string, unknown>} [fetch]
  * @property {string} [last_pulled]
+ * @property {string} [last_captured]
  * @property {string} [body]
  * @property {string} raw
  * @property {string} [error]
@@ -921,6 +922,18 @@ const originBadge = (/** @type {Connector} */ c) =>
 const connectorPath = (/** @type {Connector} */ c) =>
   c.path ?? `memory/connectors/${c.name}.md`;
 
+/** @param {string} ts */
+const shortTimestamp = (ts) => ts.slice(0, 16).replace("T", " ");
+
+/** Last sweep/capture activity shown on connector list rows. */
+function connectorActivity(/** @type {Connector} */ c) {
+  const parts = [];
+  if (c.last_pulled) parts.push(`<span>pulled ${esc(shortTimestamp(c.last_pulled))}</span>`);
+  else if (c.fetch) parts.push(`<span>never pulled</span>`);
+  if (c.last_captured) parts.push(`<span>captured ${esc(shortTimestamp(c.last_captured))}</span>`);
+  return parts.length ? `<span class="cstate">${parts.join("")}</span>` : "";
+}
+
 async function loadConnectorList() {
   const res = await fetch("/api/connectors");
   if (!res.ok) throw new Error(`failed to load /api/connectors (${res.status})`);
@@ -952,7 +965,7 @@ function renderConnectors() {
               ${c.fetch ? `<span class="badge">pull</span>` : `<span class="badge">push</span>`}
               ${originBadge(c)}
               ${meta}
-              <span class="cpulled">${c.last_pulled ? `pulled ${esc(c.last_pulled.slice(0, 16).replace("T", " "))}` : c.fetch ? "never pulled" : ""}</span>
+              ${connectorActivity(c)}
             </span>
           </span>
         </a>`;
@@ -1032,6 +1045,7 @@ function renderConnector(name) {
         <span id="corigin">${originBadge(c)}</span>
         <span id="cpath"><code>${esc(connectorPath(c))}</code></span>
         ${c.last_pulled ? `<span>last pulled ${esc(c.last_pulled)}</span>` : ""}
+        ${c.last_captured ? `<span>last captured ${esc(c.last_captured)}</span>` : ""}
       </div>
       <div class="connector-editor">
         <div class="editor-modes" role="group" aria-label="editor mode">

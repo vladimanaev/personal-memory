@@ -41,6 +41,40 @@ function filtersFrom(values: Record<string, unknown>): SearchFilters {
   };
 }
 
+const ISO_UTC_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/;
+
+function requireUtcIsoTimestamp(value: string): string {
+  if (!ISO_UTC_TIMESTAMP.test(value) || Number.isNaN(Date.parse(value))) {
+    throw new Error(`expected UTC ISO timestamp, e.g. 2026-07-03T18:00:00Z; got '${value}'`);
+  }
+  return value;
+}
+
+async function resolveCapturedConnectors(sourceIds: string[], explicitNames: string[]): Promise<string[]> {
+  if (sourceIds.length === 0 && explicitNames.length === 0) return [];
+  const { loadConnectors } = await import("./connectors.js");
+  const connectors = await loadConnectors();
+  const known = new Map(connectors.filter((c) => !c.error).map((c) => [c.name, c]));
+  const names = new Set<string>();
+  for (const name of explicitNames) {
+    const connector = known.get(name);
+    if (!connector) throw new Error(`--connector: unknown or invalid connector '${name}'`);
+    if (!connector.fm!.enabled) throw new Error(`--connector: connector '${name}' is disabled`);
+    names.add(name);
+  }
+  for (const id of sourceIds) {
+    const name = id.slice(0, id.indexOf(":"));
+    if (known.has(name)) names.add(name);
+  }
+  return [...names];
+}
+
+async function markCapturedConnectors(names: string[], at?: string): Promise<string[]> {
+  if (names.length === 0) return [];
+  const { markConnectorsCaptured } = await import("./connectors.js");
+  return markConnectorsCaptured(names, at);
+}
+
 // ---------------- commands ----------------
 
 async function cmdAdd(argv: string[]) {
@@ -55,6 +89,7 @@ async function cmdAdd(argv: string[]) {
       tags: { type: "string" },
       sources: { type: "string" },
       "source-ids": { type: "string" },
+      connector: { type: "string" },
       body: { type: "string" },
       id: { type: "string" },
       update: { type: "string" },
@@ -71,6 +106,7 @@ async function cmdAdd(argv: string[]) {
   if (!body) throw new Error("provide --body or pipe the body via stdin");
 
   const sourceIds = list(values["source-ids"] as string).map(normalizeSourceId);
+  const capturedConnectors = await resolveCapturedConnectors(sourceIds, list(values.connector as string));
   const uniq = (xs: string[]) => [...new Set(xs)];
   const entries = await loadAllEntries();
 
@@ -136,6 +172,8 @@ async function cmdAdd(argv: string[]) {
     const candidate: MemoryEntry = { ...fm, body: body.trim(), path: target.path };
     if (hashEntry(candidate) === hashEntry(target)) {
       console.log(`✓ unchanged ${fm.id}`);
+      const captured = await markCapturedConnectors(capturedConnectors);
+      if (captured.length) console.log(`  connector captured: ${captured.join(", ")}`);
       return;
     }
   }
@@ -145,6 +183,8 @@ async function cmdAdd(argv: string[]) {
   console.log(`✓ ${target ? "updated" : "created"} ${fm.id}`);
   console.log(`  ${rel(path)}`);
   console.log(`  indexed (+${stats.added} changed, ${stats.unchanged} unchanged)`);
+  const captured = await markCapturedConnectors(capturedConnectors);
+  if (captured.length) console.log(`  connector captured: ${captured.join(", ")}`);
 }
 
 const execFileP = promisify(execFile);
@@ -370,7 +410,52 @@ async function cmdMaintenance(argv: string[]) {
   await runMaintenance(threshold);
 }
 
-async function cmdConnectors() {
+async function cmdConnectorsMarkPulled(argv: string[]) {
+  const { values, positionals } = parseArgs({
+    args: argv,
+    options: { at: { type: "string" } },
+    allowPositionals: true,
+  });
+  const name = positionals[0];
+  if (!name || positionals.length !== 1) {
+    throw new Error("usage: memory connectors mark-pulled <name> [--at ISO_TIMESTAMP]");
+  }
+  const at = requireUtcIsoTimestamp((values.at as string | undefined) ?? new Date().toISOString());
+  const { loadConnectors, markConnectorPulled } = await import("./connectors.js");
+  const connector = (await loadConnectors()).find((c) => c.name === name);
+  if (!connector) throw new Error(`unknown connector '${name}'`);
+  if (connector.error) throw new Error(`connector '${name}' is invalid: ${connector.error.split("\n")[0]}`);
+  if (!connector.fm!.enabled) throw new Error(`connector '${name}' is disabled`);
+  if (!connector.fm!.fetch) throw new Error(`connector '${name}' is push-only and cannot be marked pulled`);
+  const state = await markConnectorPulled(name, at);
+  console.log(`✓ marked ${name} pulled at ${state.last_pulled}`);
+}
+
+async function cmdConnectorsMarkCaptured(argv: string[]) {
+  const { values, positionals } = parseArgs({
+    args: argv,
+    options: { at: { type: "string" } },
+    allowPositionals: true,
+  });
+  const name = positionals[0];
+  if (!name || positionals.length !== 1) {
+    throw new Error("usage: memory connectors mark-captured <name> [--at ISO_TIMESTAMP]");
+  }
+  const at = requireUtcIsoTimestamp((values.at as string | undefined) ?? new Date().toISOString());
+  const captured = await resolveCapturedConnectors([], [name]);
+  await markCapturedConnectors(captured, at);
+  console.log(`✓ marked ${name} captured at ${at}`);
+}
+
+async function cmdConnectors(argv: string[]) {
+  if (argv[0] === "mark-pulled") return cmdConnectorsMarkPulled(argv.slice(1));
+  if (argv[0] === "mark-captured") return cmdConnectorsMarkCaptured(argv.slice(1));
+  if (argv.length > 0) {
+    throw new Error(
+      "usage: memory connectors [mark-pulled <name> [--at ISO_TIMESTAMP] | mark-captured <name> [--at ISO_TIMESTAMP]]",
+    );
+  }
+
   const { loadConnectors, loadConnectorState, relConnector } = await import("./connectors.js");
   const [connectors, state] = await Promise.all([loadConnectors(), loadConnectorState()]);
   if (connectors.length === 0) {
@@ -387,13 +472,15 @@ async function cmdConnectors() {
     }
     const fm = c.fm!;
     const pulled = state[c.name]?.last_pulled ?? "never pulled";
+    const captured = state[c.name]?.last_captured ?? "never captured";
     const mode = fm.fetch ? "pull" : "push";
     const preview = (c.body ?? "").split("\n").find((l) => l.trim() && !l.startsWith("#")) ?? "";
     console.log(
       `${fm.enabled ? "●" : "○"} ${c.name.padEnd(12)} ${mode}  ${fm.source_id_scheme}` +
         (c.origin === "override" ? "  [private override]" : ""),
     );
-    console.log(`    last pulled: ${pulled}`);
+    console.log(`    last pulled: ${fm.fetch ? pulled : "n/a (push-only)"}`);
+    console.log(`    last captured: ${captured}`);
     if (preview) console.log(`    ${preview.trim().slice(0, 100)}`);
   }
   console.log(
@@ -427,6 +514,7 @@ Usage:
   memory add --title "…" --type 1on1 --people a,b [--date YYYY-MM-DD] [--tags …] --body "…"
             # types: event|decision|todo|pending-decision|1on1|hiring|incident|achievement|feedback|meeting|note|summary
             [--source-ids slack:C123:1700000000.1,gmail:<thread-id>]  # dedup anchor
+            [--connector raw-capture]  # extraction prompt/source used for capture bookkeeping
             [--update <id>]      # refresh a specific entry in place
             [--force-new]        # bypass the near-duplicate guard
             [--dup-threshold N]  # cosine threshold for the guard (default 0.92)
@@ -440,6 +528,10 @@ Usage:
   memory digest --person <slug> | --quarter <YYYY-Qn> | --tag <slug>
   memory maintenance [--threshold N]  # read-only report: digest debt, index health, slug hygiene (default 15)
   memory connectors                  # list + validate connectors/<name>.md (fetch config + extraction prompt per source)
+  memory connectors mark-pulled <name> [--at ISO_TIMESTAMP]
+            # record that a connector sweep completed; captures are recorded by memory add
+  memory connectors mark-captured <name> [--at ISO_TIMESTAMP]
+            # backfill/record connector prompt usage without changing memories
   memory ui [--port N] [--no-open]   # local web UI (default port 4664; edits connector config only, never memories)
 `;
 
@@ -454,7 +546,7 @@ async function main() {
     case "person": return cmdPerson(rest);
     case "digest": return cmdDigest(rest);
     case "maintenance": return cmdMaintenance(rest);
-    case "connectors": return cmdConnectors();
+    case "connectors": return cmdConnectors(rest);
     case "ui": return cmdUi(rest);
     case undefined:
     case "help":

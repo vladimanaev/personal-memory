@@ -50,10 +50,14 @@ duplicates, **anchor each capture to its source** with `--source-ids`:
   `connectors/<name>.md` — read that file before capturing from the source.
   Currently: `connectors/gmail.md` (`gmail:<thread-id>`), `connectors/slack.md`
   (`slack:<channel-id>:<message-ts>`). For pasted text/screenshots follow
-  `connectors/raw-capture.md`.
+  `connectors/raw-capture.md` and pass `--connector raw-capture` to `memory add`
+  so the connector UI records that the raw-capture prompt was used.
 - Sources without a connector file use these fallback conventions:
   Calendar `gcal:<event-id>`, Drive `gdrive:<file-id>`.
 - Pass ids comma-separated: `--source-ids slack:C0123ABCD:1700000000.001200`
+- If pasted/screenshot content clearly came from Slack/email, keep the source id
+  for dedup and also pass the prompt connector, e.g.
+  `--connector raw-capture --source-ids slack:C0123ABCD:1700000000.001200`.
 
 What the CLI then does automatically:
 - **Same source seen again, nothing new** → prints `✓ unchanged`, no duplicate.

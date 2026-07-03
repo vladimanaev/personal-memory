@@ -107,6 +107,7 @@ checking connector/index health.
 memory add --title "..." --type <type> [--people a,b] [--teams x,y]
            [--tags a,b] [--date YYYY-MM-DD] [--body "..."]
            [--source-ids slack:C123:1700000000.1,gmail:<thread-id>]
+           [--connector raw-capture]
            [--update <id>] [--force-new]
 
 memory query "<question>" ["<alternate phrasing>" ...]
@@ -121,6 +122,8 @@ memory digest --person <slug> | --quarter <YYYY-Qn> | --tag <slug>
 memory remove <id>
 memory maintenance [--threshold n]
 memory connectors
+memory connectors mark-pulled <name> [--at ISO_TIMESTAMP]
+memory connectors mark-captured <name> [--at ISO_TIMESTAMP]
 memory ui [--port n] [--no-open]
 ```
 

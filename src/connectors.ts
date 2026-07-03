@@ -20,7 +20,7 @@ import { ROOT, INDEX_DIR, MEMORY_DIR } from "./ingest.js";
 export const CONNECTORS_DIR = join(ROOT, "connectors");
 export const PRIVATE_CONNECTORS_DIR = join(MEMORY_DIR, "connectors");
 
-/** Mutable machine state (last_pulled per connector) — disposable derivative. */
+/** Mutable machine state per connector — disposable derivative. */
 export const CONNECTOR_STATE_PATH = join(INDEX_DIR, "connector-state.json");
 
 export interface ConnectorFile {
@@ -36,7 +36,14 @@ export interface ConnectorFile {
   error?: string;
 }
 
-export type ConnectorState = Record<string, { last_pulled?: string }>;
+export interface ConnectorStateEntry {
+  /** Connector was swept through its configured fetch window. */
+  last_pulled?: string;
+  /** A memory entry was created/refreshed from this connector's source ids. */
+  last_captured?: string;
+}
+
+export type ConnectorState = Record<string, ConnectorStateEntry>;
 
 /**
  * Parse + validate one connector file's text. Throws with a readable message
@@ -128,6 +135,36 @@ export async function loadConnectorState(): Promise<ConnectorState> {
   } catch {
     return {};
   }
+}
+
+/** Atomically write `.index/connector-state.json`, preserving it as derived state. */
+export async function writeConnectorState(state: ConnectorState): Promise<void> {
+  await mkdir(INDEX_DIR, { recursive: true });
+  const tmp = `${CONNECTOR_STATE_PATH}.tmp`;
+  await writeFile(tmp, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+  await rename(tmp, CONNECTOR_STATE_PATH);
+}
+
+export async function markConnectorPulled(
+  name: string,
+  at = new Date().toISOString(),
+): Promise<ConnectorStateEntry> {
+  const state = await loadConnectorState();
+  state[name] = { ...state[name], last_pulled: at };
+  await writeConnectorState(state);
+  return state[name];
+}
+
+export async function markConnectorsCaptured(
+  names: string[],
+  at = new Date().toISOString(),
+): Promise<string[]> {
+  const unique = [...new Set(names)].filter(Boolean);
+  if (unique.length === 0) return [];
+  const state = await loadConnectorState();
+  for (const name of unique) state[name] = { ...state[name], last_captured: at };
+  await writeConnectorState(state);
+  return unique;
 }
 
 export const relConnector = (p: string) => relative(ROOT, p);

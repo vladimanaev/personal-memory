@@ -102,6 +102,7 @@ async function apiConnectors(res: ServerResponse): Promise<void> {
     source_id_scheme: c.fm?.source_id_scheme,
     fetch: c.fm?.fetch,
     last_pulled: state[c.name]?.last_pulled,
+    last_captured: state[c.name]?.last_captured,
     body: c.body,
     raw: c.raw,
     ...(c.error ? { error: c.error } : {}),

@@ -31,3 +31,6 @@ Dedup:
 - If the pasted content clearly comes from a source that HAS a connector
   (a Slack thread, an email), build that connector's source id instead and
   pass `--source-ids`.
+- Always pass `--connector raw-capture` when this prompt was used, even if you
+  also pass a Slack/email source id. That records raw-capture usage separately
+  from the external dedup anchor.

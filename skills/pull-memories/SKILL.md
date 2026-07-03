@@ -49,14 +49,18 @@ so re-pulling the same window updates entries in place (`↻ matches existing` /
    - Follow `skills/log-memory/SKILL.md` for slugs and body quality (reuse
      existing people/team slugs — `memory list` first).
    - `npx tsx src/cli.ts add --title … --type … --people … --source-ids <id> --body …`
+   - `memory add` records `<name>.last_captured` automatically when the source
+     id prefix matches a known connector.
 
-6. **Record the pull**: update `.index/connector-state.json` (create the file
-   if missing) — set `<name>.last_pulled` to the run's start time (ISO 8601),
-   only for connectors that were actually swept:
+6. **Record the pull**: for each connector that was actually swept, set
+   `<name>.last_pulled` to the run's start time (UTC ISO 8601) through the CLI:
 
-   ```json
-   { "gmail": { "last_pulled": "2026-07-03T09:12:00Z" } }
+   ```bash
+   npx tsx src/cli.ts connectors mark-pulled <name> --at <run-start-iso>
    ```
+
+   Do this even when every candidate was skipped as noise. Do not hand-edit
+   `.index/connector-state.json`.
 
 7. **Report** per connector: items scanned / created / updated / unchanged /
    skipped-as-noise, with entry ids for anything created or updated.
