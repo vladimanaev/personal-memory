@@ -1123,6 +1123,76 @@ body.view-graph .site-header {
   gap: 6px;
 }
 
+.gpresets {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 28px;
+  padding: 2px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  flex: none;
+}
+
+.gmode {
+  height: 22px;
+  padding: 0 9px;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.gmode:hover {
+  color: var(--ink);
+}
+
+.gmode[aria-pressed="true"] {
+  color: var(--ink);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+.gtag-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 28px;
+  flex: none;
+}
+
+.gtag-control select {
+  height: 28px;
+  max-width: min(280px, 42vw);
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink-2);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0 28px 0 9px;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%238f8d85' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 9px center;
+}
+
+.gtag-control select:hover {
+  color: var(--ink);
+  border-color: var(--baseline);
+}
+
+.gtag-control select:focus,
+.gtag-control select:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+}
+
 .gtypelegend {
   display: flex;
   align-items: center;
@@ -1286,7 +1356,7 @@ body.view-graph .site-header {
 /* links wear the hue of their entity endpoint so connections read at a glance */
 .gedge {
   stroke: var(--baseline);
-  stroke-opacity: 0.28;
+  stroke-opacity: 0.16;
   vector-effect: non-scaling-stroke; /* hairlines stay hairline at any zoom */
   transition: stroke-opacity 0.15s ease, opacity 0.15s ease;
 }
@@ -1305,11 +1375,11 @@ body.view-graph .site-header {
 
 .gedge.is-hot {
   stroke: var(--accent);
-  stroke-opacity: 0.9;
+  stroke-opacity: 0.92;
 }
 
 .gedge.is-dim {
-  opacity: 0.04;
+  opacity: 0.025;
 }
 
 /* nodes — kind is carried by hue + shape (shape/size double as the CVD channel) */
@@ -1360,7 +1430,10 @@ body.view-graph .site-header {
 }
 
 .gnode.has-label .glabel,
-.gnode.is-hit .glabel {
+.gnode.is-hit .glabel,
+.gnode.is-hot .glabel,
+.gnode:hover .glabel,
+.gnode:focus-visible .glabel {
   display: block;
 }
 
@@ -1368,7 +1441,10 @@ body.view-graph .site-header {
   display: none;
 }
 
-.gnode.is-hit .glabel {
+.gnode.is-hit .glabel,
+.gnode.is-hot .glabel,
+.gnode:hover .glabel,
+.gnode:focus-visible .glabel {
   display: block;
 }
 

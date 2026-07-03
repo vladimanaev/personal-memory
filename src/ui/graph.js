@@ -11,6 +11,7 @@
  *             sources?: string[] }} GraphEntry
  *
  * @typedef {"person"|"tag"|"team"|"entry"} NodeKind
+ * @typedef {"people"|"topics"|"entries"|"custom"} GraphMode
  *
  * @typedef {Object} GNode
  * @property {string} id namespaced: e:<entry-id> p:<person> t:<tag> m:<team>
@@ -45,11 +46,14 @@ const KINDS = [
 
 // view state survives route switches so the graph doesn't rearrange on return
 const gstate = {
+  /** @type {GraphMode} */
+  mode: "people",
   /** @type {Record<NodeKind, boolean>} */
-  types: { person: true, tag: true, team: true, entry: true },
+  types: { person: true, tag: false, team: true, entry: true },
   /** entry-type filter — only an explicit false hides, so new types stay visible */
   /** @type {Record<string, boolean>} */
   entryTypes: {},
+  tagFilter: "",
   q: "",
   /** @type {string|null} */
   selected: null,
@@ -100,6 +104,18 @@ function mulberry32(seed) {
 
 function reducedMotion() {
   return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+/** @param {Exclude<GraphMode, "custom">} mode @returns {Record<NodeKind, boolean>} */
+function presetTypes(mode) {
+  if (mode === "topics") return { person: false, tag: true, team: false, entry: false };
+  if (mode === "entries") return { person: true, tag: false, team: false, entry: true };
+  return { person: true, tag: false, team: true, entry: true };
+}
+
+/** @param {GraphMode} mode */
+function modeLabel(mode) {
+  return mode === "people" ? "people" : mode === "topics" ? "topics" : mode === "entries" ? "entries" : "custom";
 }
 
 // ---------- graph model ----------
@@ -170,11 +186,15 @@ function buildGraph(entries) {
  * @param {{ nodes: Map<string, GNode>, edges: GEdge[], memberships: string[][] }} model
  * @param {Record<NodeKind, boolean>} types
  * @param {Record<string, boolean>} entryTypes
+ * @param {{ minTagDegree?: number, keepTag?: string }} [opts]
  * @returns {{ nodes: GNode[], edges: GEdge[], hasCo: boolean }}
  */
-function projectGraph(model, types, entryTypes) {
+function projectGraph(model, types, entryTypes, opts = {}) {
   const visible = [...model.nodes.values()].filter(
-    (n) => types[n.kind] && (n.kind !== "entry" || entryTypes[n.etype] !== false),
+    (n) =>
+      types[n.kind] &&
+      (n.kind !== "entry" || entryTypes[n.etype] !== false) &&
+      (n.kind !== "tag" || n.deg >= (opts.minTagDegree ?? 1) || n.label === opts.keepTag),
   );
   const ids = new Set(visible.map((n) => n.id));
   /** @type {Map<string, GEdge>} */
@@ -374,23 +394,55 @@ export function renderGraphView(mainEl, entries, opts = {}) {
     return;
   }
 
-  const model = buildGraph(entries);
   const entryByRawId = new Map(entries.map((e) => [e.id, e]));
+
+  /** @param {(e: GraphEntry) => string[]} pick */
+  const countValues = (pick) => {
+    /** @type {Map<string, number>} */
+    const counts = new Map();
+    for (const e of entries) for (const v of pick(e)) counts.set(v, (counts.get(v) ?? 0) + 1);
+    return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  };
+  const tagCounts = countValues((e) => e.tags);
+
+  /** @returns {GraphEntry[]} */
+  const graphEntries = () =>
+    gstate.tagFilter ? entries.filter((e) => e.tags.includes(gstate.tagFilter)) : entries;
+
+  /** @param {GraphEntry[]} scoped */
+  const typeCountsFor = (scoped) => {
+    /** @type {Map<string, number>} */
+    const counts = new Map();
+    for (const e of scoped) counts.set(e.type, (counts.get(e.type) ?? 0) + 1);
+    return counts;
+  };
 
   /** @type {Record<NodeKind, number>} */
   const kindCounts = { person: 0, tag: 0, team: 0, entry: 0 };
-  for (const n of model.nodes.values()) kindCounts[n.kind]++;
+  const initialModel = buildGraph(entries);
+  for (const n of initialModel.nodes.values()) kindCounts[n.kind]++;
 
-  /** non-empty entry types in canonical order, unknown types appended */
-  /** @type {Map<string, number>} */
-  const typeCounts = new Map();
-  for (const e of entries) typeCounts.set(e.type, (typeCounts.get(e.type) ?? 0) + 1);
-  const typeList = [...typeOrder.filter((t) => typeCounts.has(t)), ...[...typeCounts.keys()].filter((t) => !typeOrder.includes(t))];
-
-  const kindChips = KINDS.map(
+  /** @param {Record<NodeKind, number>} counts */
+  const kindChips = (counts) => KINDS.map(
     ({ kind, plural }) =>
-      `<button class="chip gtype" data-kind="${kind}" aria-pressed="${gstate.types[kind]}">${glyph(kind)}${plural}<span class="n">${kindCounts[kind]}</span></button>`,
+      `<button class="chip gtype" data-kind="${kind}" aria-pressed="${gstate.types[kind]}">${glyph(kind)}${plural}<span class="n">${counts[kind]}</span></button>`,
   ).join("");
+  const modeButtons = /** @type {Exclude<GraphMode, "custom">[]} */ (["people", "topics", "entries"])
+    .map((mode) => `<button class="gmode" data-mode="${mode}" aria-pressed="${gstate.mode === mode}">${mode}</button>`)
+    .join("");
+  const tagSelect = `
+        <label class="gtag-control">
+          <span class="k">tag</span>
+          <select id="gtag" aria-label="filter graph by tag">
+            <option value="">all tags</option>
+            ${tagCounts
+              .map(
+                ([tag, n]) =>
+                  `<option value="${esc(tag)}" ${gstate.tagFilter === tag ? "selected" : ""}>${esc(tag)} (${n})</option>`,
+              )
+              .join("")}
+          </select>
+        </label>`;
   const typeLegend = `
         <div class="gtypelegend" id="gtypelegend" role="group" aria-label="filter entry types" hidden>
           <span class="k">entry types</span>
@@ -417,7 +469,9 @@ export function renderGraphView(mainEl, entries, opts = {}) {
     <div class="graph-layout">
       <div class="graph-toolbar">
         <div class="graph-filters">
-          <div class="chips gchips" role="group" aria-label="filter node types">${kindChips}</div>
+          <div class="gpresets" role="group" aria-label="graph view">${modeButtons}</div>
+          ${tagSelect}
+          <div class="chips gchips" role="group" aria-label="filter node types">${kindChips(kindCounts)}</div>
           ${typeLegend}
         </div>
         <div class="gsum" id="gsum"></div>
@@ -572,7 +626,13 @@ export function renderGraphView(mainEl, entries, opts = {}) {
   }
 
   /** the type legend filters entry nodes only — hidden while the entry layer is off */
-  function renderTypeLegend() {
+  /** @param {GraphEntry[]} scoped */
+  function renderTypeLegend(scoped) {
+    const typeCounts = typeCountsFor(scoped);
+    const typeList = [
+      ...typeOrder.filter((t) => typeCounts.has(t)),
+      ...[...typeCounts.keys()].filter((t) => !typeOrder.includes(t)),
+    ];
     legendEl.hidden = !gstate.types.entry;
     typesEl.innerHTML = typeList
       .map(
@@ -584,9 +644,45 @@ export function renderGraphView(mainEl, entries, opts = {}) {
       .join("");
   }
 
+  /** @param {{ nodes: Map<string, GNode> }} model */
+  function syncToolbar(model) {
+    /** @type {Record<NodeKind, number>} */
+    const counts = { person: 0, tag: 0, team: 0, entry: 0 };
+    for (const n of model.nodes.values()) counts[n.kind]++;
+    for (const { kind } of KINDS) {
+      const chip = mainEl.querySelector(`.gtype[data-kind="${kind}"]`);
+      chip?.setAttribute("aria-pressed", String(gstate.types[kind]));
+      const n = chip?.querySelector(".n");
+      if (n) n.textContent = String(counts[kind]);
+    }
+    mainEl.querySelectorAll(".gmode").forEach((button) => {
+      button.setAttribute("aria-pressed", String(button.getAttribute("data-mode") === gstate.mode));
+    });
+    const tag = mainEl.querySelector("#gtag");
+    if (tag instanceof HTMLSelectElement && tag.value !== gstate.tagFilter) tag.value = gstate.tagFilter;
+  }
+
+  /** @param {GNode[]} ns */
+  function labelSet(ns) {
+    const kind = gstate.mode === "topics" ? "tag" : "person";
+    const limit = gstate.mode === "topics" ? 14 : 12;
+    return new Set(
+      ns
+        .filter((n) => n.kind === kind)
+        .sort((a, b) => b.deg - a.deg || b.links - a.links || a.label.localeCompare(b.label))
+        .slice(0, limit)
+        .map((n) => n.id),
+    );
+  }
+
   /** rebuild the projection + SVG contents (initial render and chip toggles) */
   function refresh() {
-    const proj = projectGraph(model, gstate.types, gstate.entryTypes);
+    const scopedEntries = graphEntries();
+    const model = buildGraph(scopedEntries);
+    const proj = projectGraph(model, gstate.types, gstate.entryTypes, {
+      minTagDegree: gstate.mode === "topics" ? 2 : 1,
+      keepTag: gstate.tagFilter,
+    });
     nodes = proj.nodes;
     edges = proj.edges;
     hasCo = proj.hasCo;
@@ -611,7 +707,7 @@ export function renderGraphView(mainEl, entries, opts = {}) {
       sb.add(e.a);
     }
 
-    const labeled = new Set(nodes.filter((n) => n.kind === "person").map((n) => n.id));
+    const labeled = labelSet(nodes);
     /** an edge wears the hue of its most salient endpoint kind
      * @param {GEdge} e @returns {NodeKind} */
     const edgeKind = (e) => {
@@ -641,8 +737,13 @@ export function renderGraphView(mainEl, entries, opts = {}) {
     edgeEls = [...edgesG.querySelectorAll(".gedge")];
 
     emptyEl.hidden = nodes.length > 0;
-    sumEl.textContent = `${nodes.length} nodes · ${edges.length} links${hasCo ? " · entity links = entries shared" : ""}`;
+    const scope = gstate.tagFilter ? ` · #${gstate.tagFilter}` : "";
+    sumEl.textContent = `${modeLabel(gstate.mode)}${scope} · ${scopedEntries.length} entries · ${nodes.length} nodes · ${edges.length} links${
+      hasCo ? " · shared entries" : ""
+    }`;
 
+    syncToolbar(model);
+    renderTypeLegend(scopedEntries);
     initPositions(nodes);
     updateHighlights();
     renderDetail();
@@ -654,13 +755,32 @@ export function renderGraphView(mainEl, entries, opts = {}) {
 
   // ---------- interactions ----------
 
+  mainEl.querySelectorAll(".gmode").forEach((button) => {
+    button.addEventListener("click", () => {
+      const mode = /** @type {Exclude<GraphMode, "custom"> | null} */ (button.getAttribute("data-mode"));
+      if (mode !== "people" && mode !== "topics" && mode !== "entries") return;
+      gstate.mode = mode;
+      gstate.types = presetTypes(mode);
+      gstate.selected = null;
+      refresh();
+    });
+  });
+
+  const tagSelectEl = mainEl.querySelector("#gtag");
+  if (tagSelectEl instanceof HTMLSelectElement) {
+    tagSelectEl.addEventListener("change", () => {
+      gstate.tagFilter = tagSelectEl.value;
+      gstate.selected = null;
+      refresh();
+    });
+  }
+
   mainEl.querySelectorAll(".gtype").forEach((chip) => {
     chip.addEventListener("click", () => {
       const kind = /** @type {NodeKind} */ (chip.getAttribute("data-kind"));
+      gstate.mode = "custom";
       gstate.types[kind] = !gstate.types[kind];
-      chip.setAttribute("aria-pressed", String(gstate.types[kind]));
       refresh();
-      renderTypeLegend();
     });
   });
 
@@ -670,7 +790,6 @@ export function renderGraphView(mainEl, entries, opts = {}) {
     const t = chip?.getAttribute("data-etype");
     if (!chip || !t) return;
     gstate.entryTypes[t] = gstate.entryTypes[t] === false;
-    chip.setAttribute("aria-pressed", String(gstate.entryTypes[t]));
     refresh();
   });
 
@@ -858,5 +977,4 @@ export function renderGraphView(mainEl, entries, opts = {}) {
   });
 
   refresh();
-  renderTypeLegend();
 }
