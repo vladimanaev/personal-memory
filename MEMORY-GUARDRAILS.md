@@ -13,6 +13,8 @@ not with Write/Edit tools, not with shell redirection, not "just this once".
   (via the `log-memory` / `pull-memories` skills, or `/remember` / `/pull-memories`).
 - **Update** an existing entry the same way: re-run `add` with the same
   `--source-ids` (updates in place), or `add --update <id>` for manual notes.
+- **Delete** ONLY through `npx tsx src/cli.ts remove <id>` — it syncs the index
+  and checkpoints the nested `memory/.git` repo so the content stays recoverable.
 - **Recall** goes ONLY through `cli.ts query | person | list` (see CLAUDE.md /
   AGENTS.md rule #1) — never Grep/Glob/Read to discover entries.
 
@@ -33,7 +35,7 @@ four things a manual write skips:
 
 | Path | Agent may write? | How |
 |---|---|---|
-| `memory/entries/**` | ❌ never | `cli.ts add` / `add --update <id>` only |
+| `memory/entries/**` | ❌ never | `cli.ts add` / `add --update <id>` / `cli.ts remove <id>` only |
 | `memory/summaries/**` | ✏️ only the `## Synthesis` section of a scaffold `digest` created — then run `cli.ts index` | Edit tool |
 | `memory/connectors/**` | ✅ private connector overrides | Edit tool or web UI |
 | `.index/**` | ❌ never | rebuildable derivative; `cli.ts index` regenerates |

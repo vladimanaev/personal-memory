@@ -1,6 +1,6 @@
 ---
 name: log-memory
-description: Use when the user wants to record/log/remember an event — a 1:1, decision, hiring move, incident, achievement, feedback, meeting, or general note about people or teams. Captures it as a structured memory entry.
+description: Use when the user wants to record/log/remember an event — a 1:1, decision, a decision still pending, a to-do, hiring move, incident, achievement, feedback, meeting, or general note about people or teams. Captures it as a structured memory entry.
 ---
 
 # Logging a personal memory
@@ -15,7 +15,9 @@ capture it as a structured entry via the `memory` CLI.
 1. **Extract the fields** from what the user said (ask only if a critical one is
    genuinely missing — otherwise infer sensibly):
    - `title` — short, specific (required).
-   - `type` — one of: `event | decision | 1on1 | hiring | incident | achievement | feedback | meeting | note`.
+   - `type` — one of: `event | decision | todo | pending-decision | 1on1 | hiring | incident | achievement | feedback | meeting | note`.
+     Use `pending-decision` for a decision still open (re-type it to `decision`
+     with `--update <id>` once settled) and `todo` for action items to track.
    - `date` — ISO `YYYY-MM-DD`; default to today if not stated.
    - `people` — kebab-case slugs (e.g. `jane-doe`). **Reuse existing slugs** — run
      `memory list` or check `memory/people/` first so the same person always maps

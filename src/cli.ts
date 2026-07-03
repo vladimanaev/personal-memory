@@ -1,6 +1,9 @@
 #!/usr/bin/env -S npx tsx
-import { parseArgs } from "node:util";
-import { relative } from "node:path";
+import { parseArgs, promisify } from "node:util";
+import { relative, join } from "node:path";
+import { rm } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { execFile } from "node:child_process";
 import { FrontmatterSchema, type Frontmatter } from "./schema.js";
 import {
   loadAllEntries,
@@ -10,6 +13,7 @@ import {
   findEntryBySourceIds,
   normalizeSourceId,
   ROOT,
+  MEMORY_DIR,
 } from "./ingest.js";
 import { search, findSimilar, syncIndex, applyFilters, type SearchFilters } from "./store.js";
 import type { MemoryEntry } from "./schema.js";
@@ -141,6 +145,45 @@ async function cmdAdd(argv: string[]) {
   console.log(`✓ ${target ? "updated" : "created"} ${fm.id}`);
   console.log(`  ${rel(path)}`);
   console.log(`  indexed (+${stats.added} changed, ${stats.unchanged} unchanged)`);
+}
+
+const execFileP = promisify(execFile);
+
+/** Stage + commit everything in the nested memory repo; false if absent/clean. */
+async function commitMemoryRepo(message: string): Promise<boolean> {
+  if (!existsSync(join(MEMORY_DIR, ".git"))) return false;
+  await execFileP("git", ["-C", MEMORY_DIR, "add", "-A", "."]);
+  const { stdout } = await execFileP("git", ["-C", MEMORY_DIR, "status", "--porcelain"]);
+  if (!stdout.trim()) return false;
+  await execFileP("git", ["-C", MEMORY_DIR, "commit", "-q", "-m", message]);
+  return true;
+}
+
+async function cmdRemove(argv: string[]) {
+  const { positionals } = parseArgs({ args: argv, options: {}, allowPositionals: true });
+  const id = positionals[0];
+  if (!id) throw new Error("usage: memory remove <id>");
+  const entries = await loadAllEntries();
+  const target = entries.find((e) => e.id === id);
+  if (!target) throw new Error(`no entry with id '${id}'`);
+
+  const referrers = entries.filter((e) => e.sources?.includes(id));
+  if (referrers.length) {
+    console.error(`✗ ${id} is referenced as a source by: ${referrers.map((e) => e.id).join(", ")}`);
+    console.error("  update or remove those summaries first");
+    process.exitCode = 2;
+    return;
+  }
+
+  // Checkpoint first so the removed content is always recoverable from
+  // memory/.git history (the add-time auto-commit may not have run).
+  await commitMemoryRepo(`Checkpoint before remove: ${id}`);
+  await rm(target.path);
+  const stats = await syncIndex();
+  await commitMemoryRepo(`Remove memory: ${id}`);
+  console.log(`✓ removed ${id}`);
+  console.log(`  ${rel(target.path)}`);
+  console.log(`  index synced (${stats.removed} removed); prior content kept in memory/.git history`);
 }
 
 async function cmdIndex(argv: string[]) {
@@ -382,10 +425,12 @@ const HELP = `memory — local personal-memory RAG
 
 Usage:
   memory add --title "…" --type 1on1 --people a,b [--date YYYY-MM-DD] [--tags …] --body "…"
+            # types: event|decision|todo|pending-decision|1on1|hiring|incident|achievement|feedback|meeting|note|summary
             [--source-ids slack:C123:1700000000.1,gmail:<thread-id>]  # dedup anchor
             [--update <id>]      # refresh a specific entry in place
             [--force-new]        # bypass the near-duplicate guard
             [--dup-threshold N]  # cosine threshold for the guard (default 0.92)
+  memory remove <id>   # delete an entry + sync index (prior content stays in memory/.git history)
   memory index [--force]
   memory query "<question>" ["<alt phrasing>" …] [--person X] [--type Y] [--since DATE] [--until DATE] [-k N] [--deep]
             # each quoted positional is a separate phrasing; all are fused (2-4 recommended)
@@ -402,6 +447,7 @@ async function main() {
   const [cmd, ...rest] = process.argv.slice(2);
   switch (cmd) {
     case "add": return cmdAdd(rest);
+    case "remove": return cmdRemove(rest);
     case "index": return cmdIndex(rest);
     case "query": return cmdQuery(rest);
     case "list": return cmdList(rest);

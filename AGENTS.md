@@ -11,8 +11,8 @@ sent to any API by default.
 ## When to act
 
 - User describes/says to log something about a person, team, event, decision,
-  hiring, incident, meeting, feedback, achievement → **capture** (see
-  `skills/log-memory/SKILL.md`).
+  hiring, incident, meeting, feedback, achievement, a to-do, or a decision
+  still pending → **capture** (see `skills/log-memory/SKILL.md`).
 - User asks a question about people / past events, or wants to plan or
   remember → **recall**, grounded in the store (see `skills/recall-memory/SKILL.md`).
   Don't answer people/history questions from chat history alone.
@@ -43,7 +43,7 @@ Run with `npx tsx src/cli.ts <cmd>` (Node ≥ 20 — `nvm use 20`).
   ```yaml
   id: 2026-06-28-acme-codev-kickoff   # date-prefixed kebab slug
   date: 2026-06-28                     # ISO
-  type: event   # event|decision|1on1|hiring|incident|achievement|feedback|meeting|note|summary
+  type: event   # event|decision|todo|pending-decision|1on1|hiring|incident|achievement|feedback|meeting|note|summary
   title: Kickoff with Acme on co-dev
   people: [jane-doe, john-smith]       # kebab slugs — REUSE consistently
   teams: [platform-team]
@@ -103,7 +103,8 @@ Run with `npx tsx src/cli.ts <cmd>` (Node ≥ 20 — `nvm use 20`).
    scale. Use `Read` only on the specific files a query result cites.
 2. **Write through the CLI — never hand-create/edit files under `memory/entries/`
    or `.index/`.** Capture and update go ONLY through `cli.ts add` (same
-   `--source-ids` updates in place; `--update <id>` for manual notes). A
+   `--source-ids` updates in place; `--update <id>` for manual notes); deletion
+   ONLY through `cli.ts remove <id>`. A
    hand-written file skips index sync, dedup, and auto-commit — invisible to
    recall and unversioned. **Read `MEMORY-GUARDRAILS.md` before any write under
    `memory/`** (it also lists the allowed exceptions: `memory/summaries/`

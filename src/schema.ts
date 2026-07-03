@@ -8,6 +8,8 @@ import { z } from "zod";
 export const MEMORY_TYPES = [
   "event",
   "decision",
+  "todo",
+  "pending-decision",
   "1on1",
   "hiring",
   "incident",
