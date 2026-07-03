@@ -269,7 +269,13 @@ function renderHeader() {
       <a href="#/connectors" ${r.view === "connectors" || r.view === "connector" ? 'aria-current="page"' : ""}>Connectors</a>
     </nav>
     <span class="header-spacer"></span>
-    ${r.view !== "record" ? `<input class="hq" id="hq" type="search" placeholder="search the record" aria-label="search the record" />` : ""}
+    ${
+      r.view === "graph"
+        ? `<input class="hq" id="gq" type="search" placeholder="find a node" aria-label="find a node" />`
+        : r.view !== "record"
+          ? `<input class="hq" id="hq" type="search" placeholder="search the record" aria-label="search the record" />`
+          : ""
+    }
     ${status}
     <button class="tbtn" id="tbtn" aria-label="switch theme" title="switch theme">
       <svg class="i-sun" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M4.9 4.9l2.2 2.2M16.9 16.9l2.2 2.2M2 12h3M19 12h3M4.9 19.1l2.2-2.2M16.9 7.1l2.2-2.2"/></svg>
@@ -782,13 +788,8 @@ function renderSearchPanel(opts = {}) {
 
 // ---------- entry detail ----------
 
-/** @param {string} id */
-function renderEntry(id) {
-  const e = state.entries.find((x) => x.id === id);
-  if (!e) {
-    $("#main").innerHTML = `<div class="empty">no entry with id <code>${esc(id)}</code></div>`;
-    return;
-  }
+/** @param {Entry} e */
+function entryDetailHtml(e) {
   const byId = new Set(state.entries.map((x) => x.id));
   /** @param {string} label @param {string} html */
   const section = (label, html) => `<section><div class="k">${esc(label)}</div>${html}</section>`;
@@ -796,8 +797,7 @@ function renderEntry(id) {
   const chipList = (xs, fk) =>
     xs.length ? `<div class="chips">${xs.map((x) => chip(fk, x)).join("")}</div>` : `<span class="none">—</span>`;
 
-  $("#main").innerHTML = `
-    <a class="back" href="#/">← record</a>
+  return `
     <div class="detail">
       <h1>${esc(e.title)}</h1>
       <div class="byline">
@@ -838,6 +838,20 @@ function renderEntry(id) {
   `;
 }
 
+/** @param {string} id */
+function renderEntry(id) {
+  const e = state.entries.find((x) => x.id === id);
+  if (!e) {
+    $("#main").innerHTML = `<div class="empty">no entry with id <code>${esc(id)}</code></div>`;
+    return;
+  }
+
+  $("#main").innerHTML = `
+    <a class="back" href="#/">← record</a>
+    ${entryDetailHtml(e)}
+  `;
+}
+
 // ---------- modal ----------
 
 /**
@@ -846,10 +860,11 @@ function renderEntry(id) {
  * the dialog removes itself from the DOM when closed.
  * @param {string} title
  * @param {(body: HTMLElement, close: () => void) => void} build
+ * @param {{ className?: string }} [opts]
  */
-function openModal(title, build) {
+function openModal(title, build, opts = {}) {
   const dlg = document.createElement("dialog");
-  dlg.className = "modal";
+  dlg.className = `modal${opts.className ? ` ${opts.className}` : ""}`;
   dlg.innerHTML = `
     <div class="modal-head">
       <h2>${esc(title)}</h2>
@@ -866,6 +881,15 @@ function openModal(title, build) {
   /** @type {HTMLElement} */ (dlg.querySelector(".modal-x")).addEventListener("click", close);
   build(/** @type {HTMLElement} */ (dlg.querySelector(".modal-body")), close);
   dlg.showModal();
+}
+
+/** @param {string} id */
+function openEntryModal(id) {
+  const e = state.entries.find((x) => x.id === id);
+  if (!e) return;
+  openModal("entry", (body) => {
+    body.innerHTML = entryDetailHtml(e);
+  }, { className: "entry-modal" });
 }
 
 // ---------- connectors ----------
@@ -1085,7 +1109,7 @@ function render() {
   const r = route();
   document.body.classList.toggle("view-graph", r.view === "graph");
   if (r.view === "record") renderRecord();
-  else if (r.view === "graph") renderGraphView($("#main"), state.entries, { typeOrder: TYPE_ORDER });
+  else if (r.view === "graph") renderGraphView($("#main"), state.entries, { typeOrder: TYPE_ORDER, openEntry: openEntryModal });
   else if (r.view === "connectors") renderConnectors();
   else if (r.view === "connector") renderConnector(r.name);
   else renderEntry(r.id);

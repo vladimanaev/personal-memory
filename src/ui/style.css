@@ -1076,26 +1076,42 @@ mark {
 
 /* ---------- graph view (force-directed, single hue: shape/tone = kind) ---------- */
 
+body.view-graph .wrap {
+  max-width: none;
+  width: 100%;
+  padding: 0 18px 24px;
+}
+
+body.view-graph .site-header {
+  padding-top: 24px;
+  margin-bottom: 16px;
+}
+
 .graph-layout {
-  display: grid;
-  grid-template-columns: 220px minmax(0, 1fr);
-  gap: 24px;
-  align-items: start;
-}
-
-@media (max-width: 720px) {
-  .graph-layout {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
-
-.graph-side {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
+  min-width: 0;
 }
 
-.graph-side .k {
+.graph-toolbar {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.graph-filters {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  flex: 999 1 520px;
+  flex-wrap: wrap;
+}
+
+.graph-toolbar .k {
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.05em;
@@ -1105,6 +1121,18 @@ mark {
 
 .gchips {
   gap: 6px;
+}
+
+.gtypelegend {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.gtypelegend[hidden] {
+  display: none;
 }
 
 .gtype .gglyph {
@@ -1147,29 +1175,20 @@ mark {
 }
 
 .gsum {
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+  margin-left: auto;
   font-size: 12px;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
-}
-
-.gq {
-  height: 30px;
-  padding: 0 10px;
-  font: inherit;
-  font-size: 13px;
-  color: var(--ink);
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-}
-
-.gq:focus-visible {
-  outline: none;
-  border-color: var(--accent);
+  white-space: nowrap;
 }
 
 .graph-canvas {
   position: relative;
+  height: max(520px, calc(100vh - 164px));
+  min-height: 0;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -1179,16 +1198,56 @@ mark {
 .graph-canvas svg {
   display: block;
   width: 100%;
-  height: auto;
+  height: 100%;
+  min-height: 0;
+  touch-action: none;
+}
+
+@media (max-width: 720px) {
+  body.view-graph .wrap {
+    padding-inline: 12px;
+  }
+
+  body.view-graph .site-header {
+    padding-top: 18px;
+    margin-bottom: 12px;
+  }
+
+  .graph-toolbar {
+    gap: 8px;
+  }
+
+  .graph-filters,
+  .gsum {
+    flex-basis: 100%;
+    max-width: none;
+  }
+
+  .gsum {
+    min-height: 0;
+    margin-left: 0;
+  }
+
+  .graph-canvas {
+    height: max(480px, calc(100vh - 210px));
+  }
+
+  .graph-detail {
+    top: auto;
+    left: 10px;
+    width: auto;
+    max-height: 48%;
+  }
 }
 
 .gzoom {
   position: absolute;
   top: 10px;
-  right: 10px;
+  left: 10px;
   display: flex;
   flex-direction: column;
   gap: 4px;
+  z-index: 2;
 }
 
 .gzbtn {
@@ -1250,7 +1309,7 @@ mark {
 }
 
 .gedge.is-dim {
-  opacity: 0.15;
+  opacity: 0.04;
 }
 
 /* nodes — kind is carried by hue + shape (shape/size double as the CVD channel) */
@@ -1294,8 +1353,23 @@ mark {
 .gt-summary { --tc: var(--type-summary); }
 
 .glabel {
+  display: none;
   fill: var(--ink-2);
   font-size: 11px;
+  pointer-events: none;
+}
+
+.gnode.has-label .glabel,
+.gnode.is-hit .glabel {
+  display: block;
+}
+
+.gnode.is-dim .glabel {
+  display: none;
+}
+
+.gnode.is-hit .glabel {
+  display: block;
 }
 
 /* accent is interaction-only: hover, focus, selection, search hits */
@@ -1312,17 +1386,44 @@ mark {
 }
 
 .gnode.is-dim {
-  opacity: 0.18;
+  opacity: 0.05;
 }
 
 /* detail panel */
 
 .graph-detail {
-  border-top: 1px solid var(--grid);
-  padding-top: 12px;
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  bottom: 10px;
+  z-index: 2;
+  width: clamp(300px, 28vw, 430px);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+  overflow: auto;
+  padding: 12px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
+}
+
+.graph-detail[hidden] {
+  display: none;
+}
+
+.gdetail-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.gclose {
+  flex: none;
+  font-size: 16px;
+  line-height: 1;
+  padding-bottom: 2px;
 }
 
 .ghint {
@@ -1539,6 +1640,7 @@ mark {
 dialog.modal {
   margin: auto;
   width: min(440px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
   padding: 0;
   color: var(--ink);
   background: var(--surface);
@@ -1582,6 +1684,33 @@ dialog.modal::backdrop {
 
 .modal-body {
   padding: 12px 18px 18px;
+}
+
+dialog.modal.entry-modal {
+  width: min(1080px, calc(100vw - 48px));
+}
+
+dialog.modal.entry-modal .modal-body {
+  max-height: calc(100vh - 106px);
+  overflow: auto;
+}
+
+dialog.modal.entry-modal .detail h1 {
+  margin-top: 4px;
+}
+
+dialog.modal.entry-modal .fm {
+  top: 0;
+}
+
+@media (max-width: 720px) {
+  dialog.modal.entry-modal {
+    width: calc(100vw - 24px);
+  }
+
+  dialog.modal.entry-modal .modal-body {
+    max-height: calc(100vh - 88px);
+  }
 }
 
 .modal-form {

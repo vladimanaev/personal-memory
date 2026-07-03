@@ -34,7 +34,6 @@
 const W = 1200;
 const H = 800;
 const PAD = 34;
-const LABEL_CAP = 60; // label only the top-N entities by degree
 
 /** @type {{ kind: NodeKind, plural: string }[]} */
 const KINDS = [
@@ -47,7 +46,7 @@ const KINDS = [
 // view state survives route switches so the graph doesn't rearrange on return
 const gstate = {
   /** @type {Record<NodeKind, boolean>} */
-  types: { person: true, tag: true, team: true, entry: false },
+  types: { person: true, tag: true, team: true, entry: true },
   /** entry-type filter — only an explicit false hides, so new types stay visible */
   /** @type {Record<string, boolean>} */
   entryTypes: {},
@@ -351,12 +350,9 @@ function nodeMarkup(n, labeled) {
     n.kind === "team"
       ? `<rect class="nshape" x="${-n.r}" y="${-n.r}" width="${2 * n.r}" height="${2 * n.r}" rx="3"/>`
       : `<circle class="nshape" r="${n.r}"/>`;
-  const label =
-    labeled && n.kind !== "entry"
-      ? `<text class="glabel" y="${n.r + 12}" text-anchor="middle">${esc(trunc(n.label))}</text>`
-      : "";
+  const label = `<text class="glabel" y="${n.r + 12}" text-anchor="middle">${esc(trunc(n.label))}</text>`;
   const typeClass = n.kind === "entry" && n.etype !== "" ? ` gt-${n.etype}` : "";
-  return `<g class="gnode gn-${n.kind}${typeClass}" data-node="${esc(n.id)}" tabindex="0" role="button"
+  return `<g class="gnode gn-${n.kind}${typeClass}${labeled ? " has-label" : ""}" data-node="${esc(n.id)}" tabindex="0" role="button"
     data-tip="${esc(tip)}" aria-label="${esc(tip)}">${shape}${label}</g>`;
 }
 
@@ -365,11 +361,14 @@ function nodeMarkup(n, labeled) {
 /**
  * @param {HTMLElement} mainEl
  * @param {GraphEntry[]} entries
- * @param {{ typeOrder?: string[] }} [opts]
+ * @param {{ typeOrder?: string[], openEntry?: (id: string) => void }} [opts]
  *   typeOrder: canonical entry-type display order (app.js TYPE_ORDER)
  */
 export function renderGraphView(mainEl, entries, opts = {}) {
   const typeOrder = opts.typeOrder ?? [];
+  const openEntry = opts.openEntry ?? ((id) => {
+    location.hash = `#/entry/${encodeURIComponent(id)}`;
+  });
   if (entries.length === 0) {
     mainEl.innerHTML = `<div class="empty">the record is empty — log a first memory with <code>memory add</code> or <code>/remember</code>, then run <code>memory index</code></div>`;
     return;
@@ -397,7 +396,6 @@ export function renderGraphView(mainEl, entries, opts = {}) {
           <span class="k">entry types</span>
           <div class="chips gchips" id="gtypes"></div>
         </div>`;
-  const findInput = `<input class="gq" id="gq" type="search" placeholder="find a node" aria-label="find a node" value="${esc(gstate.q)}" />`;
   const canvas = `
       <div class="graph-canvas">
         <svg id="gcanvas" viewBox="0 0 ${W} ${H}" role="group" aria-label="memory graph">
@@ -411,19 +409,19 @@ export function renderGraphView(mainEl, entries, opts = {}) {
           <button class="gzbtn" id="gz-out" aria-label="zoom out">−</button>
           <button class="gzbtn" id="gz-fit" aria-label="reset zoom">fit</button>
         </div>
+        <div class="graph-detail" id="graph-detail"></div>
         <div class="gempty" id="gempty" hidden>nothing to show — enable a node type</div>
       </div>`;
 
   mainEl.innerHTML = `
     <div class="graph-layout">
-      <aside class="graph-side">
-        <span class="k">nodes</span>
-        <div class="chips gchips">${kindChips}</div>
-        ${typeLegend}
+      <div class="graph-toolbar">
+        <div class="graph-filters">
+          <div class="chips gchips" role="group" aria-label="filter node types">${kindChips}</div>
+          ${typeLegend}
+        </div>
         <div class="gsum" id="gsum"></div>
-        ${findInput}
-        <div class="graph-detail" id="graph-detail"></div>
-      </aside>
+      </div>
       ${canvas}
     </div>`;
 
@@ -520,12 +518,15 @@ export function renderGraphView(mainEl, entries, opts = {}) {
     const q = gstate.q.trim().toLowerCase();
     const sel = gstate.selected;
     const hood = sel ? (neighbors.get(sel) ?? new Set()) : null;
+    /** @type {Set<string>} */
+    const hitIds = new Set();
     for (const n of nodes) {
       const el = nodeEls.get(n.id);
       if (!el) continue;
       const hit = q !== "" && n.label.toLowerCase().includes(q);
       const hot = sel !== null && (n.id === sel || hood?.has(n.id) === true);
       const dim = (q !== "" && !hit) || (sel !== null && !hot);
+      if (hit) hitIds.add(n.id);
       el.classList.toggle("is-hit", hit);
       el.classList.toggle("is-hot", hot);
       el.classList.toggle("is-dim", dim);
@@ -535,17 +536,20 @@ export function renderGraphView(mainEl, entries, opts = {}) {
       const el = edgeEls[i];
       if (!el) continue;
       const hot = sel !== null && (e.a === sel || e.b === sel);
+      const searchDim = q !== "" && (!hitIds.has(e.a) || !hitIds.has(e.b));
       el.classList.toggle("is-hot", hot);
-      el.classList.toggle("is-dim", sel !== null && !hot);
+      el.classList.toggle("is-dim", searchDim || (sel !== null && !hot));
     }
   }
 
   function renderDetail() {
     const n = gstate.selected ? byId.get(gstate.selected) : null;
     if (!n || n.kind === "entry") {
-      detailEl.innerHTML = `<span class="ghint">click a node to inspect</span>`;
+      detailEl.hidden = true;
+      detailEl.innerHTML = "";
       return;
     }
+    detailEl.hidden = false;
     const rows = [...new Set(n.entryIds)]
       .map((id) => entryByRawId.get(id))
       .filter((e) => e !== undefined)
@@ -556,8 +560,13 @@ export function renderGraphView(mainEl, entries, opts = {}) {
       )
       .join("");
     detailEl.innerHTML = `
-      <span class="k">${esc(n.kind)}</span>
-      <div class="gname">${esc(n.label)}</div>
+      <div class="gdetail-head">
+        <div>
+          <span class="k">${esc(n.kind)}</span>
+          <div class="gname">${esc(n.label)}</div>
+        </div>
+        <button class="gzbtn gclose" type="button" aria-label="close details">×</button>
+      </div>
       <div class="gcount">${n.deg} entr${n.deg === 1 ? "y" : "ies"}</div>
       <div class="gentries">${rows}</div>`;
   }
@@ -602,13 +611,7 @@ export function renderGraphView(mainEl, entries, opts = {}) {
       sb.add(e.a);
     }
 
-    const labeled = new Set(
-      nodes
-        .filter((n) => n.kind !== "entry")
-        .sort((a, b) => b.deg - a.deg)
-        .slice(0, LABEL_CAP)
-        .map((n) => n.id),
-    );
+    const labeled = new Set(nodes.filter((n) => n.kind === "person").map((n) => n.id));
     /** an edge wears the hue of its most salient endpoint kind
      * @param {GEdge} e @returns {NodeKind} */
     const edgeKind = (e) => {
@@ -671,10 +674,21 @@ export function renderGraphView(mainEl, entries, opts = {}) {
     refresh();
   });
 
-  const qInput = /** @type {HTMLInputElement} */ (mainEl.querySelector("#gq"));
-  qInput.addEventListener("input", () => {
-    gstate.q = qInput.value;
+  const qInput = document.getElementById("gq");
+  if (qInput instanceof HTMLInputElement) {
+    qInput.value = gstate.q;
+    qInput.addEventListener("input", () => {
+      gstate.q = qInput.value;
+      updateHighlights();
+    });
+  }
+
+  detailEl.addEventListener("click", (ev) => {
+    const close = ev.target instanceof Element ? ev.target.closest(".gclose") : null;
+    if (!close) return;
+    gstate.selected = null;
     updateHighlights();
+    renderDetail();
   });
 
   /** @param {string} id */
@@ -682,7 +696,7 @@ export function renderGraphView(mainEl, entries, opts = {}) {
     const n = byId.get(id);
     if (!n) return;
     if (n.kind === "entry") {
-      location.hash = `#/entry/${encodeURIComponent(id.slice(2))}`;
+      openEntry(id.slice(2));
       return;
     }
     gstate.selected = gstate.selected === id ? null : id;
