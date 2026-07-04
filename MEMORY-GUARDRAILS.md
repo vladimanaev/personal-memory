@@ -19,7 +19,7 @@ not with Write/Edit tools, not with shell redirection, not "just this once".
   `npx tsx src/cli.ts slugs merge --kind person|team|tag --from <slug> --to <slug>`
   — it rewrites just the affected frontmatter arrays, syncs the index, and
   checkpoints `memory/.git` before and after.
-- **Recall** goes ONLY through `cli.ts query | person | list` (see CLAUDE.md /
+- **Recall** goes ONLY through `cli.ts recall | query | person | list` (see CLAUDE.md /
   AGENTS.md rule #1) — never Grep/Glob/Read to discover entries.
 
 ## Why (do not rationalize around this)

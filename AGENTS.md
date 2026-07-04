@@ -26,6 +26,7 @@ Run with `npx tsx src/cli.ts <cmd>` (Node ≥ 20 — `nvm use 20`).
 | `add --title … --type … --people a,b --date YYYY-MM-DD --body "…" [--source-ids …]` | Create/update an entry + index it (dedups on `--source-ids`; `--update <id>`, `--force-new`, `--dup-threshold N` resolve the dup guard) |
 | `index [--force]` | Re-sync index with Markdown (incremental; `--force` rebuilds) |
 | `query "<q>" ["<alt phrasing>" …] [--person|--type|--team|--tag|--since|--until|-k|--deep]` | Hybrid (semantic+lexical) search; pass 2–4 phrasings (all fused); `--deep` = recall-over-precision (k=40, wider pools) |
+| `recall "<q>" ["<agent phrasing>" …] [filters] [--complete|--complete-if-small|--require-complete|--no-expand|--format json]` | Agent-facing recall with weighted query expansion, completeness reporting, and stable JSON output |
 | `list [filters] [--limit n]` | Structured browse, newest first |
 | `person <slug>` | Everything about a person |
 | `digest --person <slug> \| --quarter <YYYY-Qn> \| --tag <slug>` | Build/refresh a rolling summary |
@@ -98,9 +99,10 @@ Run with `npx tsx src/cli.ts <cmd>` (Node ≥ 20 — `nvm use 20`).
 ## Rules
 
 1. **Retrieve through the CLI — never grep/glob `memory/` to find entries.**
-   `memory query` (semantic + lexical, ranked, filtered) is the only correct way
-   to discover memories. Keyword/file search misses semantic matches and won't
-   scale. Use `Read` only on the specific files a query result cites.
+   `memory recall` / `memory query` (semantic + lexical, ranked, filtered) are
+   the only correct ways to discover memories. Keyword/file search misses
+   semantic matches and won't scale. Use `Read` only on the specific files a
+   recall/query result cites.
 2. **Write through the CLI — never hand-create/edit files under `memory/entries/`
    or `.index/`.** Capture and update go ONLY through `cli.ts add` (same
    `--source-ids` updates in place; `--update <id>` for manual notes); deletion

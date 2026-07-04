@@ -163,10 +163,56 @@ export async function loadAllEntries(): Promise<MemoryEntry[]> {
   return entries;
 }
 
+function csv(xs: string[] | undefined): string {
+  return xs?.length ? xs.join(", ") : "";
+}
+
+/** Compact metadata header included in lexical and semantic retrieval text. */
+export function entryMetadataText(e: MemoryEntry): string {
+  const lines = [
+    `title: ${e.title}`,
+    `id: ${e.id}`,
+    `type: ${e.type}`,
+    `date: ${e.date}`,
+    `people: ${csv(e.people)}`,
+    `teams: ${csv(e.teams)}`,
+    `tags: ${csv(e.tags)}`,
+    `sources: ${csv(e.sources)}`,
+    `source_ids: ${csv(e.source_ids)}`,
+  ];
+  return lines.filter((line) => !line.endsWith(": ")).join("\n");
+}
+
+/** Full text used by the lexical index. */
+export function entrySearchText(e: MemoryEntry): string {
+  return `${entryMetadataText(e)}\n\nbody:\n${e.body}`.trim();
+}
+
+/**
+ * Remove retrieval-only metadata so snippets shown to users stay focused on the
+ * memory body.
+ */
+export function displayChunkText(text: string): string {
+  return text
+    .replace(/^# .*\n+/, "")
+    .replace(/^title: .*\n/, "")
+    .replace(/^id: .*\n/, "")
+    .replace(/^type: .*\n/, "")
+    .replace(/^date: .*\n/, "")
+    .replace(/^people: .*\n/, "")
+    .replace(/^teams: .*\n/, "")
+    .replace(/^tags: .*\n/, "")
+    .replace(/^sources: .*\n/, "")
+    .replace(/^source_ids: .*\n/, "")
+    .replace(/^\n+body:\n/, "")
+    .replace(/^body:\n/, "")
+    .trim();
+}
+
 /**
  * Split an entry into embeddable chunks. Entries are short, so most produce a
  * single chunk; long bodies are split on paragraph boundaries (~1200 chars).
- * Each chunk is prefixed with the title for retrieval context.
+ * Each chunk is prefixed with metadata for retrieval context.
  */
 export function chunkEntry(e: MemoryEntry, maxChars = 1200): string[] {
   const paras = e.body.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
@@ -182,7 +228,8 @@ export function chunkEntry(e: MemoryEntry, maxChars = 1200): string[] {
   }
   if (buf) chunks.push(buf);
   if (chunks.length === 0) chunks.push("");
-  return chunks.map((c) => `# ${e.title}\n\n${c}`.trim());
+  const metadata = entryMetadataText(e);
+  return chunks.map((c) => `# ${e.title}\n\n${metadata}\n\nbody:\n${c}`.trim());
 }
 
 function slugify(s: string): string {

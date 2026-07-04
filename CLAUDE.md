@@ -13,15 +13,15 @@ wants to plan/remember — **you MUST retrieve through the CLI**, not by reading
 files freestyle:
 
 ```bash
-npx tsx src/cli.ts query "<question form>" "<keyword form>" "<entity form>" [--person X] [--type Y] [--since DATE] [--deep]
+npx tsx src/cli.ts recall "<question form>" "<keyword form>" "<entity form>" [--person X] [--type Y] [--since DATE] [--format json]
 npx tsx src/cli.ts person <slug>     # everything about a person
 npx tsx src/cli.ts list [filters]    # structured browse
 ```
 
-Pass **2–4 phrasings** of the question as separate quoted positionals — they are
-all fused into one ranking. Add `--deep` for synthesis/planning questions
-(recall-over-precision: ~40 candidates to sift). Filtered queries matching ≤200
-entries are exhaustive — they cannot silently miss a match.
+Pass the user's question first and add **1–3 agent phrasings** when useful — they
+are fused with CLI-generated expansion phrases into one weighted ranking.
+`recall` defaults to deep pools and complete-if-small (≤200 candidates); use
+`--complete` / `--require-complete` when exhaustive recall is required.
 `npx tsx src/cli.ts maintenance` reports which digests are due + index health.
 
 **Do NOT use Grep / Glob / free-form Read to discover memories under `memory/`.**
@@ -30,10 +30,11 @@ semantically-relevant entries the moment there is more than a handful — which
 defeats the entire point of this store. Semantic ranking + filters live in the
 CLI.
 
-The only correct use of `Read` here is to open the **specific files a `query`
-result cited**, to ground your answer. Discovery → CLI. Reading a cited path → ok.
+The only correct use of `Read` here is to open the **specific files a `recall`
+or `query` result cited**, to ground your answer. Discovery → CLI. Reading a
+cited path → ok.
 
-If you catch yourself about to grep `memory/`, stop and run `memory query` instead.
+If you catch yourself about to grep `memory/`, stop and run `memory recall` instead.
 
 ## ⛔ The twin rule: never WRITE memory by hand
 

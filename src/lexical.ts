@@ -1,6 +1,6 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { INDEX_DIR, hashEntry } from "./ingest.js";
+import { INDEX_DIR, entrySearchText, hashEntry } from "./ingest.js";
 import type { MemoryEntry } from "./schema.js";
 
 /**
@@ -11,7 +11,7 @@ import type { MemoryEntry } from "./schema.js";
  */
 
 const LEXICAL_PATH = join(INDEX_DIR, "lexical.json");
-const LEXICAL_VERSION = 1;
+const LEXICAL_VERSION = 2;
 
 interface LexDoc {
   id: string;
@@ -63,7 +63,7 @@ export async function readLexical(): Promise<LexicalIndex | null> {
 }
 
 function addDoc(idx: LexicalIndex, e: MemoryEntry): void {
-  const terms = tokenize(`${e.title} ${e.body}`);
+  const terms = tokenize(entrySearchText(e));
   const ord = idx.docs.length;
   idx.docs.push({ id: e.id, hash: hashEntry(e), len: terms.length });
   const tf = new Map<string, number>();

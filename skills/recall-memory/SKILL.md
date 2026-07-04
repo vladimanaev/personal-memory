@@ -18,25 +18,31 @@ across sessions.
 | "I'll glob and read all the entries" | Doesn't scale; no ranking; wastes context |
 | "The repo is small, file search is fine" | It won't stay small — build the right habit now |
 
-**Discovery is always via `memory query` / `memory list` / `memory person`.**
+**Discovery is always via `memory recall` / `memory query` / `memory list` /
+`memory person`.**
 Use `Read` only to open the specific files those commands cite. Do not use
 Grep/Glob to find memories.
 
 ## Adaptive depth — pick the right mode for the question
 
 **A. Narrow lookup** ("what did we decide about ranking?", "when did the Acme
-kickoff happen?") → hybrid search. **Always pass 2–4 phrasings** of the question
-as separate quoted positionals — a question form, a keyword form, and an
-entity/name form — they are all fused into one ranking:
+kickoff happen?") → use `memory recall`. Pass the user's question as the first
+positional. Add 1–3 agent-supplied phrasings when useful (keyword form,
+entity/name form, alternate wording). The CLI also adds deterministic expansion
+phrases unless `--no-expand` is passed; all phrases are fused into one weighted
+ranking:
 
 ```bash
-npx tsx src/cli.ts query "what did we decide about ranking" "ranking decision" "ranker rollout" --person <slug> --since <date>
+npx tsx src/cli.ts recall "what did we decide about ranking" "ranking decision" "ranker rollout" --person <slug> --since <date> --format json
 ```
 
-Filtered queries are trustworthy: when a filter (`--person`, `--since`, …)
-matches ≤200 entries, **every** matching entry enters the ranking — nothing can
-be silently dropped. Read the top cited entry file(s) in full, then answer with
-citations (file paths).
+Recall reports whether retrieval was exhaustive. By default, `recall` uses deep
+candidate pools and `complete-if-small` (≤200 matching entries): when exhaustive
+is true, **every** candidate entered consideration and nothing was silently
+dropped before the `-k` cut. Use `--complete` to force a complete scan,
+`--require-complete` when a non-exhaustive answer is unacceptable, and
+`--no-expand` only when the supplied phrases should be used exactly. Read the top
+cited entry file(s) in full, then answer with citations (file paths).
 
 If a hit is a `summary` entry, its output includes a `sources:` line — pull the
 raw entries it cites when you need specifics behind the rollup.
@@ -51,11 +57,11 @@ quarter?", "who's ready for promotion?", "prep for my staff meeting") →
    npx tsx src/cli.ts list --type decision --since 2026-04-01
    npx tsx src/cli.ts list --tag roadmap
    ```
-   For open-ended synthesis where a list filter is too blunt, use `--deep`
-   (recall-over-precision: returns ~40 generously-ranked candidates for you to
-   sift):
+   For open-ended synthesis where a list filter is too blunt, use `recall`
+   with `--complete`, `--require-complete`, or the default complete-if-small
+   report as appropriate:
    ```bash
-   npx tsx src/cli.ts query "how has jane grown" "jane feedback promotion" --deep
+   npx tsx src/cli.ts recall "how has jane grown" "jane feedback promotion" --person jane-doe --complete --format json
    ```
 2. **Read the matched files in full** (raw entries + any `memory/summaries/`
    rollups that cover the scope). At this corpus size the whole relevant slice
@@ -66,7 +72,8 @@ quarter?", "who's ready for promotion?", "prep for my staff meeting") →
 ## Filters available
 
 `--person <slug>` · `--type <type>` · `--team <slug>` · `--tag <slug>` ·
-`--since <YYYY-MM-DD>` · `--until <YYYY-MM-DD>` · `-k <n>` · `--deep`
+`--since <YYYY-MM-DD>` · `--until <YYYY-MM-DD>` · `-k <n>` · `--complete` ·
+`--complete-if-small` · `--require-complete` · `--no-expand` · `--format json`
 
 ## Keeping recall sharp (compaction)
 

@@ -3,9 +3,9 @@ import { join } from "node:path";
 import * as lancedb from "@lancedb/lancedb";
 import type { OptimizeStats } from "@lancedb/lancedb";
 import { getEmbedder, type Embedder } from "./embed.js";
-import { chunkEntry, hashEntry, loadAllEntries, INDEX_DIR } from "./ingest.js";
+import { chunkEntry, displayChunkText, entrySearchText, hashEntry, loadAllEntries, INDEX_DIR } from "./ingest.js";
 import { packSlugs, type MemoryEntry, type MemoryRecord } from "./schema.js";
-import { readLexical, buildLexical, syncLexical, bm25Scores } from "./lexical.js";
+import { readLexical, buildLexical, syncLexical, bm25Scores, tokenize } from "./lexical.js";
 
 const META_PATH = join(INDEX_DIR, "meta.json");
 const TABLE = "memory";
@@ -14,8 +14,9 @@ const TABLE = "memory";
  * Bump when the row schema or indexing semantics change: a mismatch (including
  * a meta.json written before versioning existed) forces one clean rebuild of
  * the table from the Markdown source of truth. v2: people/teams/tags columns.
+ * v3: semantic chunks include compact metadata headers.
  */
-const INDEX_VERSION = 2;
+const INDEX_VERSION = 3;
 
 interface IndexMeta {
   embedderId: string;
@@ -218,10 +219,48 @@ export interface SearchFilters {
   until?: string; // ISO date inclusive
 }
 
+export type QueryOrigin = "primary" | "agent" | "cli";
+
+export interface QuerySpec {
+  text: string;
+  origin: QueryOrigin;
+  weight: number;
+}
+
+export type SearchCompleteness = "auto" | "complete" | "complete-if-small" | "none";
+
+export interface SearchHitReason {
+  semanticRank?: number;
+  lexicalRank?: number;
+  matchedTerms: string[];
+  retrievalSignals: string[];
+}
+
 export interface SearchHit {
   entry: MemoryEntry;
   score: number;
   bestChunk: string;
+  reasons?: SearchHitReason;
+}
+
+export interface SearchReport {
+  filters: SearchFilters;
+  completeness: SearchCompleteness;
+  exhaustive: boolean;
+  candidateCount: number;
+  consideredCount: number;
+  retrievalSignalCount: number;
+  returnedCount: number;
+  limitedByK: boolean;
+  k: number;
+  pool: number;
+  chunkRows: number;
+}
+
+export interface SearchResult {
+  queries: QuerySpec[];
+  hits: SearchHit[];
+  report: SearchReport;
 }
 
 function matchesFilters(e: MemoryEntry, f: SearchFilters): boolean {
@@ -268,9 +307,17 @@ function rankToRRF(ids: string[], k0 = 60): Map<string, number> {
   return m;
 }
 
+interface RankList {
+  kind: "semantic" | "lexical";
+  query: QuerySpec;
+  ids: string[];
+}
+
 export interface SearchOptions {
   /** Recall-over-precision preset: wider candidate pools (callers also raise k). */
   deep?: boolean;
+  completeness?: SearchCompleteness;
+  completeLimit?: number;
 }
 
 /**
@@ -280,6 +327,55 @@ export interface SearchOptions {
  */
 const EXHAUSTIVE_LIMIT = 200;
 
+export const DEFAULT_COMPLETE_LIMIT = EXHAUSTIVE_LIMIT;
+
+function querySpecs(queries: string[] | QuerySpec[]): QuerySpec[] {
+  return queries
+    .map((q, i) =>
+      typeof q === "string"
+        ? { text: q, origin: (i === 0 ? "primary" : "agent") as QueryOrigin, weight: 1 }
+        : q,
+    )
+    .map((q) => ({ ...q, text: q.text.trim(), weight: Number.isFinite(q.weight) ? q.weight : 1 }))
+    .filter((q) => q.text && q.weight > 0);
+}
+
+function shouldExhaustivelyAppend(
+  filters: SearchFilters,
+  candidateCount: number,
+  completeness: SearchCompleteness,
+  completeLimit: number,
+): boolean {
+  if (candidateCount === 0) return false;
+  if (completeness === "complete") return true;
+  if (completeness === "complete-if-small") return candidateCount <= completeLimit;
+  if (completeness === "auto") return hasAnyFilter(filters) && candidateCount <= completeLimit;
+  return false;
+}
+
+function bestRank(lists: RankList[], id: string, kind: RankList["kind"]): number | undefined {
+  let best: number | undefined;
+  for (const list of lists) {
+    if (list.kind !== kind) continue;
+    const rank = list.ids.indexOf(id);
+    if (rank === -1) continue;
+    const oneBased = rank + 1;
+    if (best === undefined || oneBased < best) best = oneBased;
+  }
+  return best;
+}
+
+function matchedTerms(entry: MemoryEntry, qs: QuerySpec[]): string[] {
+  const entryTerms = new Set(tokenize(entrySearchText(entry)));
+  const terms = new Set<string>();
+  for (const q of qs) {
+    for (const term of tokenize(q.text)) {
+      if (entryTerms.has(term)) terms.add(term);
+    }
+  }
+  return [...terms].sort();
+}
+
 /**
  * Hybrid search: semantic (vector) + lexical (BM25), fused via Reciprocal Rank
  * Fusion. Accepts multiple query phrasings — every phrasing contributes a
@@ -287,21 +383,59 @@ const EXHAUSTIVE_LIMIT = 200;
  * filters constrain candidates BEFORE truncation (SQL prefilter + exhaustive
  * path), so filtered queries don't silently drop matches.
  */
-export async function search(
-  queries: string[],
+export async function searchDetailed(
+  queries: string[] | QuerySpec[],
   filters: SearchFilters = {},
   k = 8,
   opts: SearchOptions = {},
-): Promise<SearchHit[]> {
-  const qs = queries.map((q) => q.trim()).filter(Boolean);
-  if (qs.length === 0) return [];
+): Promise<SearchResult> {
+  const qs = querySpecs(queries);
+  const completeness = opts.completeness ?? "auto";
+  const completeLimit = opts.completeLimit ?? DEFAULT_COMPLETE_LIMIT;
+  if (qs.length === 0) {
+    return {
+      queries: [],
+      hits: [],
+      report: {
+        filters,
+        completeness,
+        exhaustive: false,
+        candidateCount: 0,
+        consideredCount: 0,
+        retrievalSignalCount: 0,
+        returnedCount: 0,
+        limitedByK: false,
+        k,
+        pool: 0,
+        chunkRows: 0,
+      },
+    };
+  }
 
   const entries = await loadAllEntries();
   const byId = new Map(entries.map((e) => [e.id, e]));
   const filtered = applyFilters(entries, filters);
-  if (filtered.length === 0) return [];
+  if (filtered.length === 0) {
+    return {
+      queries: qs,
+      hits: [],
+      report: {
+        filters,
+        completeness,
+        exhaustive: false,
+        candidateCount: 0,
+        consideredCount: 0,
+        retrievalSignalCount: 0,
+        returnedCount: 0,
+        limitedByK: false,
+        k,
+        pool: 0,
+        chunkRows: 0,
+      },
+    };
+  }
   const filteredIds = new Set(filtered.map((e) => e.id));
-  const exhaustive = hasAnyFilter(filters) && filtered.length <= EXHAUSTIVE_LIMIT;
+  const exhaustive = shouldExhaustivelyAppend(filters, filtered.length, completeness, completeLimit);
 
   const db = await lancedb.connect(INDEX_DIR);
   const table = await openTable(db);
@@ -317,11 +451,12 @@ export async function search(
 
   // --- semantic ranking lists, one per phrasing (best chunk per entry) ---
   const bestChunk = new Map<string, string>();
-  const rankLists: string[][] = [];
+  const rankLists: RankList[] = [];
   if (table && chunkRows > 0) {
     const embedder = getEmbedder();
-    const vecs = await embedder.embed(qs);
-    for (const qvec of vecs) {
+    const vecs = await embedder.embed(qs.map((q) => q.text));
+    for (const [i, qvec] of vecs.entries()) {
+      const query = qs[i]!;
       let vq = table.search(qvec) as lancedb.VectorQuery;
       if (where) vq = vq.where(where) as lancedb.VectorQuery;
       const rows = (await vq.limit(pool).toArray()) as { id: string; text: string }[];
@@ -333,31 +468,34 @@ export async function search(
           if (!bestChunk.has(r.id)) bestChunk.set(r.id, r.text);
         }
       }
-      rankLists.push(ids);
+      rankLists.push({ kind: "semantic", query, ids });
     }
   }
 
   // --- lexical ranking lists, one per phrasing, within the filtered set ---
   const lexIdx = (await readLexical()) ?? buildLexical(entries);
   for (const q of qs) {
-    const scores = bm25Scores(q, lexIdx);
+    const scores = bm25Scores(q.text, lexIdx);
     const ids = [...scores.entries()]
       .filter(([id]) => filteredIds.has(id))
       .sort((a, b) => b[1] - a[1])
       .map(([id]) => id);
-    rankLists.push(ids);
+    rankLists.push({ kind: "lexical", query: q, ids });
   }
 
   // --- reciprocal rank fusion across all lists ---
   const fused = new Map<string, number>();
   for (const list of rankLists) {
-    for (const [id, s] of rankToRRF(list)) fused.set(id, (fused.get(id) ?? 0) + s);
+    for (const [id, s] of rankToRRF(list.ids)) {
+      fused.set(id, (fused.get(id) ?? 0) + s * list.query.weight);
+    }
   }
 
   let ranked = [...fused.entries()]
     .filter(([id]) => byId.has(id))
     .sort((a, b) => b[1] - a[1])
     .map(([id, score]) => ({ id, score }));
+  const retrievalSignalCount = ranked.length;
 
   if (exhaustive) {
     // Recall guarantee: append filter-matching entries with no retrieval
@@ -370,10 +508,54 @@ export async function search(
     ranked = [...ranked, ...rest];
   }
 
-  return ranked.slice(0, k).map(({ id, score }) => {
+  const consideredCount = exhaustive ? filtered.length : retrievalSignalCount;
+  const hits = ranked.slice(0, k).map(({ id, score }) => {
     const entry = byId.get(id)!;
-    return { entry, score, bestChunk: bestChunk.get(id) ?? entry.body.slice(0, 300) };
+    const semanticRank = bestRank(rankLists, id, "semantic");
+    const lexicalRank = bestRank(rankLists, id, "lexical");
+    const retrievalSignals = [
+      ...(semanticRank !== undefined ? ["semantic"] : []),
+      ...(lexicalRank !== undefined ? ["lexical"] : []),
+      ...(score === 0 && exhaustive ? ["complete-scan"] : []),
+    ];
+    return {
+      entry,
+      score,
+      bestChunk: displayChunkText(bestChunk.get(id) ?? entry.body.slice(0, 300)),
+      reasons: {
+        ...(semanticRank !== undefined ? { semanticRank } : {}),
+        ...(lexicalRank !== undefined ? { lexicalRank } : {}),
+        matchedTerms: matchedTerms(entry, qs),
+        retrievalSignals,
+      },
+    };
   });
+  return {
+    queries: qs,
+    hits,
+    report: {
+      filters,
+      completeness,
+      exhaustive,
+      candidateCount: filtered.length,
+      consideredCount,
+      retrievalSignalCount,
+      returnedCount: hits.length,
+      limitedByK: ranked.length > k,
+      k,
+      pool,
+      chunkRows,
+    },
+  };
+}
+
+export async function search(
+  queries: string[],
+  filters: SearchFilters = {},
+  k = 8,
+  opts: SearchOptions = {},
+): Promise<SearchHit[]> {
+  return (await searchDetailed(queries, filters, k, opts)).hits;
 }
 
 export interface SimilarHit {

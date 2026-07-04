@@ -12,10 +12,11 @@ import {
   normalizeSourceId,
   ROOT,
 } from "./ingest.js";
-import { search, findSimilar, syncIndex, applyFilters, type SearchFilters } from "./store.js";
+import { search, findSimilar, syncIndex, applyFilters, type SearchCompleteness, type SearchFilters } from "./store.js";
 import type { MemoryEntry } from "./schema.js";
 import { commitMemoryRepo } from "./memory-git.js";
 import { mergeSlugs, type SlugKind } from "./graph-maintenance.js";
+import { recall, type RecallReport } from "./recall.js";
 
 const rel = (p: string) => relative(ROOT, p);
 const list = (s?: string) =>
@@ -38,6 +39,13 @@ function filtersFrom(values: Record<string, unknown>): SearchFilters {
     since: (values.since as string) || undefined,
     until: (values.until as string) || undefined,
   };
+}
+
+function positiveInt(value: unknown, fallback: number, label: string): number {
+  if (value === undefined) return fallback;
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 1) throw new Error(`${label}: expected a positive integer, got '${value}'`);
+  return n;
 }
 
 const ISO_UTC_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/;
@@ -266,6 +274,99 @@ async function cmdQuery(argv: string[]) {
     console.log(`  ${rel(h.entry.path)}`);
     console.log(`  ${snippet}${snippet.length >= 220 ? "…" : ""}`);
   }
+}
+
+function recallCompleteness(values: Record<string, unknown>): SearchCompleteness {
+  const selected = ["complete", "complete-if-small", "no-complete"].filter((k) => Boolean(values[k]));
+  if (selected.length > 1) {
+    throw new Error("--complete, --complete-if-small, and --no-complete are mutually exclusive");
+  }
+  if (values.complete) return "complete";
+  if (values["no-complete"]) return "none";
+  return "complete-if-small";
+}
+
+function printRecallText(report: RecallReport, showQueries: boolean): void {
+  console.log(
+    `recall: mode=${report.mode} exhaustive=${report.exhaustive ? "yes" : "no"} ` +
+      `candidates=${report.candidateCount} considered=${report.consideredCount} returned=${report.returnedCount}`,
+  );
+  if (report.warnings.length) {
+    for (const warning of report.warnings) console.log(`warning: ${warning}`);
+  }
+  if (showQueries) {
+    console.log("\nqueries:");
+    for (const q of report.queries) {
+      console.log(`  - [${q.origin} x${q.weight}] ${q.text}`);
+    }
+  }
+  if (report.hits.length === 0) {
+    console.log("\n(no matches)");
+    return;
+  }
+  for (const h of report.hits) {
+    const snippet = h.bestChunk.replace(/\s+/g, " ").slice(0, 220);
+    const signals = h.reasons?.retrievalSignals.length ? ` via ${h.reasons.retrievalSignals.join("+")}` : "";
+    console.log(`\n- ${h.title}  [${h.type} · ${h.date}]  (score ${h.score.toFixed(3)}${signals})`);
+    if (h.people.length) console.log(`  people: ${h.people.join(", ")}`);
+    if (h.updated) console.log(`  updated: ${h.updated}`);
+    if (h.type === "summary" && h.sources?.length) {
+      const shown = h.sources.slice(0, 20);
+      const more = h.sources.length - shown.length;
+      console.log(`  sources: ${shown.join(", ")}${more > 0 ? `, … (+${more} more)` : ""}`);
+    }
+    if (h.reasons?.matchedTerms.length) console.log(`  matched terms: ${h.reasons.matchedTerms.join(", ")}`);
+    console.log(`  ${h.relPath}`);
+    console.log(`  ${snippet}${snippet.length >= 220 ? "…" : ""}`);
+  }
+}
+
+async function cmdRecall(argv: string[]) {
+  const { values, positionals } = parseArgs({
+    args: argv,
+    options: {
+      person: { type: "string" },
+      type: { type: "string" },
+      team: { type: "string" },
+      tag: { type: "string" },
+      since: { type: "string" },
+      until: { type: "string" },
+      k: { type: "string", short: "k" },
+      format: { type: "string" },
+      complete: { type: "boolean" },
+      "complete-if-small": { type: "boolean" },
+      "complete-limit": { type: "string" },
+      "require-complete": { type: "boolean" },
+      "no-complete": { type: "boolean" },
+      "no-expand": { type: "boolean" },
+      "show-queries": { type: "boolean" },
+      shallow: { type: "boolean" },
+    },
+    allowPositionals: true,
+  });
+  const queries = positionals.map((q) => q.trim()).filter(Boolean);
+  if (queries.length === 0) {
+    throw new Error(
+      'usage: memory recall "<question>" ["<agent phrasing>" …] [--person X] [--type Y] [--complete] [--format json]',
+    );
+  }
+  const format = ((values.format as string | undefined) ?? "text").toLowerCase();
+  if (format !== "text" && format !== "json") throw new Error("--format must be one of: text, json");
+
+  const report = await recall(queries, {
+    filters: filtersFrom(values),
+    k: positiveInt(values.k, 40, "-k"),
+    deep: !values.shallow,
+    noExpand: Boolean(values["no-expand"]),
+    completeness: recallCompleteness(values),
+    completeLimit: positiveInt(values["complete-limit"], 200, "--complete-limit"),
+    requireComplete: Boolean(values["require-complete"]),
+  });
+
+  if (format === "json") console.log(JSON.stringify(report, null, 2));
+  else printRecallText(report, Boolean(values["show-queries"]));
+
+  if (values["require-complete"] && !report.exhaustive) process.exitCode = 2;
 }
 
 async function cmdList(argv: string[]) {
@@ -560,6 +661,10 @@ Usage:
   memory query "<question>" ["<alt phrasing>" …] [--person X] [--type Y] [--since DATE] [--until DATE] [-k N] [--deep]
             # each quoted positional is a separate phrasing; all are fused (2-4 recommended)
             # --deep: recall-over-precision preset (k=40, wider candidate pool)
+  memory recall "<question>" ["<agent phrasing>" …] [--person X] [--type Y] [--since DATE] [--until DATE] [-k N]
+            [--complete | --complete-if-small | --no-complete] [--require-complete] [--no-expand] [--format text|json]
+            # first phrasing is primary; extras are agent-supplied; CLI adds deterministic expansions unless --no-expand
+            # default: k=40, deep pools, complete-if-small (limit 200)
   memory list [--person|--type|--team|--tag|--since|--until|--limit]
   memory person <slug>
   memory digest --person <slug> | --quarter <YYYY-Qn> | --tag <slug>
@@ -581,6 +686,7 @@ async function main() {
     case "remove": return cmdRemove(rest);
     case "index": return cmdIndex(rest);
     case "query": return cmdQuery(rest);
+    case "recall": return cmdRecall(rest);
     case "list": return cmdList(rest);
     case "person": return cmdPerson(rest);
     case "digest": return cmdDigest(rest);

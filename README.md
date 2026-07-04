@@ -114,6 +114,12 @@ memory query "<question>" ["<alternate phrasing>" ...]
              [--person slug] [--type type] [--team slug] [--tag slug]
              [--since YYYY-MM-DD] [--until YYYY-MM-DD] [-k n] [--deep]
 
+memory recall "<question>" ["<agent phrasing>" ...]
+              [--person slug] [--type type] [--team slug] [--tag slug]
+              [--since YYYY-MM-DD] [--until YYYY-MM-DD] [-k n]
+              [--complete | --complete-if-small | --no-complete]
+              [--require-complete] [--no-expand] [--format text|json]
+
 memory list [--person slug] [--type type] [--team slug] [--tag slug]
             [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--limit n]
 
