@@ -664,13 +664,14 @@ export function renderGraphView(mainEl, entries, opts = {}) {
 
   /** @param {GNode[]} ns */
   function labelSet(ns) {
-    const kind = gstate.mode === "topics" ? "tag" : "person";
-    const limit = gstate.mode === "topics" ? 14 : 12;
+    if (gstate.mode !== "topics") {
+      return new Set(ns.filter((n) => n.kind === "person").map((n) => n.id));
+    }
     return new Set(
       ns
-        .filter((n) => n.kind === kind)
+        .filter((n) => n.kind === "tag")
         .sort((a, b) => b.deg - a.deg || b.links - a.links || a.label.localeCompare(b.label))
-        .slice(0, limit)
+        .slice(0, 14)
         .map((n) => n.id),
     );
   }
