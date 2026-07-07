@@ -9,6 +9,7 @@ import {
   type SearchFilters,
 } from "./store.js";
 import type { MemoryEntry } from "./schema.js";
+import type { ChainAnnotation } from "./chains.js";
 
 const ORIGIN_WEIGHTS: Record<QueryOrigin, number> = {
   primary: 1.25,
@@ -80,11 +81,14 @@ export interface RecallHit {
   teams: string[];
   tags: string[];
   sources?: string[];
+  follows?: string[];
   source_ids?: string[];
   path: string;
   relPath: string;
   score: number;
   bestChunk: string;
+  /** Timeline context when the entry belongs to a `follows` chain. */
+  chain?: ChainAnnotation;
   reasons?: {
     semanticRank?: number;
     lexicalRank?: number;
@@ -222,11 +226,13 @@ export async function recall(positionals: string[], opts: RecallOptions = {}): P
       teams: h.entry.teams,
       tags: h.entry.tags,
       ...(h.entry.sources?.length ? { sources: h.entry.sources } : {}),
+      ...(h.entry.follows?.length ? { follows: h.entry.follows } : {}),
       ...(h.entry.source_ids?.length ? { source_ids: h.entry.source_ids } : {}),
       path: h.entry.path,
       relPath: relative(ROOT, h.entry.path),
       score: h.score,
       bestChunk: h.bestChunk,
+      ...(h.chain ? { chain: h.chain } : {}),
       ...(h.reasons ? { reasons: h.reasons } : {}),
     })),
   };

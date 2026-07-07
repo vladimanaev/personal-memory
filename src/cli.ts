@@ -15,7 +15,7 @@ import {
 import { search, findSimilar, syncIndex, applyFilters, type SearchCompleteness, type SearchFilters } from "./store.js";
 import type { MemoryEntry } from "./schema.js";
 import { commitMemoryRepo } from "./memory-git.js";
-import { validateFollowsTargets } from "./chains.js";
+import { buildChainIndex, entryStatus, validateFollowsTargets, type ChainAnnotation } from "./chains.js";
 import { mergeSlugs, type SlugKind } from "./graph-maintenance.js";
 import { recall, type RecallReport } from "./recall.js";
 
@@ -81,6 +81,32 @@ async function markCapturedConnectors(names: string[], at?: string): Promise<str
   if (names.length === 0) return [];
   const { markConnectorsCaptured } = await import("./connectors.js");
   return markConnectorsCaptured(names, at);
+}
+
+/**
+ * Timeline context lines for one hit: where the matter went after this entry
+ * (so a stale state can never mislead) and whether an open item is settled.
+ */
+function chainStatusLines(
+  chain: ChainAnnotation | undefined,
+  self: { id: string; type: string },
+): string[] {
+  const lines: string[] = [];
+  if (chain && chain.latest.id !== self.id) {
+    lines.push(`⤷ superseded by: ${chain.latest.id} (${chain.latest.type} · ${chain.latest.date})`);
+  }
+  const status = chain?.status ?? (self.type === "pending-decision" || self.type === "todo" ? "open" : undefined);
+  if (status) {
+    lines.push(`status: ${status === "resolved" && chain?.resolvedBy ? `resolved by ${chain.resolvedBy}` : status}`);
+  }
+  return lines;
+}
+
+/** ` [open]` / ` [resolved → id]` marker for pending-decision/todo listings. */
+function statusSuffix(e: MemoryEntry, chainIndex: Map<string, ChainAnnotation>): string {
+  const s = entryStatus(e, chainIndex);
+  if (!s) return "";
+  return s.status === "resolved" ? `  [resolved → ${s.resolvedBy ?? "?"}]` : "  [open]";
 }
 
 // ---------------- commands ----------------
@@ -330,6 +356,7 @@ async function cmdQuery(argv: string[]) {
       const more = h.entry.sources.length - shown.length;
       console.log(`  sources: ${shown.join(", ")}${more > 0 ? `, … (+${more} more)` : ""}`);
     }
+    for (const line of chainStatusLines(h.chain, h.entry)) console.log(`  ${line}`);
     console.log(`  ${rel(h.entry.path)}`);
     console.log(`  ${snippet}${snippet.length >= 220 ? "…" : ""}`);
   }
@@ -374,6 +401,7 @@ function printRecallText(report: RecallReport, showQueries: boolean): void {
       const more = h.sources.length - shown.length;
       console.log(`  sources: ${shown.join(", ")}${more > 0 ? `, … (+${more} more)` : ""}`);
     }
+    for (const line of chainStatusLines(h.chain, h)) console.log(`  ${line}`);
     if (h.reasons?.matchedTerms.length) console.log(`  matched terms: ${h.reasons.matchedTerms.join(", ")}`);
     console.log(`  ${h.relPath}`);
     console.log(`  ${snippet}${snippet.length >= 220 ? "…" : ""}`);
@@ -441,12 +469,14 @@ async function cmdList(argv: string[]) {
       limit: { type: "string" },
     },
   });
-  const entries = applyFilters(await loadAllEntries(), filtersFrom(values)).sort(
+  const all = await loadAllEntries();
+  const chainIndex = buildChainIndex(all);
+  const entries = applyFilters(all, filtersFrom(values)).sort(
     (a, b) => b.date.localeCompare(a.date),
   );
   const limit = values.limit ? Number(values.limit) : entries.length;
   for (const e of entries.slice(0, limit)) {
-    console.log(`${e.date}  ${e.type.padEnd(11)} ${e.title}  (${rel(e.path)})`);
+    console.log(`${e.date}  ${e.type.padEnd(11)} ${e.title}${statusSuffix(e, chainIndex)}  (${rel(e.path)})`);
   }
   console.log(`\n${entries.length} entr${entries.length === 1 ? "y" : "ies"}`);
 }
@@ -454,7 +484,9 @@ async function cmdList(argv: string[]) {
 async function cmdPerson(argv: string[]) {
   const slug = argv[0];
   if (!slug || slug.startsWith("-")) throw new Error("usage: memory person <slug>");
-  const entries = (await loadAllEntries())
+  const all = await loadAllEntries();
+  const chainIndex = buildChainIndex(all);
+  const entries = all
     .filter((e) => e.people.includes(slug))
     .sort((a, b) => b.date.localeCompare(a.date));
   if (entries.length === 0) {
@@ -463,7 +495,7 @@ async function cmdPerson(argv: string[]) {
   }
   console.log(`# Memories involving ${slug} (${entries.length})\n`);
   for (const e of entries) {
-    console.log(`${e.date}  [${e.type}] ${e.title}  (${rel(e.path)})`);
+    console.log(`${e.date}  [${e.type}] ${e.title}${statusSuffix(e, chainIndex)}  (${rel(e.path)})`);
   }
 }
 

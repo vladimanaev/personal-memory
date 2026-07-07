@@ -53,6 +53,22 @@ function descendants(id: string, next: Map<string, string[]>): string[] {
 }
 
 /**
+ * Display status for an entry: chained open-types report their chain status;
+ * an UNLINKED pending-decision/todo is simply open. Non-open types have none.
+ */
+export function entryStatus(
+  e: MemoryEntry,
+  index: Map<string, ChainAnnotation>,
+): { status: "open" | "resolved"; resolvedBy?: string } | undefined {
+  if (!OPEN_TYPES.has(e.type)) return undefined;
+  const annotation = index.get(e.id);
+  if (!annotation?.status) return { status: "open" };
+  return annotation.status === "resolved"
+    ? { status: "resolved", ...(annotation.resolvedBy ? { resolvedBy: annotation.resolvedBy } : {}) }
+    : { status: "open" };
+}
+
+/**
  * Write-time guard for new `follows` links: every target must exist, be no
  * newer than the follower, not be the follower itself, and not already follow
  * the follower (directly or transitively) — so the CLI can never create a

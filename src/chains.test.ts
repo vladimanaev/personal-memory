@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { MemoryEntry } from "./schema.js";
-import { buildChainIndex, validateFollowsTargets } from "./chains.js";
+import { buildChainIndex, entryStatus, validateFollowsTargets } from "./chains.js";
 
 function entry(partial: Partial<MemoryEntry> & Pick<MemoryEntry, "id" | "date" | "type">): MemoryEntry {
   return {
@@ -144,6 +144,21 @@ test("summary in a chain never gets a status", () => {
   ]);
   assert.equal(idx.get("2026-02-01-summary")!.status, undefined);
   assert.equal(idx.get("2026-01-01-pending")!.status, "resolved");
+});
+
+test("entryStatus: unlinked pending-decision is open; notes have no status", () => {
+  const pending = entry({ id: "2026-03-01-lonely", date: "2026-03-01", type: "pending-decision" });
+  const note = entry({ id: "2026-03-02-note", date: "2026-03-02", type: "note" });
+  const idx = buildChainIndex([pending, note]);
+  assert.deepEqual(entryStatus(pending, idx), { status: "open" });
+  assert.equal(entryStatus(note, idx), undefined);
+});
+
+test("entryStatus: chained pending-decision reports resolver", () => {
+  const pending = entry({ id: "2026-01-01-p", date: "2026-01-01", type: "pending-decision" });
+  const decision = entry({ id: "2026-02-01-d", date: "2026-02-01", type: "decision", follows: ["2026-01-01-p"] });
+  const idx = buildChainIndex([pending, decision]);
+  assert.deepEqual(entryStatus(pending, idx), { status: "resolved", resolvedBy: "2026-02-01-d" });
 });
 
 test("validateFollowsTargets: accepts a valid earlier target", () => {

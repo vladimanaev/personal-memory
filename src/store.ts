@@ -6,6 +6,7 @@ import { getEmbedder, type Embedder } from "./embed.js";
 import { chunkEntry, displayChunkText, entrySearchText, hashEntry, loadAllEntries, INDEX_DIR } from "./ingest.js";
 import { packSlugs, type MemoryEntry, type MemoryRecord } from "./schema.js";
 import { readLexical, buildLexical, syncLexical, bm25Scores, tokenize } from "./lexical.js";
+import { buildChainIndex, type ChainAnnotation } from "./chains.js";
 
 const META_PATH = join(INDEX_DIR, "meta.json");
 const TABLE = "memory";
@@ -240,6 +241,8 @@ export interface SearchHit {
   entry: MemoryEntry;
   score: number;
   bestChunk: string;
+  /** Timeline context when the entry belongs to a `follows` chain. */
+  chain?: ChainAnnotation;
   reasons?: SearchHitReason;
 }
 
@@ -326,6 +329,10 @@ export interface SearchOptions {
  * order (and `k`) limits what is printed.
  */
 const EXHAUSTIVE_LIMIT = 200;
+
+/** Max recency multiplier bonus (2%) and its e-folding age in days. */
+const RECENCY_EPS = 0.02;
+const RECENCY_DECAY_DAYS = 90;
 
 export const DEFAULT_COMPLETE_LIMIT = EXHAUSTIVE_LIMIT;
 
@@ -491,6 +498,19 @@ export async function searchDetailed(
     }
   }
 
+  // Mild recency boost: at most +2%, decaying over ~3 months of age (by
+  // max(date, updated)). Sized to break genuine near-ties toward the newer
+  // entry while staying below the ~0.3-1% adjacent-rank RRF gap × a few
+  // lists, so any entry with a real relevance lead is untouchable.
+  const now = Date.now();
+  for (const [id, score] of fused) {
+    const e = byId.get(id);
+    if (!e) continue;
+    const ref = e.updated && e.updated > e.date ? e.updated : e.date;
+    const ageDays = Math.max(0, (now - Date.parse(ref)) / 86_400_000);
+    fused.set(id, score * (1 + RECENCY_EPS * Math.exp(-ageDays / RECENCY_DECAY_DAYS)));
+  }
+
   let ranked = [...fused.entries()]
     .filter(([id]) => byId.has(id))
     .sort((a, b) => b[1] - a[1])
@@ -509,8 +529,10 @@ export async function searchDetailed(
   }
 
   const consideredCount = exhaustive ? filtered.length : retrievalSignalCount;
+  const chainIndex = buildChainIndex(entries);
   const hits = ranked.slice(0, k).map(({ id, score }) => {
     const entry = byId.get(id)!;
+    const chain = chainIndex.get(id);
     const semanticRank = bestRank(rankLists, id, "semantic");
     const lexicalRank = bestRank(rankLists, id, "lexical");
     const retrievalSignals = [
@@ -522,6 +544,7 @@ export async function searchDetailed(
       entry,
       score,
       bestChunk: displayChunkText(bestChunk.get(id) ?? entry.body.slice(0, 300)),
+      ...(chain ? { chain } : {}),
       reasons: {
         ...(semanticRank !== undefined ? { semanticRank } : {}),
         ...(lexicalRank !== undefined ? { lexicalRank } : {}),
