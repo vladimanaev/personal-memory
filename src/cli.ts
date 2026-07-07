@@ -15,6 +15,7 @@ import {
 import { search, findSimilar, syncIndex, applyFilters, type SearchCompleteness, type SearchFilters } from "./store.js";
 import type { MemoryEntry } from "./schema.js";
 import { commitMemoryRepo } from "./memory-git.js";
+import { validateFollowsTargets } from "./chains.js";
 import { mergeSlugs, type SlugKind } from "./graph-maintenance.js";
 import { recall, type RecallReport } from "./recall.js";
 
@@ -95,6 +96,7 @@ async function cmdAdd(argv: string[]) {
       teams: { type: "string" },
       tags: { type: "string" },
       sources: { type: "string" },
+      follows: { type: "string" },
       "source-ids": { type: "string" },
       connector: { type: "string" },
       body: { type: "string" },
@@ -145,6 +147,15 @@ async function cmdAdd(argv: string[]) {
     }
   }
 
+  // --- timeline links: validate new targets against the store ---
+  const follows = list(values.follows as string);
+  if (follows.length) {
+    const sourceId = target?.id ?? ((values.id as string) || makeId(date, title));
+    const sourceDate = target?.date ?? date;
+    validateFollowsTargets(entries, { id: sourceId, date: sourceDate }, follows);
+  }
+  const mergedFollows = uniq([...(target?.follows ?? []), ...follows]);
+
   // --- build the final frontmatter ---
   const mergedSourceIds = uniq([...(target?.source_ids ?? []), ...sourceIds]);
   const fm: Frontmatter = FrontmatterSchema.parse(
@@ -158,6 +169,7 @@ async function cmdAdd(argv: string[]) {
           teams: uniq([...target.teams, ...list(values.teams as string)]),
           tags: uniq([...target.tags, ...list(values.tags as string)]),
           ...(target.sources ? { sources: target.sources } : {}),
+          ...(mergedFollows.length ? { follows: mergedFollows } : {}),
           ...(mergedSourceIds.length ? { source_ids: mergedSourceIds } : {}),
           updated: today(),
         }
@@ -170,6 +182,7 @@ async function cmdAdd(argv: string[]) {
           teams: list(values.teams as string),
           tags: list(values.tags as string),
           ...(values.sources ? { sources: list(values.sources as string) } : {}),
+          ...(follows.length ? { follows } : {}),
           ...(sourceIds.length ? { source_ids: sourceIds } : {}),
         },
   );
@@ -194,6 +207,45 @@ async function cmdAdd(argv: string[]) {
   if (captured.length) console.log(`  connector captured: ${captured.join(", ")}`);
 }
 
+async function cmdLink(argv: string[]) {
+  const { values, positionals } = parseArgs({
+    args: argv,
+    options: { follows: { type: "string" } },
+    allowPositionals: true,
+  });
+  const id = positionals[0];
+  const follows = list(values.follows as string);
+  if (!id || positionals.length !== 1 || follows.length === 0) {
+    throw new Error("usage: memory link <id> --follows <earlier-id,…>");
+  }
+
+  const entries = await loadAllEntries();
+  const entry = entries.find((e) => e.id === id);
+  if (!entry) throw new Error(`no entry with id '${id}'`);
+  validateFollowsTargets(entries, entry, follows);
+
+  const uniq = (xs: string[]) => [...new Set(xs)];
+  const mergedFollows = uniq([...(entry.follows ?? []), ...follows]);
+  if (mergedFollows.length === (entry.follows ?? []).length) {
+    console.log(`✓ unchanged ${id} (already follows ${follows.join(", ")})`);
+    return;
+  }
+
+  const { body: _b, path: _p, ...rest } = entry;
+  const fm: Frontmatter = FrontmatterSchema.parse({
+    ...rest,
+    follows: mergedFollows,
+    updated: today(),
+  });
+  const path = await writeEntry(fm, entry.body);
+  const stats = await syncIndex();
+  // The add-time auto-commit hook only fires on `add`; commit explicitly.
+  await commitMemoryRepo(`Link memory: ${id} follows ${mergedFollows.join(", ")}`);
+  console.log(`✓ linked ${id} → follows ${mergedFollows.join(", ")}`);
+  console.log(`  ${rel(path)}`);
+  console.log(`  indexed (+${stats.added} changed, ${stats.unchanged} unchanged)`);
+}
+
 async function cmdRemove(argv: string[]) {
   const { positionals } = parseArgs({ args: argv, options: {}, allowPositionals: true });
   const id = positionals[0];
@@ -208,6 +260,13 @@ async function cmdRemove(argv: string[]) {
     console.error("  update or remove those summaries first");
     process.exitCode = 2;
     return;
+  }
+
+  // Chain links tolerate dangling targets (maintenance reports them), so a
+  // followed entry can still be removed — but say what gets orphaned.
+  const followers = entries.filter((e) => e.follows?.includes(id));
+  if (followers.length) {
+    console.log(`⚠ ${id} is followed by: ${followers.map((e) => e.id).join(", ")} — their links will dangle`);
   }
 
   // Checkpoint first so the removed content is always recoverable from
@@ -653,9 +712,12 @@ Usage:
             # types: event|decision|todo|pending-decision|1on1|hiring|incident|achievement|feedback|meeting|note|summary
             [--source-ids slack:C123:1700000000.1,gmail:<thread-id>]  # dedup anchor
             [--connector raw-capture]  # extraction prompt/source used for capture bookkeeping
+            [--follows <id,…>]   # timeline link: this entry develops/settles the listed earlier entries
             [--update <id>]      # refresh a specific entry in place
             [--force-new]        # bypass the near-duplicate guard
             [--dup-threshold N]  # cosine threshold for the guard (default 0.92)
+  memory link <id> --follows <earlier-id,…>
+            # add timeline links to an existing entry (e.g. a decision settling a pending-decision)
   memory remove <id>   # delete an entry + sync index (prior content stays in memory/.git history)
   memory index [--force]
   memory query "<question>" ["<alt phrasing>" …] [--person X] [--type Y] [--since DATE] [--until DATE] [-k N] [--deep]
@@ -683,6 +745,7 @@ async function main() {
   const [cmd, ...rest] = process.argv.slice(2);
   switch (cmd) {
     case "add": return cmdAdd(rest);
+    case "link": return cmdLink(rest);
     case "remove": return cmdRemove(rest);
     case "index": return cmdIndex(rest);
     case "query": return cmdQuery(rest);

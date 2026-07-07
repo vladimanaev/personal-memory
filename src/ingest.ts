@@ -178,6 +178,7 @@ export function entryMetadataText(e: MemoryEntry): string {
     `teams: ${csv(e.teams)}`,
     `tags: ${csv(e.tags)}`,
     `sources: ${csv(e.sources)}`,
+    `follows: ${csv(e.follows)}`,
     `source_ids: ${csv(e.source_ids)}`,
   ];
   return lines.filter((line) => !line.endsWith(": ")).join("\n");
@@ -203,6 +204,7 @@ export function displayChunkText(text: string): string {
     .replace(/^teams: .*\n/, "")
     .replace(/^tags: .*\n/, "")
     .replace(/^sources: .*\n/, "")
+    .replace(/^follows: .*\n/, "")
     .replace(/^source_ids: .*\n/, "")
     .replace(/^\n+body:\n/, "")
     .replace(/^body:\n/, "")

@@ -53,6 +53,45 @@ function descendants(id: string, next: Map<string, string[]>): string[] {
 }
 
 /**
+ * Write-time guard for new `follows` links: every target must exist, be no
+ * newer than the follower, not be the follower itself, and not already follow
+ * the follower (directly or transitively) — so the CLI can never create a
+ * cycle. `source` may be an entry that does not exist yet (a fresh capture).
+ */
+export function validateFollowsTargets(
+  entries: MemoryEntry[],
+  source: { id: string; date: string },
+  targets: string[],
+): void {
+  const byId = new Map(entries.map((e) => [e.id, e] as const));
+  for (const target of targets) {
+    if (target === source.id) {
+      throw new Error(`--follows: '${source.id}' cannot follow itself`);
+    }
+    const t = byId.get(target);
+    if (!t) throw new Error(`--follows: no entry with id '${target}'`);
+    if (t.date > source.date) {
+      throw new Error(
+        `--follows: target '${target}' (${t.date}) must not be newer than '${source.id}' (${source.date})`,
+      );
+    }
+    // Walk the target's ancestry (its own follows, transitively): reaching the
+    // source means the new link would close a loop.
+    const seen = new Set<string>();
+    const queue = [...(t.follows ?? [])];
+    while (queue.length) {
+      const cur = queue.shift()!;
+      if (cur === source.id) {
+        throw new Error(`--follows: linking '${source.id}' → '${target}' would create a cycle`);
+      }
+      if (seen.has(cur)) continue;
+      seen.add(cur);
+      queue.push(...(byId.get(cur)?.follows ?? []));
+    }
+  }
+}
+
+/**
  * Build the chain index: only entries participating in a chain (linking,
  * linked-to, or carrying dangling links) get an annotation; everything else is
  * absent. O(component) per entry — trivial at this corpus size.

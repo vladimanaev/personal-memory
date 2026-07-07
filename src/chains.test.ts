@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { MemoryEntry } from "./schema.js";
-import { buildChainIndex } from "./chains.js";
+import { buildChainIndex, validateFollowsTargets } from "./chains.js";
 
 function entry(partial: Partial<MemoryEntry> & Pick<MemoryEntry, "id" | "date" | "type">): MemoryEntry {
   return {
@@ -144,6 +144,53 @@ test("summary in a chain never gets a status", () => {
   ]);
   assert.equal(idx.get("2026-02-01-summary")!.status, undefined);
   assert.equal(idx.get("2026-01-01-pending")!.status, "resolved");
+});
+
+test("validateFollowsTargets: accepts a valid earlier target", () => {
+  const entries = [
+    entry({ id: "2026-01-01-pending", date: "2026-01-01", type: "pending-decision" }),
+  ];
+  validateFollowsTargets(entries, { id: "2026-02-01-decision", date: "2026-02-01" }, ["2026-01-01-pending"]);
+});
+
+test("validateFollowsTargets: same-day target is allowed", () => {
+  const entries = [entry({ id: "2026-05-05-pending", date: "2026-05-05", type: "pending-decision" })];
+  validateFollowsTargets(entries, { id: "2026-05-05-decision", date: "2026-05-05" }, ["2026-05-05-pending"]);
+});
+
+test("validateFollowsTargets: unknown target rejected", () => {
+  assert.throws(
+    () => validateFollowsTargets([], { id: "2026-02-01-a", date: "2026-02-01" }, ["2026-01-01-gone"]),
+    /no entry with id '2026-01-01-gone'/,
+  );
+});
+
+test("validateFollowsTargets: self-link rejected", () => {
+  const entries = [entry({ id: "2026-01-01-a", date: "2026-01-01", type: "note" })];
+  assert.throws(
+    () => validateFollowsTargets(entries, { id: "2026-01-01-a", date: "2026-01-01" }, ["2026-01-01-a"]),
+    /itself/,
+  );
+});
+
+test("validateFollowsTargets: later-dated target rejected", () => {
+  const entries = [entry({ id: "2026-03-01-future", date: "2026-03-01", type: "note" })];
+  assert.throws(
+    () => validateFollowsTargets(entries, { id: "2026-02-01-a", date: "2026-02-01" }, ["2026-03-01-future"]),
+    /must not be newer/,
+  );
+});
+
+test("validateFollowsTargets: cycle rejected (target already follows the source)", () => {
+  const entries = [
+    entry({ id: "2026-01-01-a", date: "2026-01-01", type: "note" }),
+    entry({ id: "2026-01-01-b", date: "2026-01-01", type: "note", follows: ["2026-01-01-a"] }),
+  ];
+  // a --follows b would close the loop a → b → a
+  assert.throws(
+    () => validateFollowsTargets(entries, { id: "2026-01-01-a", date: "2026-01-01" }, ["2026-01-01-b"]),
+    /cycle/,
+  );
 });
 
 test("entries outside any chain are absent from the index", () => {
