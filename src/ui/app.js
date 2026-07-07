@@ -1167,22 +1167,28 @@ function chainKey(s) {
   return `${s.laterId}|${s.openId}`;
 }
 
-/** Accept a suggested timeline link: the open item gets resolved by the later entry. */
-/** @param {ChainLinkSuggestion} s */
-async function postChainLink(s) {
+/**
+ * Accept or dismiss a suggested timeline link. Accept resolves the open item
+ * with the later entry; dismiss persistently hides a wrong pair.
+ * @param {ChainLinkSuggestion} s @param {"link"|"dismiss"} action
+ */
+async function postChainLink(s, action) {
   const key = chainKey(s);
   state.mergeBusy = key;
   state.mergeErrors[key] = "";
   render();
   try {
-    const res = await fetch("/api/maintenance/link", {
+    const res = await fetch(action === "link" ? "/api/maintenance/link" : "/api/maintenance/link/dismiss", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ laterId: s.laterId, follows: [s.openId], confirm: true }),
+      body:
+        action === "link"
+          ? JSON.stringify({ laterId: s.laterId, follows: [s.openId], confirm: true })
+          : JSON.stringify({ laterId: s.laterId, openId: s.openId }),
     });
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error ?? `link failed (${res.status})`);
-    await Promise.all([reloadRecordData(), loadMaintenance()]);
+    if (!res.ok) throw new Error(data.error ?? `${action} failed (${res.status})`);
+    await Promise.all([action === "link" ? reloadRecordData() : Promise.resolve(), loadMaintenance()]);
   } catch (err) {
     state.mergeErrors[key] = err instanceof Error ? err.message : String(err);
   }
@@ -1206,7 +1212,7 @@ function chainSuggestionRow(s) {
           <span class="badge tdot gt-${esc(s.laterType)}">${esc(s.laterType)}</span>
           <a href="#/entry/${encodeURIComponent(s.laterId)}">${esc(s.laterTitle)}</a>
           <span class="score">${s.sim.toFixed(2)}</span>
-          <span class="mactions"><button class="chip chip-primary" data-mlink="${esc(key)}" ${busy ? "disabled" : ""}>${busy ? "linking…" : "link"}</button></span>
+          <span class="mactions"><button class="chip chip-primary" data-mlink="${esc(key)}" ${busy ? "disabled" : ""}>${busy ? "working…" : "link"}</button><button class="chip" data-mdismiss="${esc(key)}" ${busy ? "disabled" : ""} title="wrong pair — hide this suggestion permanently">dismiss</button></span>
         </span>
         <span class="msnippet">${esc(s.laterId)} --follows ${esc(s.openId)} · ${esc(s.laterDate)} resolves ${esc(s.openDate)} · shared: ${esc(s.shared.join(", "))}</span>
         ${err ? `<span class="merr">${esc(err)}</span>` : ""}
@@ -1579,7 +1585,14 @@ document.addEventListener("click", (ev) => {
   if (linkEl instanceof HTMLElement) {
     ev.preventDefault();
     const s = state.maintenance?.audit?.chainSuggestions?.find((x) => chainKey(x) === linkEl.dataset.mlink);
-    if (s) postChainLink(s);
+    if (s) postChainLink(s, "link");
+    return;
+  }
+  const dismissEl = t.closest("[data-mdismiss]");
+  if (dismissEl instanceof HTMLElement) {
+    ev.preventDefault();
+    const s = state.maintenance?.audit?.chainSuggestions?.find((x) => chainKey(x) === dismissEl.dataset.mdismiss);
+    if (s) postChainLink(s, "dismiss");
     return;
   }
   const cancelConfirmEl = t.closest("[data-mcancel-confirm]");

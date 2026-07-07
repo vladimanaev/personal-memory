@@ -112,7 +112,8 @@ npx tsx src/cli.ts maintenance        # prints ready-to-run digest commands
 `maintenance` also lists **possible unlinked chains** — open
 pending-decisions/todos with a semantically-close later entry that shares a
 person/tag — as ready-to-run `memory link` commands. Run the ones that are
-genuinely the same matter; skip the rest.
+genuinely the same matter; wrong pairs can be permanently dismissed in the web
+UI's maintenance screen (link/dismiss buttons per suggestion).
 
 ## Principles
 

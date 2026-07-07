@@ -8,7 +8,7 @@ import { loadAllEntries, ROOT } from "./ingest.js";
 import { search, indexStatus, type SearchFilters } from "./store.js";
 import { loadConnectors, loadConnectorState, writeConnector, relConnector } from "./connectors.js";
 import { getMaintenanceSnapshot, launchMaintenanceRun, startMaintenanceScheduler } from "./scheduled-maintenance.js";
-import { applyChainLink, mergeSlugs, type SlugKind } from "./graph-maintenance.js";
+import { applyChainLink, dismissChainSuggestion, mergeSlugs, type SlugKind } from "./graph-maintenance.js";
 import { buildChainIndex } from "./chains.js";
 
 const UI_DIR = fileURLToPath(new URL("./ui/", import.meta.url));
@@ -256,6 +256,29 @@ async function apiChainLink(req: IncomingMessage, res: ServerResponse): Promise<
   }
 }
 
+async function apiDismissChainLink(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  let data: Record<string, unknown>;
+  try {
+    data = (JSON.parse((await readBody(req, 32 * 1024)) || "{}") ?? {}) as Record<string, unknown>;
+  } catch (err) {
+    sendJson(res, (err as { status?: number }).status ?? 400, {
+      error: err instanceof Error ? err.message : "invalid JSON body",
+    });
+    return;
+  }
+  const openId = typeof data.openId === "string" ? data.openId : "";
+  const laterId = typeof data.laterId === "string" ? data.laterId : "";
+  if (!openId || !laterId) {
+    sendJson(res, 400, { error: "openId and laterId are required" });
+    return;
+  }
+  try {
+    sendJson(res, 200, { ok: true, audit: await dismissChainSuggestion(openId, laterId) });
+  } catch (err) {
+    sendJson(res, 400, { error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
 function openBrowser(url: string): void {
   const cmd =
     process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
@@ -309,6 +332,9 @@ export function startServer(opts: { port: number; open: boolean }): Promise<neve
         else sendJson(res, 405, { error: "method not allowed" });
       } else if (url.pathname === "/api/maintenance/link") {
         if (req.method === "POST") await apiChainLink(req, res);
+        else sendJson(res, 405, { error: "method not allowed" });
+      } else if (url.pathname === "/api/maintenance/link/dismiss") {
+        if (req.method === "POST") await apiDismissChainLink(req, res);
         else sendJson(res, 405, { error: "method not allowed" });
       } else if (url.pathname.startsWith("/api/connectors/")) {
         const name = url.pathname.slice("/api/connectors/".length);

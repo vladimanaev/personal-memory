@@ -237,6 +237,51 @@ export function analyzeGraphHygiene(entries: MemoryEntry[], generatedAt = new Da
 /** "clearly related" for bge-small — well below the 0.92 near-duplicate bar. */
 const CHAIN_SUGGESTION_MIN_SIM = 0.6;
 
+export const CHAIN_DISMISSALS_PATH = join(INDEX_DIR, "chain-dismissals.json");
+
+export interface ChainDismissal {
+  openId: string;
+  laterId: string;
+  dismissedAt: string;
+}
+
+export async function readChainDismissals(): Promise<ChainDismissal[]> {
+  try {
+    const parsed: unknown = JSON.parse(await readFile(CHAIN_DISMISSALS_PATH, "utf8"));
+    return Array.isArray(parsed) ? (parsed as ChainDismissal[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Persistently hide one wrong suggestion (the pair, in either role order,
+ * never resurfaces). Lives in `.index/` like connector state: user judgment
+ * that is cheap to re-give if the index dir is ever wiped.
+ */
+export async function dismissChainSuggestion(openId: string, laterId: string): Promise<GraphMaintenanceAudit> {
+  const dismissals = await readChainDismissals();
+  if (!dismissals.some((d) => d.openId === openId && d.laterId === laterId)) {
+    dismissals.push({ openId, laterId, dismissedAt: new Date().toISOString() });
+    await mkdir(INDEX_DIR, { recursive: true });
+    await writeFile(CHAIN_DISMISSALS_PATH, JSON.stringify(dismissals, null, 2), "utf8");
+  }
+  return refreshGraphMaintenanceAudit();
+}
+
+/**
+ * Slugs carried by most of the store (e.g. the owner's own person slug) say
+ * nothing about two entries being the same matter — drop them as evidence.
+ */
+function commonSlugs(entries: MemoryEntry[]): Set<string> {
+  if (entries.length < 8) return new Set();
+  const counts = new Map<string, number>();
+  for (const e of entries) {
+    for (const s of new Set([...e.people, ...e.tags])) counts.set(s, (counts.get(s) ?? 0) + 1);
+  }
+  return new Set([...counts.entries()].filter(([, n]) => n > entries.length / 2).map(([s]) => s));
+}
+
 /**
  * Likely missing timeline links: for every still-open pending-decision/todo,
  * later entries that are semantically close AND share a person or tag but sit
@@ -248,6 +293,8 @@ export async function analyzeChainLinks(entries: MemoryEntry[]): Promise<ChainLi
   if (open.length === 0) return [];
   const byId = new Map(entries.map((e) => [e.id, e] as const));
   const componentOf = (id: string): string => chainIndex.get(id)?.latest.id ?? id;
+  const dismissed = new Set((await readChainDismissals()).map((d) => `${d.openId}|${d.laterId}`));
+  const common = commonSlugs(entries);
 
   const out: ChainLinkSuggestion[] = [];
   for (const o of open) {
@@ -260,9 +307,10 @@ export async function analyzeChainLinks(entries: MemoryEntry[]): Promise<ChainLi
       if (!e || e.id === o.id || e.type === "summary") continue;
       if (e.date <= o.date) continue;
       if (componentOf(e.id) === componentOf(o.id)) continue; // already chained together
+      if (dismissed.has(`${o.id}|${e.id}`)) continue; // user said: wrong pair
       const shared = [
-        ...e.people.filter((p) => o.people.includes(p)),
-        ...e.tags.filter((t) => o.tags.includes(t)),
+        ...e.people.filter((p) => o.people.includes(p) && !common.has(p)),
+        ...e.tags.filter((t) => o.tags.includes(t) && !common.has(t)),
       ];
       if (shared.length === 0) continue;
       out.push({
