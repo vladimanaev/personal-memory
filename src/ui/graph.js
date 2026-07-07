@@ -8,7 +8,7 @@
  *
  * @typedef {{ id: string, date: string, type: string, title: string,
  *             people: string[], teams: string[], tags: string[],
- *             sources?: string[] }} GraphEntry
+ *             sources?: string[], follows?: string[] }} GraphEntry
  *
  * @typedef {"person"|"tag"|"team"|"entry"} NodeKind
  * @typedef {"people"|"topics"|"entries"|"custom"} GraphMode
@@ -29,7 +29,7 @@
  * @property {number|null} fx
  * @property {number|null} fy
  *
- * @typedef {{ a: string, b: string, weight: number }} GEdge
+ * @typedef {{ a: string, b: string, weight: number, chain?: boolean }} GEdge
  */
 
 const W = 1200;
@@ -167,6 +167,13 @@ function buildGraph(entries) {
       for (const s of e.sources) {
         if (!entryIds.has(s)) continue; // dangling back-link
         edges.push({ a: en.id, b: `e:${s}`, weight: 1 });
+        en.deg++;
+      }
+    }
+    if (e.follows) {
+      for (const f of e.follows) {
+        if (!entryIds.has(f)) continue; // dangling chain link
+        edges.push({ a: en.id, b: `e:${f}`, weight: 1, chain: true });
         en.deg++;
       }
     }
@@ -722,7 +729,7 @@ export function renderGraphView(mainEl, entries, opts = {}) {
     edgesG.innerHTML = edges
       .map(
         (e, i) =>
-          `<line class="gedge ge-${edgeKind(e)}" data-edge="${i}" stroke-width="${
+          `<line class="gedge ge-${edgeKind(e)}${e.chain ? " ge-chain" : ""}" data-edge="${i}" stroke-width="${
             byId.get(e.a)?.kind !== "entry" && byId.get(e.b)?.kind !== "entry"
               ? Math.min(1 + 0.6 * (e.weight - 1), 3).toFixed(1)
               : "1"

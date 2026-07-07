@@ -1373,6 +1373,12 @@ body.view-graph .site-header {
   stroke: var(--cat-team);
 }
 
+/* timeline (follows) links: dashed so a matter's evolution reads apart from co-occurrence */
+.gedge.ge-chain {
+  stroke-dasharray: 4 3;
+  stroke-opacity: 0.45;
+}
+
 .gedge.is-hot {
   stroke: var(--accent);
   stroke-opacity: 0.92;
