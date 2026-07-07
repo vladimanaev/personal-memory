@@ -52,6 +52,13 @@ export const FrontmatterSchema = z
      */
     source_ids: z.array(z.string().min(1)).optional(),
     /**
+     * Ids of EARLIER entries this entry is a later development of (note →
+     * pending-decision → decision). Set on the later entry; the reverse map is
+     * derived at read time. Multi-parent allowed (one decision can resolve
+     * several pending items).
+     */
+    follows: z.array(slug).optional(),
+    /**
      * Last-refresh date (ISO). `date` stays immutable (first-seen / event date);
      * `updated` records when a same-source re-capture last changed this entry.
      */
