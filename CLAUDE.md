@@ -50,6 +50,13 @@ When the user wants to log/remember something, use the `log-memory` skill and
 `npx tsx src/cli.ts add …`. Reuse existing people/team slugs (check `memory list`
 first).
 
+**Timeline chains:** when the new memory develops or settles an earlier matter
+(e.g. a `decision` resolving a `pending-decision`), pass `--follows <earlier-id>`
+— or link existing entries via `npx tsx src/cli.ts link <id> --follows <earlier-id>`.
+Never settle an open item by rewriting it; log a new linked entry. On recall,
+`⤷ superseded by: <id>` / `status: resolved by <id>` annotations mean the matter
+moved on — read the latest chain member before answering (see the skills).
+
 **Per-source rules live in `connectors/<name>.md`** (gmail, slack, raw-capture):
 frontmatter = fetch config + `source_id_scheme`, body = the extraction prompt —
 read the relevant one before capturing from that source. Those files are

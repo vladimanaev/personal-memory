@@ -13,6 +13,10 @@ not with Write/Edit tools, not with shell redirection, not "just this once".
   (via the `log-memory` / `pull-memories` skills, or `/remember` / `/pull-memories`).
 - **Update** an existing entry the same way: re-run `add` with the same
   `--source-ids` (updates in place), or `add --update <id>` for manual notes.
+- **Timeline links** ONLY through `add --follows <id,…>` at capture time or
+  `npx tsx src/cli.ts link <id> --follows <earlier-id,…>` for existing entries
+  — it validates targets (exist, not newer, no cycles), syncs the index, and
+  commits `memory/.git`.
 - **Delete** ONLY through `npx tsx src/cli.ts remove <id>` — it syncs the index
   and checkpoints the nested `memory/.git` repo so the content stays recoverable.
 - **Slug merges** ONLY through
@@ -39,7 +43,7 @@ four things a manual write skips:
 
 | Path | Agent may write? | How |
 |---|---|---|
-| `memory/entries/**` | ❌ never by hand | `cli.ts add` / `add --update <id>` / `cli.ts remove <id>` / `cli.ts slugs merge` only |
+| `memory/entries/**` | ❌ never by hand | `cli.ts add` / `add --update <id>` / `cli.ts link <id> --follows …` / `cli.ts remove <id>` / `cli.ts slugs merge` only |
 | `memory/summaries/**` | ✏️ only the `## Synthesis` section of a scaffold `digest` created — then run `cli.ts index` | Edit tool |
 | `memory/connectors/**` | ✅ private connector overrides | Edit tool or web UI |
 | `.index/**` | ❌ never | rebuildable derivative; `cli.ts index` regenerates |

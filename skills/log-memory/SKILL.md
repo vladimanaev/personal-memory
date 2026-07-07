@@ -16,8 +16,10 @@ capture it as a structured entry via the `memory` CLI.
    genuinely missing — otherwise infer sensibly):
    - `title` — short, specific (required).
    - `type` — one of: `event | decision | todo | pending-decision | 1on1 | hiring | incident | achievement | feedback | meeting | note`.
-     Use `pending-decision` for a decision still open (re-type it to `decision`
-     with `--update <id>` once settled) and `todo` for action items to track.
+     Use `pending-decision` for a decision still open and `todo` for action
+     items to track. When an open matter is later settled, do **not** rewrite
+     the old entry — log a **new** `decision` entry with
+     `--follows <pending-id>` so the timeline is preserved (see below).
    - `date` — ISO `YYYY-MM-DD`; default to today if not stated.
    - `people` — kebab-case slugs (e.g. `jane-doe`). **Reuse existing slugs** — run
      `memory list` or check `memory/people/` first so the same person always maps
@@ -39,6 +41,27 @@ capture it as a structured entry via the `memory` CLI.
    `add` writes the Markdown file **and** updates the vector index automatically.
 4. **Confirm** back to the user: the entry `id`, its file path, and a one-line
    recap of what you stored (and whether it was `created`, `updated`, or `unchanged`).
+
+## Timeline links (`--follows`) — chain evolving matters
+
+A matter often evolves across entries: note → `pending-decision` → `decision`.
+Link each later development to its earlier entries so recall can always show
+the latest state instead of a stale one:
+
+- **At capture time**: if the new memory develops or settles an earlier matter,
+  find that entry (`memory recall`/`memory list`) and pass
+  `--follows <earlier-id>` (comma-separate for several). Typical: a `decision`
+  that settles a `pending-decision`, a follow-up note with new facts, an
+  outcome after an incident.
+- **After the fact**: `npx tsx src/cli.ts link <later-id> --follows <earlier-id>`
+  links two existing entries. `memory maintenance` suggests likely missing
+  links as ready-to-run `link` commands — review and run the ones that are right.
+- The CLI validates targets (must exist, not be newer, no cycles) and derives
+  everything else at read time: an unresolved `pending-decision`/`todo` shows as
+  `[open]`, a chained one as `[resolved → <id>]`, and recall annotates stale
+  chain members with `⤷ superseded by: <latest-id>`.
+- Don't confuse this with `--update`: same evolving *source thread* → update in
+  place; a **new development of a matter** → new entry + `--follows`.
 
 ## Dedup & updates (important when capturing from Slack/email)
 

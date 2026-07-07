@@ -47,6 +47,21 @@ cited entry file(s) in full, then answer with citations (file paths).
 If a hit is a `summary` entry, its output includes a `sources:` line — pull the
 raw entries it cites when you need specifics behind the rollup.
 
+### ⏱ Timeline annotations — never answer from a stale chain member
+
+Entries can be chained with `follows` links (note → pending-decision →
+decision). When a hit belongs to a chain, recall annotates it:
+
+- `⤷ superseded by: <id> (<type> · <date>)` — the matter developed after this
+  entry; **Read that latest entry before answering** and present IT as the
+  current state (cite both).
+- `status: open` / `status: resolved by <id>` — whether a
+  `pending-decision`/`todo` was settled. Never report an item marked
+  `resolved by <x>` as still open, and never present a superseded plan or
+  pending decision as the current one.
+- In `--format json`, the same data is the `chain` field per hit
+  (`prev`/`next`/`latest`/`status`/`resolvedBy`) plus the raw `follows` ids.
+
 **B. Synthesis / planning** ("how has Jane evolved?", "themes across this
 quarter?", "who's ready for promotion?", "prep for my staff meeting") →
 **filter the slice, then read everything**:
@@ -94,9 +109,15 @@ To find out **which** digests are due (plus index health and slug issues), run:
 npx tsx src/cli.ts maintenance        # prints ready-to-run digest commands
 ```
 
+`maintenance` also lists **possible unlinked chains** — open
+pending-decisions/todos with a semantically-close later entry that shares a
+person/tag — as ready-to-run `memory link` commands. Run the ones that are
+genuinely the same matter; skip the rest.
+
 ## Principles
 
 - Ground every claim in a cited entry; if memory is silent, say so plainly.
-- Respect recency: newer entries can supersede older ones — note conflicts.
+- Respect recency: newer entries can supersede older ones — follow
+  `⤷ superseded by` annotations to the latest chain member and note conflicts.
 - Stay honest about gaps; suggest logging a memory if something important is
   missing.

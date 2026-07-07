@@ -23,14 +23,15 @@ Run with `npx tsx src/cli.ts <cmd>` (Node ≥ 20 — `nvm use 20`).
 
 | Command | Purpose |
 |---|---|
-| `add --title … --type … --people a,b --date YYYY-MM-DD --body "…" [--source-ids …]` | Create/update an entry + index it (dedups on `--source-ids`; `--update <id>`, `--force-new`, `--dup-threshold N` resolve the dup guard) |
+| `add --title … --type … --people a,b --date YYYY-MM-DD --body "…" [--source-ids …] [--follows <id,…>]` | Create/update an entry + index it (dedups on `--source-ids`; `--update <id>`, `--force-new`, `--dup-threshold N` resolve the dup guard; `--follows` chains it to earlier entries) |
+| `link <id> --follows <earlier-id,…>` | Add timeline links to an existing entry (validated: targets exist, not newer, no cycles; commits `memory/.git`) |
 | `index [--force]` | Re-sync index with Markdown (incremental; `--force` rebuilds) |
 | `query "<q>" ["<alt phrasing>" …] [--person|--type|--team|--tag|--since|--until|-k|--deep]` | Hybrid (semantic+lexical) search; pass 2–4 phrasings (all fused); `--deep` = recall-over-precision (k=40, wider pools) |
 | `recall "<q>" ["<agent phrasing>" …] [filters] [--complete|--complete-if-small|--require-complete|--no-expand|--format json]` | Agent-facing recall with weighted query expansion, completeness reporting, and stable JSON output |
 | `list [filters] [--limit n]` | Structured browse, newest first |
 | `person <slug>` | Everything about a person |
 | `digest --person <slug> \| --quarter <YYYY-Qn> \| --tag <slug>` | Build/refresh a rolling summary |
-| `maintenance [--threshold N]` | Read-only hygiene report: digest debt (suggested `digest` commands), index health, connector validity, similar-slug warnings |
+| `maintenance [--threshold N]` | Hygiene report: digest debt (suggested `digest` commands), index health, connector validity, possible unlinked chains (suggested `link` commands) + dangling links, similar-slug warnings |
 | `connectors` | List + validate connector files, templates + private overrides (exit 1 if any invalid) |
 | `ui [--port N] [--no-open]` | Local web UI — stats, browse, search, connector editing (default port 4664; memories stay read-only) |
 
@@ -50,6 +51,7 @@ Run with `npx tsx src/cli.ts <cmd>` (Node ≥ 20 — `nvm use 20`).
   teams: [platform-team]
   tags: [partnership, roadmap]
   source_ids: [slack:C0123ABCD:1700000000.0012]  # canonical external ids — dedup anchor
+  follows: [2026-06-20-acme-codev-pending]  # timeline link: earlier entries this one develops/settles
   updated: 2026-06-30                   # last refresh (date stays = first-seen)
   # summary entries also carry: sources: [<entry-ids>]
   ```
@@ -60,7 +62,15 @@ Run with `npx tsx src/cli.ts <cmd>` (Node ≥ 20 — `nvm use 20`).
   existing entry in place** rather than creating a duplicate. Captures without a
   source id pass through a semantic near-duplicate guard at `add` time.
 
-- **Connectors:** two layers, one file per connected source (`gmail`, `slack`,
+- **Timeline chains (`follows`):** a matter that evolves across entries (note →
+  `pending-decision` → `decision`) is chained by setting `follows` on each later
+  entry (`add --follows` at capture, `link` after the fact). Everything else is
+  **derived at read time**: recall/query hits carry a `chain` annotation
+  (`latest`, `status: open|resolved`, `resolvedBy`) and print
+  `⤷ superseded by: <id>` on stale members; `list`/`person` mark open items
+  `[open]` / `[resolved → <id>]`. Settle an open matter with a **new** linked
+  entry — never by rewriting the old one. Removing a followed entry leaves a
+  dangling link (tolerated; `maintenance` reports it). (`gmail`, `slack`,
   `raw-capture`). `connectors/<name>.md` = generic git-tracked **template** (no
   personal queries/channels/names). `memory/connectors/<name>.md` = private
   **override** that fully replaces the template of the same name — it lives in
@@ -105,7 +115,8 @@ Run with `npx tsx src/cli.ts <cmd>` (Node ≥ 20 — `nvm use 20`).
    recall/query result cites.
 2. **Write through the CLI — never hand-create/edit files under `memory/entries/`
    or `.index/`.** Capture and update go ONLY through `cli.ts add` (same
-   `--source-ids` updates in place; `--update <id>` for manual notes); deletion
+   `--source-ids` updates in place; `--update <id>` for manual notes); timeline
+   links through `cli.ts add --follows` / `cli.ts link`; deletion
    ONLY through `cli.ts remove <id>`. A
    hand-written file skips index sync, dedup, and auto-commit — invisible to
    recall and unversioned. **Read `MEMORY-GUARDRAILS.md` before any write under
