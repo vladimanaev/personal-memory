@@ -1019,6 +1019,81 @@ mark {
   text-decoration: underline;
 }
 
+/* timeline panel — the evolution of a chained matter, oldest first */
+.timeline .tl-status {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 999px;
+  margin-bottom: 8px;
+  border: 1px solid var(--line);
+  color: var(--ink-2);
+}
+
+.timeline .tl-status.is-open {
+  color: var(--accent-text);
+  border-color: var(--accent-text);
+}
+
+.timeline .tl-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 4px 6px;
+  margin: 0 -6px;
+  border-left: 2px solid var(--line);
+  border-radius: 0 6px 6px 0;
+  font-size: 12.5px;
+  color: var(--ink-2);
+  text-decoration: none;
+}
+
+.timeline .tl-row:hover {
+  background: var(--hover, rgba(127, 127, 127, 0.08));
+}
+
+.timeline .tl-row.is-here {
+  border-left-color: var(--accent-text);
+  color: var(--ink);
+}
+
+.timeline .tl-date {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.timeline .tl-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.timeline .tl-mark {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.timeline .tl-mark.is-latest {
+  color: var(--accent-text);
+}
+
+.timeline .tl-dangling {
+  font-size: 11.5px;
+  color: var(--muted);
+  margin-top: 6px;
+  word-break: break-all;
+}
+
 .pathbox {
   display: flex;
   align-items: center;

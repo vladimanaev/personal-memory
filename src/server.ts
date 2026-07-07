@@ -9,6 +9,7 @@ import { search, indexStatus, type SearchFilters } from "./store.js";
 import { loadConnectors, loadConnectorState, writeConnector, relConnector } from "./connectors.js";
 import { getMaintenanceSnapshot, launchMaintenanceRun, startMaintenanceScheduler } from "./scheduled-maintenance.js";
 import { mergeSlugs, type SlugKind } from "./graph-maintenance.js";
+import { buildChainIndex } from "./chains.js";
 
 const UI_DIR = fileURLToPath(new URL("./ui/", import.meta.url));
 
@@ -64,9 +65,13 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
 
 async function apiData(res: ServerResponse): Promise<void> {
   const [index, entries] = await Promise.all([indexStatus(), loadAllEntries()]);
+  const chainIndex = buildChainIndex(entries);
   const payload = entries
     .sort((a, b) => b.date.localeCompare(a.date))
-    .map((e) => ({ ...e, path: relative(ROOT, e.path) }));
+    .map((e) => {
+      const chain = chainIndex.get(e.id);
+      return { ...e, path: relative(ROOT, e.path), ...(chain ? { chain } : {}) };
+    });
   sendJson(res, 200, { generatedAt: new Date().toISOString(), index, entries: payload });
 }
 

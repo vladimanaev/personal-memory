@@ -8,7 +8,11 @@
  *
  * @typedef {{ id: string, date: string, type: string, title: string,
  *             people: string[], teams: string[], tags: string[],
- *             sources?: string[], follows?: string[] }} GraphEntry
+ *             sources?: string[], follows?: string[],
+ *             chain?: { prev: string[], next: string[],
+ *                       latest: { id: string, type: string, date: string },
+ *                       resolvedBy?: string, status?: "open"|"resolved",
+ *                       dangling?: string[] } }} GraphEntry
  *
  * @typedef {"person"|"tag"|"team"|"entry"} NodeKind
  * @typedef {"people"|"topics"|"entries"|"custom"} GraphMode

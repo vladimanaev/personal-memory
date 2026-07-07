@@ -14,10 +14,20 @@ import { renderGraphView } from "./graph.js";
  * @property {string[]} teams
  * @property {string[]} tags
  * @property {string[]} [sources]
+ * @property {string[]} [follows]
  * @property {string[]} [source_ids]
  * @property {string} [updated]
  * @property {string} body
  * @property {string} path
+ * @property {ChainInfo} [chain]
+ *
+ * @typedef {Object} ChainInfo
+ * @property {string[]} prev
+ * @property {string[]} next
+ * @property {{ id: string, type: string, date: string }} latest
+ * @property {string} [resolvedBy]
+ * @property {"open"|"resolved"} [status]
+ * @property {string[]} [dangling]
  *
  * @typedef {Object} IndexStatus
  * @property {string|null} embedderId
@@ -845,6 +855,64 @@ function renderSearchPanel(opts = {}) {
 
 // ---------- entry detail ----------
 
+/**
+ * All members of the chain `e` belongs to, date-ascending. Membership is a
+ * trivial walk over the per-entry `chain.prev/next` shipped by the server;
+ * the semantics (status, latest, resolvedBy) stay server-derived.
+ * @param {Entry} e @returns {Entry[]}
+ */
+function chainMembers(e) {
+  if (!e.chain) return [];
+  const byId = new Map(state.entries.map((x) => [x.id, x]));
+  const seen = new Set([e.id]);
+  const queue = [e.id];
+  while (queue.length) {
+    const cur = byId.get(/** @type {string} */ (queue.shift()));
+    for (const n of [...(cur?.chain?.prev ?? []), ...(cur?.chain?.next ?? [])]) {
+      if (!seen.has(n)) {
+        seen.add(n);
+        queue.push(n);
+      }
+    }
+  }
+  return [...seen]
+    .map((id) => byId.get(id))
+    .filter((x) => x !== undefined)
+    .sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
+}
+
+/**
+ * Vertical timeline of a chained matter: every member date-ordered, the viewed
+ * entry and the latest state marked, open/resolved status up top.
+ * @param {Entry} e @returns {string}
+ */
+function chainTimelineHtml(e) {
+  const members = chainMembers(e);
+  if (members.length === 0) return "";
+  const c = /** @type {ChainInfo} */ (e.chain);
+  const status = c.status
+    ? `<div class="tl-status is-${c.status}">${
+        c.status === "resolved" ? `resolved${c.resolvedBy ? ` by ${esc(c.resolvedBy)}` : ""}` : "open"
+      }</div>`
+    : "";
+  const rows = members
+    .map((m) => {
+      const marks =
+        (m.id === c.latest.id ? `<span class="tl-mark is-latest">latest</span>` : "") +
+        (m.id === e.id ? `<span class="tl-mark is-here">viewing</span>` : "");
+      return `<a class="tl-row${m.id === e.id ? " is-here" : ""}" href="#/entry/${encodeURIComponent(m.id)}">
+        <span class="tl-date">${esc(m.date)}</span>
+        <span class="badge tdot gt-${esc(m.type)}">${esc(m.type)}</span>
+        <span class="tl-title">${esc(m.title)}</span>${marks}
+      </a>`;
+    })
+    .join("");
+  const dangling = c.dangling?.length
+    ? `<div class="tl-dangling">⚠ follows missing: ${c.dangling.map(esc).join(", ")}</div>`
+    : "";
+  return `<div class="timeline">${status}${rows}${dangling}</div>`;
+}
+
 /** @param {Entry} e */
 function entryDetailHtml(e) {
   const byId = new Set(state.entries.map((x) => x.id));
@@ -867,6 +935,7 @@ function entryDetailHtml(e) {
         <article class="prose">${renderMarkdown(e.body)}</article>
         <aside class="fm">
           ${section("path", `<div class="pathbox">${pathWithCopy(e.path)}</div>`)}
+          ${e.chain ? section("timeline", chainTimelineHtml(e)) : ""}
           ${section("people", chipList(e.people, "person"))}
           ${section("teams", chipList(e.teams, "team"))}
           ${section("tags", chipList(e.tags, "tag"))}
