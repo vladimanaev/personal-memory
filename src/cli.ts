@@ -16,7 +16,7 @@ import { search, findSimilar, syncIndex, applyFilters, type SearchCompleteness, 
 import type { MemoryEntry } from "./schema.js";
 import { commitMemoryRepo } from "./memory-git.js";
 import { buildChainIndex, entryStatus, validateFollowsTargets, type ChainAnnotation } from "./chains.js";
-import { mergeSlugs, type SlugKind } from "./graph-maintenance.js";
+import { applyChainLink, mergeSlugs, type SlugKind } from "./graph-maintenance.js";
 import { recall, type RecallReport } from "./recall.js";
 
 const rel = (p: string) => relative(ROOT, p);
@@ -245,31 +245,16 @@ async function cmdLink(argv: string[]) {
     throw new Error("usage: memory link <id> --follows <earlier-id,…>");
   }
 
-  const entries = await loadAllEntries();
-  const entry = entries.find((e) => e.id === id);
-  if (!entry) throw new Error(`no entry with id '${id}'`);
-  validateFollowsTargets(entries, entry, follows);
-
-  const uniq = (xs: string[]) => [...new Set(xs)];
-  const mergedFollows = uniq([...(entry.follows ?? []), ...follows]);
-  if (mergedFollows.length === (entry.follows ?? []).length) {
+  const result = await applyChainLink({ laterId: id, follows });
+  if (!result.changed) {
     console.log(`✓ unchanged ${id} (already follows ${follows.join(", ")})`);
     return;
   }
-
-  const { body: _b, path: _p, ...rest } = entry;
-  const fm: Frontmatter = FrontmatterSchema.parse({
-    ...rest,
-    follows: mergedFollows,
-    updated: today(),
-  });
-  const path = await writeEntry(fm, entry.body);
-  const stats = await syncIndex();
-  // The add-time auto-commit hook only fires on `add`; commit explicitly.
-  await commitMemoryRepo(`Link memory: ${id} follows ${mergedFollows.join(", ")}`);
-  console.log(`✓ linked ${id} → follows ${mergedFollows.join(", ")}`);
-  console.log(`  ${rel(path)}`);
-  console.log(`  indexed (+${stats.added} changed, ${stats.unchanged} unchanged)`);
+  console.log(`✓ linked ${id} → follows ${result.follows.join(", ")}`);
+  console.log(`  ${result.path}`);
+  if (result.index) {
+    console.log(`  indexed (+${result.index.added} changed, ${result.index.unchanged} unchanged)`);
+  }
 }
 
 async function cmdRemove(argv: string[]) {
@@ -770,7 +755,8 @@ Usage:
             # record that a connector sweep completed; captures are recorded by memory add
   memory connectors mark-captured <name> [--at ISO_TIMESTAMP]
             # backfill/record connector prompt usage without changing memories
-  memory ui [--port N] [--no-open]   # local web UI (default port 4664; edits connector config only, never memories)
+  memory ui [--port N] [--no-open]   # local web UI (default port 4664; memory writes limited to connector config,
+                                     # slug merges, and chain links — all via the same validated CLI code paths)
 `;
 
 async function main() {

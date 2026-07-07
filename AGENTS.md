@@ -33,7 +33,7 @@ Run with `npx tsx src/cli.ts <cmd>` (Node ≥ 20 — `nvm use 20`).
 | `digest --person <slug> \| --quarter <YYYY-Qn> \| --tag <slug>` | Build/refresh a rolling summary |
 | `maintenance [--threshold N]` | Hygiene report: digest debt (suggested `digest` commands), index health, connector validity, possible unlinked chains (suggested `link` commands) + dangling links, similar-slug warnings |
 | `connectors` | List + validate connector files, templates + private overrides (exit 1 if any invalid) |
-| `ui [--port N] [--no-open]` | Local web UI — stats, browse, search, connector editing (default port 4664; memories stay read-only) |
+| `ui [--port N] [--no-open]` | Local web UI — stats, browse, search, connector editing, maintenance screen (default port 4664; memory writes limited to slug merges + chain links, both via the same validated code paths as the CLI) |
 
 ## Data model
 

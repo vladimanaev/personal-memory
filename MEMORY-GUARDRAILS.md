@@ -13,10 +13,11 @@ not with Write/Edit tools, not with shell redirection, not "just this once".
   (via the `log-memory` / `pull-memories` skills, or `/remember` / `/pull-memories`).
 - **Update** an existing entry the same way: re-run `add` with the same
   `--source-ids` (updates in place), or `add --update <id>` for manual notes.
-- **Timeline links** ONLY through `add --follows <id,…>` at capture time or
-  `npx tsx src/cli.ts link <id> --follows <earlier-id,…>` for existing entries
-  — it validates targets (exist, not newer, no cycles), syncs the index, and
-  commits `memory/.git`.
+- **Timeline links** ONLY through `add --follows <id,…>` at capture time,
+  `npx tsx src/cli.ts link <id> --follows <earlier-id,…>` for existing entries,
+  or the web UI maintenance screen's **link** button (same code path) — all
+  validate targets (exist, not newer, no cycles), sync the index, and commit
+  `memory/.git`.
 - **Delete** ONLY through `npx tsx src/cli.ts remove <id>` — it syncs the index
   and checkpoints the nested `memory/.git` repo so the content stays recoverable.
 - **Slug merges** ONLY through

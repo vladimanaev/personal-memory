@@ -70,11 +70,24 @@ import { renderGraphView } from "./graph.js";
  * @property {string|null} lastSeen
  * @property {string[]} reasons
  *
+ * @typedef {Object} ChainLinkSuggestion
+ * @property {string} openId
+ * @property {string} openTitle
+ * @property {string} openType
+ * @property {string} openDate
+ * @property {string} laterId
+ * @property {string} laterTitle
+ * @property {string} laterType
+ * @property {string} laterDate
+ * @property {number} sim
+ * @property {string[]} shared
+ *
  * @typedef {Object} GraphAudit
  * @property {string} generatedAt
  * @property {Record<string, number>} counts
  * @property {Record<string, number>} suggestionCounts
  * @property {SlugSuggestion[]} suggestions
+ * @property {ChainLinkSuggestion[]} [chainSuggestions]
  *
  * @typedef {Object} MaintenanceState
  * @property {"never"|"running"|"success"|"error"} status
@@ -1149,6 +1162,58 @@ async function postSlugMerge(s, dryRun) {
   if (route().view === "maintenance") render();
 }
 
+/** @param {ChainLinkSuggestion} s */
+function chainKey(s) {
+  return `${s.laterId}|${s.openId}`;
+}
+
+/** Accept a suggested timeline link: the open item gets resolved by the later entry. */
+/** @param {ChainLinkSuggestion} s */
+async function postChainLink(s) {
+  const key = chainKey(s);
+  state.mergeBusy = key;
+  state.mergeErrors[key] = "";
+  render();
+  try {
+    const res = await fetch("/api/maintenance/link", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ laterId: s.laterId, follows: [s.openId], confirm: true }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error ?? `link failed (${res.status})`);
+    await Promise.all([reloadRecordData(), loadMaintenance()]);
+  } catch (err) {
+    state.mergeErrors[key] = err instanceof Error ? err.message : String(err);
+  }
+  state.mergeBusy = "";
+  if (route().view === "maintenance") render();
+}
+
+/** @param {ChainLinkSuggestion} s */
+function chainSuggestionRow(s) {
+  const key = chainKey(s);
+  const busy = state.mergeBusy === key;
+  const err = state.mergeErrors[key];
+  return `
+    <div class="mrow" data-suggestion="${esc(key)}">
+      <span class="mdate">${esc(s.openDate)}</span>
+      <span class="mmain">
+        <span class="mtop">
+          <span class="badge tdot gt-${esc(s.openType)}">${esc(s.openType)}</span>
+          <a href="#/entry/${encodeURIComponent(s.openId)}">${esc(s.openTitle)}</a>
+          <span class="arrow">→</span>
+          <span class="badge tdot gt-${esc(s.laterType)}">${esc(s.laterType)}</span>
+          <a href="#/entry/${encodeURIComponent(s.laterId)}">${esc(s.laterTitle)}</a>
+          <span class="score">${s.sim.toFixed(2)}</span>
+          <span class="mactions"><button class="chip chip-primary" data-mlink="${esc(key)}" ${busy ? "disabled" : ""}>${busy ? "linking…" : "link"}</button></span>
+        </span>
+        <span class="msnippet">${esc(s.laterId)} --follows ${esc(s.openId)} · ${esc(s.laterDate)} resolves ${esc(s.openDate)} · shared: ${esc(s.shared.join(", "))}</span>
+        ${err ? `<span class="merr">${esc(err)}</span>` : ""}
+      </span>
+    </div>`;
+}
+
 /** @param {MaintenanceSnapshot} m */
 function maintenanceStatusHtml(m) {
   const st = m.state;
@@ -1165,6 +1230,7 @@ function maintenanceStatusHtml(m) {
       <div class="mline"><span class="mk">duration</span><span>${esc(duration(st.durationMs))}</span></div>
       <div class="mline"><span class="mk">cleanup window</span><span>${st.cleanupOlderThanDays ?? 7} days</span></div>
       <div class="mline"><span class="mk">slug suggestions</span><span>${suggestions.person ?? 0} people · ${suggestions.team ?? 0} teams · ${suggestions.tag ?? 0} tags</span></div>
+      <div class="mline"><span class="mk">chain suggestions</span><span>${(m.audit?.chainSuggestions ?? []).length} unlinked chain${(m.audit?.chainSuggestions ?? []).length === 1 ? "" : "s"}</span></div>
       <div class="mline"><span class="mk">lancedb</span><span>${opt ? (opt.tableExists ? "optimized" : "no table") : "not run"}</span></div>
       <div class="mline"><span class="mk">prune</span><span>${prune ? `${prune.oldVersionsRemoved ?? 0} versions · ${prune.bytesRemoved ?? 0} bytes` : "—"}</span></div>
       <div class="mline"><span class="mk">compaction</span><span>${compaction ? `${compaction.filesRemoved ?? 0} files removed · ${compaction.filesAdded ?? 0} files added` : "—"}</span></div>
@@ -1231,12 +1297,20 @@ function renderMaintenance() {
     return;
   }
   const suggestions = m.audit?.suggestions ?? [];
+  const chainSuggestions = m.audit?.chainSuggestions ?? [];
   main.innerHTML = `
     <div class="maintenance-head">
       <div class="colophon">scheduled graph maintenance <span class="sep">·</span> audit ${esc(shortDateTime(m.audit?.generatedAt))}</div>
       <button class="chip" id="mrun" ${m.running ? "disabled" : ""}>${m.running ? "running…" : "run now"}</button>
     </div>
     ${maintenanceStatusHtml(m)}
+    <h2>Chain Link Suggestions</h2>
+    <div class="colophon">open pending-decisions/todos with a semantically-close later entry sharing a person/tag — linking marks the open item resolved and connects them in the graph</div>
+    ${
+      chainSuggestions.length
+        ? `<div class="ledger l-top mledger">${chainSuggestions.map(chainSuggestionRow).join("")}</div>`
+        : `<div class="empty">no unlinked chains detected</div>`
+    }
     <h2>Merge Suggestions</h2>
     ${
       suggestions.length
@@ -1499,6 +1573,13 @@ document.addEventListener("click", (ev) => {
     ev.preventDefault();
     const s = state.maintenance?.audit?.suggestions.find((x) => mergeKey(x) === mergeEl.dataset.mmerge);
     if (s) postSlugMerge(s, false);
+    return;
+  }
+  const linkEl = t.closest("[data-mlink]");
+  if (linkEl instanceof HTMLElement) {
+    ev.preventDefault();
+    const s = state.maintenance?.audit?.chainSuggestions?.find((x) => chainKey(x) === linkEl.dataset.mlink);
+    if (s) postChainLink(s);
     return;
   }
   const cancelConfirmEl = t.closest("[data-mcancel-confirm]");

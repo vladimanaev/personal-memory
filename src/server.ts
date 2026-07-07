@@ -8,7 +8,7 @@ import { loadAllEntries, ROOT } from "./ingest.js";
 import { search, indexStatus, type SearchFilters } from "./store.js";
 import { loadConnectors, loadConnectorState, writeConnector, relConnector } from "./connectors.js";
 import { getMaintenanceSnapshot, launchMaintenanceRun, startMaintenanceScheduler } from "./scheduled-maintenance.js";
-import { mergeSlugs, type SlugKind } from "./graph-maintenance.js";
+import { applyChainLink, mergeSlugs, type SlugKind } from "./graph-maintenance.js";
 import { buildChainIndex } from "./chains.js";
 
 const UI_DIR = fileURLToPath(new URL("./ui/", import.meta.url));
@@ -221,6 +221,41 @@ async function apiMergeSlugs(req: IncomingMessage, res: ServerResponse): Promise
   }
 }
 
+async function apiChainLink(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  let raw: string;
+  try {
+    raw = await readBody(req, 32 * 1024);
+  } catch (err) {
+    sendJson(res, (err as { status?: number }).status ?? 500, {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return;
+  }
+  let body: unknown;
+  try {
+    body = JSON.parse(raw || "{}");
+  } catch {
+    sendJson(res, 400, { error: "invalid JSON body" });
+    return;
+  }
+  const data = (body ?? {}) as Record<string, unknown>;
+  const laterId = typeof data.laterId === "string" ? data.laterId : "";
+  const follows = Array.isArray(data.follows) ? data.follows.filter((x): x is string => typeof x === "string" && x.length > 0) : [];
+  if (!laterId || follows.length === 0) {
+    sendJson(res, 400, { error: "laterId and follows[] are required" });
+    return;
+  }
+  if (data.confirm !== true) {
+    sendJson(res, 400, { error: "links require confirm: true" });
+    return;
+  }
+  try {
+    sendJson(res, 200, await applyChainLink({ laterId, follows }));
+  } catch (err) {
+    sendJson(res, 400, { error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
 function openBrowser(url: string): void {
   const cmd =
     process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
@@ -271,6 +306,9 @@ export function startServer(opts: { port: number; open: boolean }): Promise<neve
         else sendJson(res, 405, { error: "method not allowed" });
       } else if (url.pathname === "/api/maintenance/slugs/merge") {
         if (req.method === "POST") await apiMergeSlugs(req, res);
+        else sendJson(res, 405, { error: "method not allowed" });
+      } else if (url.pathname === "/api/maintenance/link") {
+        if (req.method === "POST") await apiChainLink(req, res);
         else sendJson(res, 405, { error: "method not allowed" });
       } else if (url.pathname.startsWith("/api/connectors/")) {
         const name = url.pathname.slice("/api/connectors/".length);

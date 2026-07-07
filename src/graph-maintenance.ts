@@ -2,9 +2,10 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { relative, join } from "node:path";
 import matter from "gray-matter";
 import { FrontmatterSchema, type Frontmatter, type MemoryEntry } from "./schema.js";
-import { INDEX_DIR, ROOT, loadAllEntries } from "./ingest.js";
-import { syncIndex } from "./store.js";
+import { INDEX_DIR, ROOT, loadAllEntries, writeEntry } from "./ingest.js";
+import { syncIndex, findSimilar } from "./store.js";
 import { commitMemoryRepo } from "./memory-git.js";
+import { buildChainIndex, entryStatus, validateFollowsTargets } from "./chains.js";
 
 export const GRAPH_MAINTENANCE_PATH = join(INDEX_DIR, "graph-maintenance.json");
 
@@ -23,11 +24,26 @@ export interface SlugSuggestion {
   reasons: string[];
 }
 
+export interface ChainLinkSuggestion {
+  openId: string;
+  openTitle: string;
+  openType: string;
+  openDate: string;
+  laterId: string;
+  laterTitle: string;
+  laterType: string;
+  laterDate: string;
+  sim: number;
+  shared: string[];
+}
+
 export interface GraphMaintenanceAudit {
   generatedAt: string;
   counts: Record<SlugKind, number>;
   suggestionCounts: Record<SlugKind, number>;
   suggestions: SlugSuggestion[];
+  /** Absent in audits written before timeline chains existed. */
+  chainSuggestions?: ChainLinkSuggestion[];
 }
 
 export interface SlugMergePreview {
@@ -218,6 +234,109 @@ export function analyzeGraphHygiene(entries: MemoryEntry[], generatedAt = new Da
   return { generatedAt, counts, suggestionCounts, suggestions };
 }
 
+/** "clearly related" for bge-small — well below the 0.92 near-duplicate bar. */
+const CHAIN_SUGGESTION_MIN_SIM = 0.6;
+
+/**
+ * Likely missing timeline links: for every still-open pending-decision/todo,
+ * later entries that are semantically close AND share a person or tag but sit
+ * in a different (or no) chain. Needs the vector index (returns [] without it).
+ */
+export async function analyzeChainLinks(entries: MemoryEntry[]): Promise<ChainLinkSuggestion[]> {
+  const chainIndex = buildChainIndex(entries);
+  const open = entries.filter((e) => entryStatus(e, chainIndex)?.status === "open");
+  if (open.length === 0) return [];
+  const byId = new Map(entries.map((e) => [e.id, e] as const));
+  const componentOf = (id: string): string => chainIndex.get(id)?.latest.id ?? id;
+
+  const out: ChainLinkSuggestion[] = [];
+  for (const o of open) {
+    const similar = await findSimilar(`${o.title}\n${o.body}`, {
+      minSim: CHAIN_SUGGESTION_MIN_SIM,
+      limit: 5,
+    });
+    for (const hit of similar) {
+      const e = byId.get(hit.id);
+      if (!e || e.id === o.id || e.type === "summary") continue;
+      if (e.date <= o.date) continue;
+      if (componentOf(e.id) === componentOf(o.id)) continue; // already chained together
+      const shared = [
+        ...e.people.filter((p) => o.people.includes(p)),
+        ...e.tags.filter((t) => o.tags.includes(t)),
+      ];
+      if (shared.length === 0) continue;
+      out.push({
+        openId: o.id,
+        openTitle: o.title,
+        openType: o.type,
+        openDate: o.date,
+        laterId: e.id,
+        laterTitle: e.title,
+        laterType: e.type,
+        laterDate: e.date,
+        sim: hit.sim,
+        shared,
+      });
+    }
+  }
+  return out.sort((a, b) => b.sim - a.sim);
+}
+
+export interface ChainLinkResult {
+  laterId: string;
+  follows: string[];
+  changed: boolean;
+  path?: string;
+  index?: { added: number; removed: number; unchanged: number };
+  afterCommit?: boolean;
+  audit?: GraphMaintenanceAudit;
+}
+
+/**
+ * Add validated `follows` links to an existing entry — the one sanctioned
+ * write path for links outside `add` (used by `cli.ts link` and the UI's
+ * maintenance screen). Validates targets, syncs the index, commits
+ * `memory/.git`, and refreshes the audit so an accepted suggestion disappears.
+ */
+export async function applyChainLink(opts: {
+  laterId: string;
+  follows: string[];
+  refreshAudit?: boolean;
+}): Promise<ChainLinkResult> {
+  const entries = await loadAllEntries();
+  const entry = entries.find((e) => e.id === opts.laterId);
+  if (!entry) throw new Error(`no entry with id '${opts.laterId}'`);
+  validateFollowsTargets(entries, entry, opts.follows);
+
+  const mergedFollows = [...new Set([...(entry.follows ?? []), ...opts.follows])];
+  if (mergedFollows.length === (entry.follows ?? []).length) {
+    return { laterId: entry.id, follows: entry.follows ?? [], changed: false };
+  }
+
+  const { body, path: _p, ...rest } = entry;
+  const fm = FrontmatterSchema.parse({
+    ...rest,
+    follows: mergedFollows,
+    updated: new Date().toISOString().slice(0, 10),
+  }) as Frontmatter;
+  const path = await writeEntry(fm, body);
+  const index = await syncIndex();
+  // The add-time auto-commit hook only fires on `add`; commit explicitly.
+  const afterCommit = await commitMemoryRepo(
+    `Link memory: ${entry.id} follows ${mergedFollows.join(", ")}`,
+  );
+  const audit = opts.refreshAudit === false ? undefined : await refreshGraphMaintenanceAudit();
+  return {
+    laterId: entry.id,
+    follows: mergedFollows,
+    changed: true,
+    path: rel(path),
+    index,
+    afterCommit,
+    ...(audit ? { audit } : {}),
+  };
+}
+
 export async function writeGraphMaintenanceAudit(audit: GraphMaintenanceAudit): Promise<void> {
   await mkdir(INDEX_DIR, { recursive: true });
   await writeFile(GRAPH_MAINTENANCE_PATH, JSON.stringify(audit, null, 2), "utf8");
@@ -232,7 +351,9 @@ export async function readGraphMaintenanceAudit(): Promise<GraphMaintenanceAudit
 }
 
 export async function refreshGraphMaintenanceAudit(): Promise<GraphMaintenanceAudit> {
-  const audit = analyzeGraphHygiene(await loadAllEntries());
+  const entries = await loadAllEntries();
+  const audit = analyzeGraphHygiene(entries);
+  audit.chainSuggestions = await analyzeChainLinks(entries);
   await writeGraphMaintenanceAudit(audit);
   return audit;
 }
