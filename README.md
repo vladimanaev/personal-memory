@@ -76,6 +76,19 @@ Pull from connected sources:
 Connector pulls use the skill system and connector prompts to fetch, filter,
 deduplicate, and update memories over time.
 
+Track a matter over time:
+
+```text
+"Log that the queue technology decision is still pending — Kafka vs RabbitMQ."
+"Remember we decided on Kafka; this settles the pending queue decision."
+"Is the queue technology decision still open?"
+```
+
+When a memory develops or settles an earlier one, the agent links them with a
+`follows` chain. Recall then annotates any stale chain member with the entry
+that superseded it, and open pending decisions and todos report whether they
+were resolved — so an old snapshot can never masquerade as the current state.
+
 Agents should retrieve through the local memory CLI, write through `memory add`,
 and cite the memory files they used. The full agent contract is in
 [AGENTS.md](AGENTS.md).
@@ -94,6 +107,8 @@ Key properties:
 - **Hybrid retrieval**: semantic search, BM25 lexical search, and rank fusion.
 - **Structured filters**: query by person, team, tag, date, and memory type.
 - **Deduped capture**: source IDs and near-duplicate checks avoid noisy repeats.
+- **Timeline chains**: evolving matters (note → pending decision → decision) are
+  linked, so recall surfaces the latest state instead of a stale snapshot.
 - **Agent-native**: skills and guardrails tell agents when to capture or recall.
 - **Local UI**: browse, search, inspect the graph, and edit connector config.
 
@@ -108,7 +123,10 @@ memory add --title "..." --type <type> [--people a,b] [--teams x,y]
            [--tags a,b] [--date YYYY-MM-DD] [--body "..."]
            [--source-ids slack:C123:1700000000.1,gmail:<thread-id>]
            [--connector raw-capture]
+           [--follows <earlier-id,...>]
            [--update <id>] [--force-new]
+
+memory link <id> --follows <earlier-id,...>
 
 memory query "<question>" ["<alternate phrasing>" ...]
              [--person slug] [--type type] [--team slug] [--tag slug]
@@ -163,7 +181,29 @@ people: [jane-doe, john-smith]
 teams: [platform-team]
 tags: [roadmap, partnership]
 source_ids: [slack:C0123ABCD:1700000000.0012]
+follows: [2026-06-20-acme-partnership-pending]
 ```
+
+### Timeline chains
+
+The optional `follows` field links an entry to the earlier entries it develops
+or settles, forming a chain per evolving matter. Everything else is derived at
+read time — nothing to keep in sync:
+
+- Recall and query hits carry the chain context: stale members are annotated
+  with `⤷ superseded by: <id>`, and pending decisions and todos report
+  `status: open` or `status: resolved by <id>` (also in `--format json`).
+- Ranking gets a mild recency boost (at most +2%, decaying over ~3 months), so
+  newer entries win near-ties without burying strong older matches.
+- `memory maintenance` — and the web UI's maintenance screen — suggest likely
+  missing links for still-open items (semantically close later entries sharing
+  a person or tag), with one-click link and dismiss in the UI.
+- The UI shows each chained entry's full timeline in its detail panel, and the
+  graph view draws chains as dashed edges between entries.
+
+Links are validated at write time (targets must exist, must not be newer, and
+cycles are rejected). Settle an open matter by logging a new linked entry, not
+by rewriting the old one — the history stays intact.
 
 The index combines:
 
