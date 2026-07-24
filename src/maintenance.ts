@@ -2,7 +2,7 @@ import { loadAllEntries } from "./ingest.js";
 import { indexStatus } from "./store.js";
 import { lexicalStatus } from "./lexical.js";
 import type { MemoryEntry } from "./schema.js";
-import { analyzeChainLinks, analyzeGraphHygiene, writeGraphMaintenanceAudit } from "./graph-maintenance.js";
+import { analyzeChainLinks, analyzeGraphHygiene, readSlugDismissals, slugDismissalKeys, writeGraphMaintenanceAudit } from "./graph-maintenance.js";
 import { buildChainIndex, entryStatus } from "./chains.js";
 
 /**
@@ -113,7 +113,7 @@ export async function runMaintenance(threshold: number): Promise<void> {
   }
 
   console.log("\n## Slug hygiene");
-  const audit = analyzeGraphHygiene(entries);
+  const audit = analyzeGraphHygiene(entries, undefined, slugDismissalKeys(await readSlugDismissals()));
   audit.chainSuggestions = chainSuggestions;
   await writeGraphMaintenanceAudit(audit);
   if (audit.suggestions.length === 0) {

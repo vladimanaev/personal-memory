@@ -1162,6 +1162,32 @@ async function postSlugMerge(s, dryRun) {
   if (route().view === "maintenance") render();
 }
 
+/**
+ * Persistently hide a wrong merge suggestion (the pair, in either role order,
+ * never resurfaces).
+ * @param {SlugSuggestion} s
+ */
+async function postSlugDismiss(s) {
+  const key = mergeKey(s);
+  state.mergeBusy = key;
+  state.mergeErrors[key] = "";
+  render();
+  try {
+    const res = await fetch("/api/maintenance/slugs/dismiss", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kind: s.kind, from: s.from, to: s.to }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error ?? `dismiss failed (${res.status})`);
+    await loadMaintenance();
+  } catch (err) {
+    state.mergeErrors[key] = err instanceof Error ? err.message : String(err);
+  }
+  state.mergeBusy = "";
+  if (route().view === "maintenance") render();
+}
+
 /** @param {ChainLinkSuggestion} s */
 function chainKey(s) {
   return `${s.laterId}|${s.openId}`;
@@ -1266,7 +1292,7 @@ function suggestionRow(s) {
     : "";
   const actions = confirming
     ? `<span class="mactions"><button class="chip chip-primary" data-mmerge="${esc(key)}" ${busy ? "disabled" : ""}>confirm</button><button class="chip" data-mcancel-confirm>cancel</button></span>`
-    : `<span class="mactions"><button class="chip" data-mpreview="${esc(key)}" ${busy ? "disabled" : ""}>dry-run</button><button class="chip" data-mconfirm="${esc(key)}" ${busy ? "disabled" : ""}>merge</button></span>`;
+    : `<span class="mactions"><button class="chip" data-mpreview="${esc(key)}" ${busy ? "disabled" : ""}>dry-run</button><button class="chip" data-mconfirm="${esc(key)}" ${busy ? "disabled" : ""}>merge</button><button class="chip" data-msdismiss="${esc(key)}" ${busy ? "disabled" : ""} title="wrong pair — hide this suggestion permanently">ignore</button></span>`;
   return `
     <div class="mrow" data-suggestion="${esc(key)}">
       <span class="mdate">${esc(s.lastSeen ?? "—")}</span>
@@ -1586,6 +1612,13 @@ document.addEventListener("click", (ev) => {
     ev.preventDefault();
     const s = state.maintenance?.audit?.chainSuggestions?.find((x) => chainKey(x) === linkEl.dataset.mlink);
     if (s) postChainLink(s, "link");
+    return;
+  }
+  const slugDismissEl = t.closest("[data-msdismiss]");
+  if (slugDismissEl instanceof HTMLElement) {
+    ev.preventDefault();
+    const s = state.maintenance?.audit?.suggestions.find((x) => mergeKey(x) === slugDismissEl.dataset.msdismiss);
+    if (s) postSlugDismiss(s);
     return;
   }
   const dismissEl = t.closest("[data-mdismiss]");

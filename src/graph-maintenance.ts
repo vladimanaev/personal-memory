@@ -202,7 +202,11 @@ function pairSuggestion(kind: SlugKind, a: SlugStats, b: SlugStats): SlugSuggest
   };
 }
 
-export function analyzeGraphHygiene(entries: MemoryEntry[], generatedAt = new Date().toISOString()): GraphMaintenanceAudit {
+export function analyzeGraphHygiene(
+  entries: MemoryEntry[],
+  generatedAt = new Date().toISOString(),
+  dismissed: Set<string> = new Set(),
+): GraphMaintenanceAudit {
   const suggestions: SlugSuggestion[] = [];
   const counts = { person: 0, team: 0, tag: 0 };
   const suggestionCounts = { person: 0, team: 0, tag: 0 };
@@ -215,7 +219,7 @@ export function analyzeGraphHygiene(entries: MemoryEntry[], generatedAt = new Da
         const a = stats[i]!;
         const b = stats[j]!;
         const suggestion = pairSuggestion(kind, a, b);
-        if (suggestion) {
+        if (suggestion && !dismissed.has(`${kind}|${suggestion.from}|${suggestion.to}`)) {
           suggestions.push(suggestion);
           suggestionCounts[kind]++;
         }
@@ -265,6 +269,51 @@ export async function dismissChainSuggestion(openId: string, laterId: string): P
     dismissals.push({ openId, laterId, dismissedAt: new Date().toISOString() });
     await mkdir(INDEX_DIR, { recursive: true });
     await writeFile(CHAIN_DISMISSALS_PATH, JSON.stringify(dismissals, null, 2), "utf8");
+  }
+  return refreshGraphMaintenanceAudit();
+}
+
+export const SLUG_DISMISSALS_PATH = join(INDEX_DIR, "slug-dismissals.json");
+
+export interface SlugDismissal {
+  kind: SlugKind;
+  from: string;
+  to: string;
+  dismissedAt: string;
+}
+
+export async function readSlugDismissals(): Promise<SlugDismissal[]> {
+  try {
+    const parsed: unknown = JSON.parse(await readFile(SLUG_DISMISSALS_PATH, "utf8"));
+    return Array.isArray(parsed) ? (parsed as SlugDismissal[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Both role orders per record: `preferredDirection` can swap from/to when
+ * usage counts shift, and a dismissed pair must never resurface either way.
+ */
+export function slugDismissalKeys(dismissals: SlugDismissal[]): Set<string> {
+  const keys = new Set<string>();
+  for (const d of dismissals) {
+    keys.add(`${d.kind}|${d.from}|${d.to}`);
+    keys.add(`${d.kind}|${d.to}|${d.from}`);
+  }
+  return keys;
+}
+
+/**
+ * Persistently hide one wrong merge suggestion. Lives in `.index/` like
+ * chain dismissals: user judgment that is cheap to re-give if wiped.
+ */
+export async function dismissSlugSuggestion(kind: SlugKind, from: string, to: string): Promise<GraphMaintenanceAudit> {
+  const dismissals = await readSlugDismissals();
+  if (!dismissals.some((d) => d.kind === kind && d.from === from && d.to === to)) {
+    dismissals.push({ kind, from, to, dismissedAt: new Date().toISOString() });
+    await mkdir(INDEX_DIR, { recursive: true });
+    await writeFile(SLUG_DISMISSALS_PATH, JSON.stringify(dismissals, null, 2), "utf8");
   }
   return refreshGraphMaintenanceAudit();
 }
@@ -400,7 +449,7 @@ export async function readGraphMaintenanceAudit(): Promise<GraphMaintenanceAudit
 
 export async function refreshGraphMaintenanceAudit(): Promise<GraphMaintenanceAudit> {
   const entries = await loadAllEntries();
-  const audit = analyzeGraphHygiene(entries);
+  const audit = analyzeGraphHygiene(entries, undefined, slugDismissalKeys(await readSlugDismissals()));
   audit.chainSuggestions = await analyzeChainLinks(entries);
   await writeGraphMaintenanceAudit(audit);
   return audit;

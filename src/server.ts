@@ -8,7 +8,7 @@ import { loadAllEntries, ROOT } from "./ingest.js";
 import { search, indexStatus, type SearchFilters } from "./store.js";
 import { loadConnectors, loadConnectorState, writeConnector, relConnector } from "./connectors.js";
 import { getMaintenanceSnapshot, launchMaintenanceRun, startMaintenanceScheduler } from "./scheduled-maintenance.js";
-import { applyChainLink, dismissChainSuggestion, mergeSlugs, type SlugKind } from "./graph-maintenance.js";
+import { applyChainLink, dismissChainSuggestion, dismissSlugSuggestion, mergeSlugs, type SlugKind } from "./graph-maintenance.js";
 import { buildChainIndex } from "./chains.js";
 
 const UI_DIR = fileURLToPath(new URL("./ui/", import.meta.url));
@@ -279,6 +279,30 @@ async function apiDismissChainLink(req: IncomingMessage, res: ServerResponse): P
   }
 }
 
+async function apiDismissSlugMerge(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  let data: Record<string, unknown>;
+  try {
+    data = (JSON.parse((await readBody(req, 32 * 1024)) || "{}") ?? {}) as Record<string, unknown>;
+  } catch (err) {
+    sendJson(res, (err as { status?: number }).status ?? 400, {
+      error: err instanceof Error ? err.message : "invalid JSON body",
+    });
+    return;
+  }
+  const kind = slugKind(data.kind);
+  const from = typeof data.from === "string" ? data.from : "";
+  const to = typeof data.to === "string" ? data.to : "";
+  if (!kind || !from || !to) {
+    sendJson(res, 400, { error: "kind, from, and to are required" });
+    return;
+  }
+  try {
+    sendJson(res, 200, { ok: true, audit: await dismissSlugSuggestion(kind, from, to) });
+  } catch (err) {
+    sendJson(res, 400, { error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
 function openBrowser(url: string): void {
   const cmd =
     process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
@@ -329,6 +353,9 @@ export function startServer(opts: { port: number; open: boolean }): Promise<neve
         else sendJson(res, 405, { error: "method not allowed" });
       } else if (url.pathname === "/api/maintenance/slugs/merge") {
         if (req.method === "POST") await apiMergeSlugs(req, res);
+        else sendJson(res, 405, { error: "method not allowed" });
+      } else if (url.pathname === "/api/maintenance/slugs/dismiss") {
+        if (req.method === "POST") await apiDismissSlugMerge(req, res);
         else sendJson(res, 405, { error: "method not allowed" });
       } else if (url.pathname === "/api/maintenance/link") {
         if (req.method === "POST") await apiChainLink(req, res);
