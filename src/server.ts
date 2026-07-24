@@ -19,6 +19,7 @@ const STATIC: Record<string, { file: string; mime: string }> = {
   "/index.html": { file: "index.html", mime: "text/html; charset=utf-8" },
   "/app.js": { file: "app.js", mime: "text/javascript; charset=utf-8" },
   "/graph.js": { file: "graph.js", mime: "text/javascript; charset=utf-8" },
+  "/combobox.js": { file: "combobox.js", mime: "text/javascript; charset=utf-8" },
   "/style.css": { file: "style.css", mime: "text/css; charset=utf-8" },
 };
 

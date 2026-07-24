@@ -36,6 +36,8 @@
  * @typedef {{ a: string, b: string, weight: number, chain?: boolean }} GEdge
  */
 
+import { comboboxHtml, wireCombobox } from "./combobox.js";
+
 const W = 1200;
 const H = 800;
 const PAD = 34;
@@ -442,18 +444,10 @@ export function renderGraphView(mainEl, entries, opts = {}) {
     .map((mode) => `<button class="gmode" data-mode="${mode}" aria-pressed="${gstate.mode === mode}">${mode}</button>`)
     .join("");
   const tagSelect = `
-        <label class="gtag-control">
+        <div class="gtag-control">
           <span class="k">tag</span>
-          <select id="gtag" aria-label="filter graph by tag">
-            <option value="">all tags</option>
-            ${tagCounts
-              .map(
-                ([tag, n]) =>
-                  `<option value="${esc(tag)}" ${gstate.tagFilter === tag ? "selected" : ""}>${esc(tag)} (${n})</option>`,
-              )
-              .join("")}
-          </select>
-        </label>`;
+          ${comboboxHtml("tag", gstate.tagFilter)}
+        </div>`;
   const typeLegend = `
         <div class="gtypelegend" id="gtypelegend" role="group" aria-label="filter entry types" hidden>
           <span class="k">entry types</span>
@@ -778,10 +772,10 @@ export function renderGraphView(mainEl, entries, opts = {}) {
     });
   });
 
-  const tagSelectEl = mainEl.querySelector("#gtag");
-  if (tagSelectEl instanceof HTMLSelectElement) {
-    tagSelectEl.addEventListener("change", () => {
-      gstate.tagFilter = tagSelectEl.value;
+  const tagCombo = mainEl.querySelector(".gtag-control .combo");
+  if (tagCombo instanceof HTMLElement) {
+    wireCombobox(tagCombo, tagCounts, (value) => {
+      gstate.tagFilter = value;
       gstate.selected = null;
       refresh();
     });

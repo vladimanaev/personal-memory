@@ -1,5 +1,6 @@
 // @ts-check
 import { renderGraphView } from "./graph.js";
+import { comboboxHtml, wireCombobox } from "./combobox.js";
 
 /**
  * memory ui — vanilla JS SPA. One /api/data fetch feeds everything;
@@ -785,16 +786,9 @@ async function runSemantic() {
 /** @param {{ focus?: boolean }} [opts] */
 function renderSearchPanel(opts = {}) {
   const f = state.facets;
-  /** @param {string} name @param {string[]} opts @param {string} cur */
-  const sel = (name, opts, cur) => `
-    <select data-facet="${name}" aria-label="${name}">
-      <option value="">${name}: all</option>
-      ${opts.map((o) => `<option value="${esc(o)}" ${o === cur ? "selected" : ""}>${esc(o)}</option>`).join("")}
-    </select>`;
-
-  const people = countBy(state.entries, (e) => e.people).map(([k]) => k);
-  const teams = countBy(state.entries, (e) => e.teams).map(([k]) => k);
-  const tags = countBy(state.entries, (e) => e.tags).map(([k]) => k);
+  const people = countBy(state.entries, (e) => e.people);
+  const teams = countBy(state.entries, (e) => e.teams);
+  const tags = countBy(state.entries, (e) => e.tags);
   const typeCounts = TYPE_ORDER.map((t) => ({ t, n: state.entries.filter((e) => e.type === t).length })).filter(
     (x) => x.n > 0,
   );
@@ -815,9 +809,9 @@ function renderSearchPanel(opts = {}) {
         .join("")}
     </div>
     <div class="facets">
-      ${sel("person", people, f.person)}
-      ${sel("team", teams, f.team)}
-      ${sel("tag", tags, f.tag)}
+      ${comboboxHtml("person", f.person)}
+      ${comboboxHtml("team", f.team)}
+      ${comboboxHtml("tag", f.tag)}
       <label class="facet-date">since <input type="date" data-facet="since" value="${esc(f.since)}" /></label>
       <label class="facet-date">until <input type="date" data-facet="until" value="${esc(f.until)}" /></label>
     </div>
@@ -850,6 +844,9 @@ function renderSearchPanel(opts = {}) {
       renderResults();
     }
   });
+  wireCombobox($('[data-combo="person"]'), people);
+  wireCombobox($('[data-combo="team"]'), teams);
+  wireCombobox($('[data-combo="tag"]'), tags);
   for (const el of document.querySelectorAll("[data-facet]")) {
     el.addEventListener("change", () => {
       const key = /** @type {keyof Facets} */ (el.getAttribute("data-facet"));

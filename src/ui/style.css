@@ -118,7 +118,7 @@ input {
 }
 
 .searchbar input[type="search"]:focus-visible,
-.facets select:focus-visible,
+.combo-input:focus-visible,
 .facets input[type="date"]:focus-visible {
   outline: none; /* these signal focus via their own accent border */
 }
@@ -602,7 +602,6 @@ h2 {
   margin: 14px 0 6px;
 }
 
-.facets select,
 .facets input[type="date"] {
   height: 28px;
   font: inherit;
@@ -614,24 +613,119 @@ h2 {
   padding: 0 8px;
 }
 
-.facets select {
-  appearance: none;
-  -webkit-appearance: none;
-  padding-right: 26px;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%238f8d85' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 9px center;
-}
-
-.facets select:hover,
 .facets input[type="date"]:hover {
   color: var(--ink);
   border-color: var(--baseline);
 }
 
-.facets select:focus,
 .facets input[type="date"]:focus {
   border-color: var(--accent);
+}
+
+/* searchable combobox — record facets + graph tag filter */
+.combo {
+  position: relative;
+}
+
+.combo-input {
+  width: 150px;
+  height: 28px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink-2);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0 24px 0 8px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%238f8d85' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 9px center;
+}
+
+.combo-input::placeholder {
+  color: var(--ink-2);
+  opacity: 1;
+}
+
+.combo-input:hover {
+  color: var(--ink);
+  border-color: var(--baseline);
+}
+
+.combo-input:focus {
+  outline: none;
+  color: var(--ink);
+  border-color: var(--accent);
+}
+
+.combo:has(.combo-clear:not([hidden])) .combo-input {
+  background-image: none;
+}
+
+.combo-clear {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  transform: translateY(-50%);
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.combo-clear:hover {
+  color: var(--ink);
+}
+
+.combo-list {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 30;
+  min-width: 100%;
+  max-width: 280px;
+  max-height: 260px;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  padding: 4px;
+}
+
+.combo-opt {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--ink-2);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.combo-opt.is-active {
+  background: var(--accent-soft);
+  color: var(--ink);
+}
+
+.combo-opt .n {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.combo-empty {
+  padding: 5px 8px;
+  font-size: 13px;
+  color: var(--muted);
 }
 
 .facet-date {
@@ -1240,32 +1334,8 @@ body.view-graph .site-header {
   flex: none;
 }
 
-.gtag-control select {
-  height: 28px;
-  max-width: min(280px, 42vw);
-  font: inherit;
-  font-size: 13px;
-  color: var(--ink-2);
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 0 28px 0 9px;
-  appearance: none;
-  -webkit-appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%238f8d85' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 9px center;
-}
-
-.gtag-control select:hover {
-  color: var(--ink);
-  border-color: var(--baseline);
-}
-
-.gtag-control select:focus,
-.gtag-control select:focus-visible {
-  outline: none;
-  border-color: var(--accent);
+.gtag-control .combo-input {
+  width: min(280px, 42vw);
 }
 
 .gtypelegend {
