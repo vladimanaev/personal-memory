@@ -253,9 +253,12 @@ folder. The important conventions live in:
   updating memories
 - [skills/recall-memory/SKILL.md](skills/recall-memory/SKILL.md) - retrieving
   grounded context
-- [.claude/commands/remember.md](.claude/commands/remember.md) and
-  [.claude/commands/recall.md](.claude/commands/recall.md) - Claude Code slash
-  commands
+- [skills/compact-tags/SKILL.md](skills/compact-tags/SKILL.md) - merging
+  similar/duplicate tags with per-merge confirmation
+- [.claude/commands/remember.md](.claude/commands/remember.md),
+  [.claude/commands/recall.md](.claude/commands/recall.md), and
+  [.claude/commands/compact-tags.md](.claude/commands/compact-tags.md) - Claude
+  Code slash commands
 
 Agents should retrieve through the CLI instead of searching `memory/` directly,
 and should write entries through `memory add` instead of hand-editing files.

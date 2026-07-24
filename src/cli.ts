@@ -16,7 +16,7 @@ import { search, findSimilar, syncIndex, applyFilters, type SearchCompleteness, 
 import type { MemoryEntry } from "./schema.js";
 import { commitMemoryRepo } from "./memory-git.js";
 import { buildChainIndex, entryStatus, validateFollowsTargets, type ChainAnnotation } from "./chains.js";
-import { applyChainLink, mergeSlugs, type SlugKind } from "./graph-maintenance.js";
+import { applyChainLink, dismissSlugSuggestion, mergeSlugs, proposeSlugMerge, slugUsage, type SlugKind } from "./graph-maintenance.js";
 import { recall, type RecallReport } from "./recall.js";
 
 const rel = (p: string) => relative(ROOT, p);
@@ -581,8 +581,16 @@ function requireSlugKind(value: unknown): SlugKind {
 
 async function cmdSlugs(argv: string[]) {
   const sub = argv[0];
+  if (sub === "list") return cmdSlugsList(argv.slice(1));
+  if (sub === "dismiss") return cmdSlugsDismiss(argv.slice(1));
+  if (sub === "propose") return cmdSlugsPropose(argv.slice(1));
   if (sub !== "merge") {
-    throw new Error("usage: memory slugs merge --kind person|team|tag --from <slug> --to <slug> [--dry-run] [--create-target]");
+    throw new Error(
+      "usage: memory slugs list --kind person|team|tag [--min-count N]\n" +
+        "       memory slugs merge --kind person|team|tag --from <slug> --to <slug> [--dry-run] [--create-target]\n" +
+        "       memory slugs propose --kind person|team|tag --from <slug> --to <slug> --reason \"…\"\n" +
+        "       memory slugs dismiss --kind person|team|tag --from <slug> --to <slug>",
+    );
   }
   const { values } = parseArgs({
     args: argv.slice(1),
@@ -622,6 +630,65 @@ async function cmdSlugs(argv: string[]) {
       }`,
     );
   }
+}
+
+async function cmdSlugsList(argv: string[]) {
+  const { values } = parseArgs({
+    args: argv,
+    options: {
+      kind: { type: "string" },
+      "min-count": { type: "string" },
+    },
+  });
+  const kind = requireSlugKind(values.kind);
+  const minCount = positiveInt(values["min-count"], 1, "--min-count");
+
+  const entries = await loadAllEntries();
+  const usage = slugUsage(entries, kind).filter((s) => s.count >= minCount);
+  for (const s of usage) {
+    console.log(`${String(s.count).padStart(4)}  ${s.slug}  (last seen ${s.lastSeen ?? "n/a"})`);
+  }
+  console.log(`${usage.length} ${kind} slug${usage.length === 1 ? "" : "s"} across ${entries.length} entries`);
+}
+
+async function cmdSlugsPropose(argv: string[]) {
+  const { values } = parseArgs({
+    args: argv,
+    options: {
+      kind: { type: "string" },
+      from: { type: "string" },
+      to: { type: "string" },
+      reason: { type: "string" },
+    },
+  });
+  const kind = requireSlugKind(values.kind);
+  const from = values.from as string | undefined;
+  const to = values.to as string | undefined;
+  const reason = (values.reason as string | undefined)?.trim();
+  if (!from || !to) throw new Error("slugs propose requires --from and --to");
+  if (!reason) throw new Error("slugs propose requires --reason (shown with the suggestion in the maintenance screen)");
+
+  await proposeSlugMerge(kind, from, to, reason);
+  console.log(`✓ proposed ${kind} merge '${from}' → '${to}' — deferred to the maintenance screen (memory ui) and \`memory maintenance\``);
+  console.log(`  it stays suggested until merged or ignored there; reason: ${reason}`);
+}
+
+async function cmdSlugsDismiss(argv: string[]) {
+  const { values } = parseArgs({
+    args: argv,
+    options: {
+      kind: { type: "string" },
+      from: { type: "string" },
+      to: { type: "string" },
+    },
+  });
+  const kind = requireSlugKind(values.kind);
+  const from = values.from as string | undefined;
+  const to = values.to as string | undefined;
+  if (!from || !to) throw new Error("slugs dismiss requires --from and --to");
+
+  await dismissSlugSuggestion(kind, from, to);
+  console.log(`✓ dismissed ${kind} suggestion '${from}' → '${to}' (won't be suggested again; stored in .index/slug-dismissals.json)`);
 }
 
 async function cmdConnectorsMarkPulled(argv: string[]) {
@@ -748,8 +815,14 @@ Usage:
   memory person <slug>
   memory digest --person <slug> | --quarter <YYYY-Qn> | --tag <slug>
   memory maintenance [--threshold N]  # read-only report: digest debt, index health, slug hygiene (default 15)
+  memory slugs list --kind person|team|tag [--min-count N]
+            # vocabulary with usage counts (for tag compaction / slug reuse)
   memory slugs merge --kind person|team|tag --from <slug> --to <slug> [--dry-run] [--create-target]
             # explicit slug merge; rewrites frontmatter arrays, syncs index, checkpoints memory/.git
+  memory slugs propose --kind person|team|tag --from <slug> --to <slug> --reason "…"
+            # defer a merge decision: shows as a suggestion in maintenance + web UI until merged/ignored
+  memory slugs dismiss --kind person|team|tag --from <slug> --to <slug>
+            # permanently hide a wrong merge suggestion from maintenance
   memory connectors                  # list + validate connectors/<name>.md (fetch config + extraction prompt per source)
   memory connectors mark-pulled <name> [--at ISO_TIMESTAMP]
             # record that a connector sweep completed; captures are recorded by memory add

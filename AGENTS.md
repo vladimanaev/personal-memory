@@ -16,6 +16,8 @@ sent to any API by default.
 - User asks a question about people / past events, or wants to plan or
   remember → **recall**, grounded in the store (see `skills/recall-memory/SKILL.md`).
   Don't answer people/history questions from chat history alone.
+- User wants to merge/consolidate/clean up similar tags (or person/team slugs)
+  → **compact**, every merge user-confirmed (see `skills/compact-tags/SKILL.md`).
 
 ## The `memory` CLI (the engine)
 
@@ -32,6 +34,10 @@ Run with `npx tsx src/cli.ts <cmd>` (Node ≥ 20 — `nvm use 20`).
 | `person <slug>` | Everything about a person |
 | `digest --person <slug> \| --quarter <YYYY-Qn> \| --tag <slug>` | Build/refresh a rolling summary |
 | `maintenance [--threshold N]` | Hygiene report: digest debt (suggested `digest` commands), index health, connector validity, possible unlinked chains (suggested `link` commands) + dangling links, similar-slug warnings |
+| `slugs list --kind person\|team\|tag [--min-count N]` | Slug vocabulary with usage counts (for tag compaction / slug reuse) |
+| `slugs merge --kind person\|team\|tag --from <slug> --to <slug> [--dry-run] [--create-target]` | Sanctioned slug merge: rewrites the affected frontmatter arrays, syncs the index, checkpoints `memory/.git` before/after |
+| `slugs propose --kind person\|team\|tag --from <slug> --to <slug> --reason "…"` | Defer a merge decision: parks the pair as a suggestion in `maintenance` + web UI until merged or ignored there |
+| `slugs dismiss --kind person\|team\|tag --from <slug> --to <slug>` | Permanently hide a wrong merge suggestion from `maintenance` |
 | `connectors` | List + validate connector files, templates + private overrides (exit 1 if any invalid) |
 | `ui [--port N] [--no-open]` | Local web UI — stats, browse, search, connector editing, maintenance screen (default port 4664; memory writes limited to slug merges + chain links, both via the same validated code paths as the CLI) |
 

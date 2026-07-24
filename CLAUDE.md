@@ -67,6 +67,14 @@ ONLY in the override. To sweep sources
 periodically, use the `pull-memories` skill (`/pull-memories` — manual or via
 `/loop`); `npx tsx src/cli.ts connectors` lists + validates them.
 
+**Tag compaction:** when the user wants to merge/consolidate similar tags
+(`k8s`/`kubernetes`, plurals, typos), use the `compact-tags` skill
+(`/compact-tags`) — it proposes candidates from `memory maintenance` + the
+`slugs list` vocabulary, gets explicit user confirmation per pair, and executes
+ONLY via `npx tsx src/cli.ts slugs merge` (dry-run first, verified after). If
+the user doesn't want to decide in chat, defer the pair with `slugs propose` —
+it then shows in `memory maintenance` and the web UI until merged or ignored.
+
 **Dedup:** when the material comes from Slack/email/calendar, always pass
 `--source-ids` (e.g. `slack:<channel>:<ts>`, `gmail:<thread-id>`). The CLI dedups
 on it — re-fetching the same source **updates that entry in place** (one entry per
@@ -78,4 +86,5 @@ Captures without a source id hit a near-duplicate guard; resolve it with
 ## More detail
 
 See `AGENTS.md` for the full data model, schema, and conventions (shared with
-Codex). Skills: `skills/recall-memory`, `skills/log-memory`, `skills/pull-memories`.
+Codex). Skills: `skills/recall-memory`, `skills/log-memory`, `skills/pull-memories`,
+`skills/compact-tags`.

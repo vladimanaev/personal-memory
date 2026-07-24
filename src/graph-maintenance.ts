@@ -22,6 +22,16 @@ export interface SlugSuggestion {
   sharedEntries: number;
   lastSeen: string | null;
   reasons: string[];
+  /** "agent" = deferred from a compact-tags review; absent/"engine" = similarity engine. */
+  source?: "engine" | "agent";
+}
+
+export interface SlugProposal {
+  kind: SlugKind;
+  from: string;
+  to: string;
+  reason: string;
+  proposedAt: string;
 }
 
 export interface ChainLinkSuggestion {
@@ -91,6 +101,18 @@ function countByKind(entries: MemoryEntry[], kind: SlugKind): Map<string, SlugSt
     }
   }
   return stats;
+}
+
+export interface SlugUsage {
+  slug: string;
+  count: number;
+  lastSeen: string | null;
+}
+
+export function slugUsage(entries: MemoryEntry[], kind: SlugKind): SlugUsage[] {
+  return [...countByKind(entries, kind).values()]
+    .map(({ slug, count, lastSeen }) => ({ slug, count, lastSeen }))
+    .sort((a, b) => b.count - a.count || a.slug.localeCompare(b.slug));
 }
 
 function editDistance(a: string, b: string): number {
@@ -202,17 +224,24 @@ function pairSuggestion(kind: SlugKind, a: SlugStats, b: SlugStats): SlugSuggest
   };
 }
 
+/** Deferred agent judgment, not a similarity score — high but below reorder-certainty. */
+const AGENT_PROPOSAL_CONFIDENCE = 0.9;
+
 export function analyzeGraphHygiene(
   entries: MemoryEntry[],
   generatedAt = new Date().toISOString(),
   dismissed: Set<string> = new Set(),
+  proposals: SlugProposal[] = [],
 ): GraphMaintenanceAudit {
   const suggestions: SlugSuggestion[] = [];
   const counts = { person: 0, team: 0, tag: 0 };
   const suggestionCounts = { person: 0, team: 0, tag: 0 };
+  const statsByKind = new Map<SlugKind, Map<string, SlugStats>>();
 
   for (const kind of ["person", "team", "tag"] as const) {
-    const stats = [...countByKind(entries, kind).values()].sort((a, b) => a.slug.localeCompare(b.slug));
+    const byKind = countByKind(entries, kind);
+    statsByKind.set(kind, byKind);
+    const stats = [...byKind.values()].sort((a, b) => a.slug.localeCompare(b.slug));
     counts[kind] = stats.length;
     for (let i = 0; i < stats.length; i++) {
       for (let j = i + 1; j < stats.length; j++) {
@@ -225,6 +254,35 @@ export function analyzeGraphHygiene(
         }
       }
     }
+  }
+
+  const engineKeys = new Set(suggestions.flatMap((s) => [`${s.kind}|${s.from}|${s.to}`, `${s.kind}|${s.to}|${s.from}`]));
+  for (const p of proposals) {
+    if (dismissed.has(`${p.kind}|${p.from}|${p.to}`) || engineKeys.has(`${p.kind}|${p.from}|${p.to}`)) continue;
+    const from = statsByKind.get(p.kind)?.get(p.from);
+    const to = statsByKind.get(p.kind)?.get(p.to);
+    if (!from || !to) continue; // already merged/renamed away — proposal is moot
+    engineKeys.add(`${p.kind}|${p.from}|${p.to}`).add(`${p.kind}|${p.to}|${p.from}`);
+    const sharedEntries = [...from.entryIds].filter((id) => to.entryIds.has(id)).length;
+    suggestions.push({
+      kind: p.kind,
+      from: p.from,
+      to: p.to,
+      confidence: AGENT_PROPOSAL_CONFIDENCE,
+      affectedEntries: from.count,
+      fromCount: from.count,
+      toCount: to.count,
+      sharedEntries,
+      lastSeen:
+        from.lastSeen && to.lastSeen
+          ? from.lastSeen > to.lastSeen
+            ? from.lastSeen
+            : to.lastSeen
+          : (from.lastSeen ?? to.lastSeen),
+      reasons: [`agent proposal: ${p.reason}`],
+      source: "agent",
+    });
+    suggestionCounts[p.kind]++;
   }
 
   suggestions.sort(
@@ -314,6 +372,41 @@ export async function dismissSlugSuggestion(kind: SlugKind, from: string, to: st
     dismissals.push({ kind, from, to, dismissedAt: new Date().toISOString() });
     await mkdir(INDEX_DIR, { recursive: true });
     await writeFile(SLUG_DISMISSALS_PATH, JSON.stringify(dismissals, null, 2), "utf8");
+  }
+  return refreshGraphMaintenanceAudit();
+}
+
+export const SLUG_PROPOSALS_PATH = join(INDEX_DIR, "slug-proposals.json");
+
+export async function readSlugProposals(): Promise<SlugProposal[]> {
+  try {
+    const parsed: unknown = JSON.parse(await readFile(SLUG_PROPOSALS_PATH, "utf8"));
+    return Array.isArray(parsed) ? (parsed as SlugProposal[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Defer an agent-judged merge to the maintenance screen instead of deciding in
+ * chat. The proposal surfaces as a regular merge suggestion (source: "agent")
+ * until it is merged (from-slug gone), ignored (dismissal), or moot.
+ */
+export async function proposeSlugMerge(kind: SlugKind, from: string, to: string, reason: string): Promise<GraphMaintenanceAudit> {
+  if (from === to) throw new Error("--from and --to must be different slugs");
+  const entries = await loadAllEntries();
+  const stats = countByKind(entries, kind);
+  for (const slug of [from, to]) {
+    if (!stats.has(slug)) throw new Error(`${kind} '${slug}' does not exist — proposals must reference existing slugs`);
+  }
+  if (slugDismissalKeys(await readSlugDismissals()).has(`${kind}|${from}|${to}`)) {
+    throw new Error(`${kind} pair '${from}' / '${to}' was previously dismissed as a wrong match — not re-proposing`);
+  }
+  const proposals = await readSlugProposals();
+  if (!proposals.some((p) => p.kind === kind && ((p.from === from && p.to === to) || (p.from === to && p.to === from)))) {
+    proposals.push({ kind, from, to, reason, proposedAt: new Date().toISOString() });
+    await mkdir(INDEX_DIR, { recursive: true });
+    await writeFile(SLUG_PROPOSALS_PATH, JSON.stringify(proposals, null, 2), "utf8");
   }
   return refreshGraphMaintenanceAudit();
 }
@@ -449,7 +542,7 @@ export async function readGraphMaintenanceAudit(): Promise<GraphMaintenanceAudit
 
 export async function refreshGraphMaintenanceAudit(): Promise<GraphMaintenanceAudit> {
   const entries = await loadAllEntries();
-  const audit = analyzeGraphHygiene(entries, undefined, slugDismissalKeys(await readSlugDismissals()));
+  const audit = analyzeGraphHygiene(entries, undefined, slugDismissalKeys(await readSlugDismissals()), await readSlugProposals());
   audit.chainSuggestions = await analyzeChainLinks(entries);
   await writeGraphMaintenanceAudit(audit);
   return audit;
