@@ -49,7 +49,9 @@ index files, and the entry paths that CLI output cites.
 
 3. **Read the connector file** — `memory/connectors/<name>.md` if it exists,
    else `connectors/<name>.md` — the `fetch` keys drive the queries; the body
-   is your extraction prompt for this source.
+   is your extraction prompt for this source. Also read the **routing prompt**
+   once per run (`memory/routing/graph-routing.md` if present, else
+   `routing/graph-routing.md`) — it decides which graph each capture goes to.
 
 4. **Fetch via MCP** (each connector's `fetch` block is the source of truth;
    typical shape):
@@ -68,9 +70,15 @@ index files, and the entry paths that CLI output cites.
      (e.g. `gmail:<thread-id>`, `slack:<channel-id>:<thread-root-ts>`).
    - Follow `skills/log-memory/SKILL.md` for slugs and body quality (reuse
      existing people/team slugs — `memory list` first).
+   - **Route each item** to its graph: if the connector frontmatter has a
+     `graph:` pin (e.g. `graph: private` on a DM-heavy source), every capture
+     from it goes there — skip routing. Otherwise apply the routing prompt per
+     item: confident public → `--graph public`; any doubt → private (omit the
+     flag). A capture that `--follows` a private entry is always private.
    - `npx tsx src/cli.ts add --title … --type … --people … --source-ids <id> --body …`
    - `memory add` records `<name>.last_captured` automatically when the source
-     id prefix matches a known connector.
+     id prefix matches a known connector. Re-fetched items stay in their
+     entry's existing graph (`--graph` on an update is ignored with a notice).
 
 6. **Record the pull**: for each connector that was actually swept, set
    `<name>.last_pulled` to the run's start time (UTC ISO 8601) through the CLI:
@@ -83,7 +91,8 @@ index files, and the entry paths that CLI output cites.
    `.index/connector-state.json`.
 
 7. **Report** per connector: items scanned / created / updated / unchanged /
-   skipped-as-noise, with entry ids for anything created or updated.
+   skipped-as-noise, with entry ids for anything created or updated, and how
+   many went to each graph (private/public) when any routed public.
 
 ## Automation
 

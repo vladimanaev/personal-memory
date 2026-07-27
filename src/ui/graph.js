@@ -9,6 +9,7 @@
  * @typedef {{ id: string, date: string, type: string, title: string,
  *             people: string[], teams: string[], tags: string[],
  *             sources?: string[], follows?: string[],
+ *             graph?: "private"|"public", ghost?: boolean,
  *             chain?: { prev: string[], next: string[],
  *                       latest: { id: string, type: string, date: string },
  *                       resolvedBy?: string, status?: "open"|"resolved",
@@ -22,6 +23,7 @@
  * @property {NodeKind} kind
  * @property {string} label
  * @property {string} etype entry type (entry nodes only; "" for entities)
+ * @property {boolean} ghost public entry shown in the private graph for a cross-graph edge
  * @property {number} deg
  * @property {number} r
  * @property {number} links edge count in the current projection (spring normalizer)
@@ -52,6 +54,9 @@ const KINDS = [
 
 // view state survives route switches so the graph doesn't rearrange on return
 const gstate = {
+  /** which graph is on screen; a change clears cached layout + selection */
+  /** @type {"private"|"public"} */
+  graph: "private",
   /** @type {GraphMode} */
   mode: "people",
   /** @type {Record<NodeKind, boolean>} */
@@ -144,7 +149,7 @@ function buildGraph(entries) {
   const ensure = (id, kind, label) => {
     let n = nodes.get(id);
     if (!n) {
-      n = { id, kind, label, etype: "", deg: 0, r: 4, links: 0, entryIds: [], x: 0, y: 0, vx: 0, vy: 0, fx: null, fy: null };
+      n = { id, kind, label, etype: "", ghost: false, deg: 0, r: 4, links: 0, entryIds: [], x: 0, y: 0, vx: 0, vy: 0, fx: null, fy: null };
       nodes.set(id, n);
     }
     return n;
@@ -153,6 +158,12 @@ function buildGraph(entries) {
   for (const e of entries) {
     const en = ensure(`e:${e.id}`, "entry", e.title);
     en.etype = e.type;
+    // ghost = a public entry surfaced only so a private chain edge has a target;
+    // it contributes its entry node alone, no entity memberships/co-occurrence
+    if (e.ghost) {
+      en.ghost = true;
+      continue;
+    }
     /** @type {string[]} */
     const members = [];
     /** @param {string[]} slugs @param {"p"|"t"|"m"} ns @param {NodeKind} kind */
@@ -377,7 +388,7 @@ function glyph(kind) {
 function nodeMarkup(n, labeled) {
   const tip =
     n.kind === "entry"
-      ? `${n.label} — ${n.etype}`
+      ? `${n.label} — ${n.etype}${n.ghost ? " · public graph" : ""}`
       : `${n.label} — ${n.kind} — ${n.deg} entr${n.deg === 1 ? "y" : "ies"}`;
   const shape =
     n.kind === "team"
@@ -385,7 +396,8 @@ function nodeMarkup(n, labeled) {
       : `<circle class="nshape" r="${n.r}"/>`;
   const label = `<text class="glabel" y="${n.r + 12}" text-anchor="middle">${esc(trunc(n.label))}</text>`;
   const typeClass = n.kind === "entry" && n.etype !== "" ? ` gt-${n.etype}` : "";
-  return `<g class="gnode gn-${n.kind}${typeClass}${labeled ? " has-label" : ""}" data-node="${esc(n.id)}" tabindex="0" role="button"
+  const ghostClass = n.ghost ? " gn-ghost" : "";
+  return `<g class="gnode gn-${n.kind}${typeClass}${ghostClass}${labeled ? " has-label" : ""}" data-node="${esc(n.id)}" tabindex="0" role="button"
     data-tip="${esc(tip)}" aria-label="${esc(tip)}">${shape}${label}</g>`;
 }
 
@@ -394,14 +406,22 @@ function nodeMarkup(n, labeled) {
 /**
  * @param {HTMLElement} mainEl
  * @param {GraphEntry[]} entries
- * @param {{ typeOrder?: string[], openEntry?: (id: string) => void }} [opts]
+ * @param {{ typeOrder?: string[], openEntry?: (id: string) => void, graph?: "private"|"public" }} [opts]
  *   typeOrder: canonical entry-type display order (app.js TYPE_ORDER)
+ *   graph: which graph is on screen — switching clears cached layout + selection
  */
 export function renderGraphView(mainEl, entries, opts = {}) {
   const typeOrder = opts.typeOrder ?? [];
   const openEntry = opts.openEntry ?? ((id) => {
     location.hash = `#/entry/${encodeURIComponent(id)}`;
   });
+  const graph = opts.graph ?? "private";
+  // switching graphs: positions and selection from the other graph are meaningless
+  if (gstate.graph !== graph) {
+    gstate.graph = graph;
+    gstate.lastPos = new Map();
+    gstate.selected = null;
+  }
   if (entries.length === 0) {
     mainEl.innerHTML = `<div class="empty">the record is empty — log a first memory with <code>memory add</code> or <code>/remember</code>, then run <code>memory index</code></div>`;
     return;
@@ -744,9 +764,11 @@ export function renderGraphView(mainEl, entries, opts = {}) {
 
     emptyEl.hidden = nodes.length > 0;
     const scope = gstate.tagFilter ? ` · #${gstate.tagFilter}` : "";
-    sumEl.textContent = `${modeLabel(gstate.mode)}${scope} · ${scopedEntries.length} entries · ${nodes.length} nodes · ${edges.length} links${
+    const ghostCount = nodes.filter((n) => n.ghost).length;
+    const ghostNote = ghostCount ? ` · ${ghostCount} public ghost${ghostCount === 1 ? "" : "s"}` : "";
+    sumEl.textContent = `${gstate.graph} graph · ${modeLabel(gstate.mode)}${scope} · ${scopedEntries.length} entries · ${nodes.length} nodes · ${edges.length} links${
       hasCo ? " · shared entries" : ""
-    }`;
+    }${ghostNote}`;
 
     syncToolbar(model);
     renderTypeLegend(scopedEntries);

@@ -1,8 +1,9 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { relative, join } from "node:path";
 import matter from "gray-matter";
-import { FrontmatterSchema, type Frontmatter, type MemoryEntry } from "./schema.js";
+import { FrontmatterSchema, type Frontmatter, type GraphId, type MemoryEntry } from "./schema.js";
 import { INDEX_DIR, ROOT, loadAllEntries, writeEntry } from "./ingest.js";
+import { storeFor, validateCrossGraphLinks } from "./graphs.js";
 import { syncIndex, findSimilar } from "./store.js";
 import { commitMemoryRepo } from "./memory-git.js";
 import { buildChainIndex, entryStatus, validateFollowsTargets } from "./chains.js";
@@ -448,6 +449,8 @@ export async function analyzeChainLinks(entries: MemoryEntry[]): Promise<ChainLi
       const e = byId.get(hit.id);
       if (!e || e.id === o.id || e.type === "summary") continue;
       if (e.date <= o.date) continue;
+      // Never suggest a link a public entry couldn't legally hold.
+      if (e.graph === "public" && o.graph === "private") continue;
       if (componentOf(e.id) === componentOf(o.id)) continue; // already chained together
       if (dismissed.has(`${o.id}|${e.id}`)) continue; // user said: wrong pair
       const shared = [
@@ -497,23 +500,27 @@ export async function applyChainLink(opts: {
   const entry = entries.find((e) => e.id === opts.laterId);
   if (!entry) throw new Error(`no entry with id '${opts.laterId}'`);
   validateFollowsTargets(entries, entry, opts.follows);
+  // A public entry must never gain a link to a private id.
+  validateCrossGraphLinks(new Map(entries.map((e) => [e.id, e])), entry, opts.follows);
 
   const mergedFollows = [...new Set([...(entry.follows ?? []), ...opts.follows])];
   if (mergedFollows.length === (entry.follows ?? []).length) {
     return { laterId: entry.id, follows: entry.follows ?? [], changed: false };
   }
 
-  const { body, path: _p, ...rest } = entry;
+  const { body, path: _p, graph, ...rest } = entry;
   const fm = FrontmatterSchema.parse({
     ...rest,
     follows: mergedFollows,
     updated: new Date().toISOString().slice(0, 10),
   }) as Frontmatter;
-  const path = await writeEntry(fm, body);
+  const path = await writeEntry(fm, body, graph);
   const index = await syncIndex();
-  // The add-time auto-commit hook only fires on `add`; commit explicitly.
+  // The add-time auto-commit hook only fires on `add`; commit the entry's
+  // own store explicitly.
   const afterCommit = await commitMemoryRepo(
     `Link memory: ${entry.id} follows ${mergedFollows.join(", ")}`,
+    storeFor(graph).dir,
   );
   const audit = opts.refreshAudit === false ? undefined : await refreshGraphMaintenanceAudit();
   return {
@@ -599,13 +606,29 @@ export async function mergeSlugs(opts: {
     return { ...preview, dryRun: false, beforeCommit: false, afterCommit: false, index: await syncIndex() };
   }
 
-  const beforeCommit = await commitMemoryRepo(`Checkpoint before slug merge: ${opts.kind} ${opts.from} -> ${opts.to}`);
   const affectedIds = new Set(preview.entries.map((e) => e.id));
-  for (const entry of entries) {
-    if (affectedIds.has(entry.id)) await writeFrontmatterMerge(entry, opts.kind, opts.from, opts.to);
+  const affected = entries.filter((e) => affectedIds.has(e.id));
+  // A merge can touch entries in BOTH stores — checkpoint and commit each
+  // affected store so every side has its own undo point.
+  const affectedGraphs = [...new Set(affected.map((e) => e.graph))] as GraphId[];
+  let beforeCommit = false;
+  for (const g of affectedGraphs) {
+    beforeCommit =
+      (await commitMemoryRepo(
+        `Checkpoint before slug merge: ${opts.kind} ${opts.from} -> ${opts.to}`,
+        storeFor(g).dir,
+      )) || beforeCommit;
+  }
+  for (const entry of affected) {
+    await writeFrontmatterMerge(entry, opts.kind, opts.from, opts.to);
   }
   const index = await syncIndex();
   const audit = opts.refreshAudit === false ? undefined : await refreshGraphMaintenanceAudit();
-  const afterCommit = await commitMemoryRepo(`Merge ${opts.kind} slug: ${opts.from} -> ${opts.to}`);
+  let afterCommit = false;
+  for (const g of affectedGraphs) {
+    afterCommit =
+      (await commitMemoryRepo(`Merge ${opts.kind} slug: ${opts.from} -> ${opts.to}`, storeFor(g).dir)) ||
+      afterCommit;
+  }
   return { ...preview, dryRun: false, beforeCommit, afterCommit, index, ...(audit ? { audit } : {}) };
 }

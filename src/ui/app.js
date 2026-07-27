@@ -20,6 +20,8 @@ import { comboboxHtml, wireCombobox } from "./combobox.js";
  * @property {string} [updated]
  * @property {string} body
  * @property {string} path
+ * @property {"private"|"public"} [graph]
+ * @property {boolean} [ghost] public entry pulled into the private graph for a cross-graph chain edge
  * @property {ChainInfo} [chain]
  *
  * @typedef {Object} ChainInfo
@@ -44,7 +46,7 @@ import { comboboxHtml, wireCombobox } from "./combobox.js";
  * @property {number} score
  * @property {string} bestChunk
  *
- * @typedef {{ type: string, person: string, team: string, tag: string, since: string, until: string }} Facets
+ * @typedef {{ type: string, person: string, team: string, tag: string, since: string, until: string, graph: string }} Facets
  *
  * @typedef {Object} Connector
  * @property {string} name
@@ -53,9 +55,20 @@ import { comboboxHtml, wireCombobox } from "./combobox.js";
  * @property {boolean} enabled
  * @property {string} [source_id_scheme]
  * @property {Record<string, unknown>} [fetch]
+ * @property {"private"|"public"} [graph] pin — everything from this source files to this graph, skipping routing
  * @property {string} [last_pulled]
  * @property {string} [last_captured]
  * @property {string} [body]
+ * @property {string} raw
+ * @property {string} [error]
+ *
+ * @typedef {Object} RoutingDoc
+ * @property {string} name
+ * @property {"template"|"override"} origin
+ * @property {string} path
+ * @property {boolean} enabled
+ * @property {"private"|"public"} default_graph
+ * @property {string} body
  * @property {string} raw
  * @property {string} [error]
  *
@@ -142,9 +155,11 @@ const state = {
   /** @type {Hit[]|null} */
   hits: null,
   /** @type {Facets} */
-  facets: { type: "", person: "", team: "", tag: "", since: "", until: "" },
+  facets: { type: "", person: "", team: "", tag: "", since: "", until: "", graph: "" },
   /** @type {Connector[]|null} lazy-loaded on first visit; null = not fetched */
   connectors: null,
+  /** @type {RoutingDoc|null} lazy-loaded on first visit; null = not fetched */
+  routing: null,
   /** @type {MaintenanceSnapshot|null} lazy-loaded on first visit */
   maintenance: null,
   maintenanceLoading: false,
@@ -313,13 +328,15 @@ function splitFrontmatter(text) {
 
 // ---------- routing ----------
 
-/** @returns {{ view: "record" } | { view: "entry", id: string } | { view: "graph" } | { view: "connectors" } | { view: "connector", name: string } | { view: "maintenance" }} */
+/** @returns {{ view: "record" } | { view: "entry", id: string } | { view: "graph", graph: "private"|"public" } | { view: "connectors" } | { view: "connector", name: string } | { view: "maintenance" } | { view: "routing" }} */
 function route() {
   const h = location.hash;
   if (h.startsWith("#/entry/")) return { view: "entry", id: decodeURIComponent(h.slice(8)) };
   if (h.startsWith("#/entries")) return { view: "record" }; // legacy alias — old links keep working
-  if (h.startsWith("#/graph")) return { view: "graph" };
+  if (h.startsWith("#/graph/public")) return { view: "graph", graph: "public" };
+  if (h.startsWith("#/graph")) return { view: "graph", graph: "private" }; // #/graph/private + legacy #/graph
   if (h.startsWith("#/maintenance")) return { view: "maintenance" };
+  if (h.startsWith("#/routing")) return { view: "routing" };
   if (h.startsWith("#/connector/")) return { view: "connector", name: decodeURIComponent(h.slice(12)) };
   if (h.startsWith("#/connectors")) return { view: "connectors" };
   return { view: "record" };
@@ -345,9 +362,10 @@ function renderHeader() {
     <a class="wordmark" href="#/">Personal Memory</a>
     <nav>
       <a href="#/" ${r.view === "record" || r.view === "entry" ? 'aria-current="page"' : ""}>Record</a>
-      <a href="#/graph" ${r.view === "graph" ? 'aria-current="page"' : ""}>Graph</a>
+      <a href="#/graph/private" ${r.view === "graph" && r.graph === "private" ? 'aria-current="page"' : ""}>Private Graph</a>
+      <a href="#/graph/public" ${r.view === "graph" && r.graph === "public" ? 'aria-current="page"' : ""}>Public Graph</a>
       <a href="#/maintenance" ${r.view === "maintenance" ? 'aria-current="page"' : ""}>Maintenance</a>
-      <a href="#/connectors" ${r.view === "connectors" || r.view === "connector" ? 'aria-current="page"' : ""}>Connectors</a>
+      <a href="#/connectors" ${r.view === "connectors" || r.view === "connector" || r.view === "routing" ? 'aria-current="page"' : ""}>Connectors</a>
     </nav>
     <span class="header-spacer"></span>
     ${
@@ -493,6 +511,19 @@ function monthName(key) {
   return MONTH_FMT.format(new Date(`${key}-01T00:00:00`));
 }
 
+/** public-graph badge for an entry; private entries (the default) stay unlabeled
+ * @param {Entry} e */
+function graphBadge(e) {
+  return (e.graph ?? "private") === "public" ? `<span class="badge gpub">public</span>` : "";
+}
+
+/** same, but resolved from an entry id against the loaded record (no badge if absent)
+ * @param {string} id */
+function graphBadgeById(id) {
+  const e = state.entries.find((x) => x.id === id);
+  return e ? graphBadge(e) : "";
+}
+
 /** one ledger line — shared by entries list and overview recent feed */
 /** @param {{ entry: Entry, score?: number, chunk?: string }} row @param {string} hiQ @param {{ compact?: boolean }} [opts] */
 function ledgerRow({ entry: e, score, chunk }, hiQ, opts = {}) {
@@ -514,6 +545,7 @@ function ledgerRow({ entry: e, score, chunk }, hiQ, opts = {}) {
       <span class="lmain">
         <span class="ltop">
           <span class="badge tdot gt-${esc(e.type)}">${esc(e.type)}</span>
+          ${graphBadge(e)}
           <span class="ltitle">${hi(e.title, hiQ)}</span>
           ${score !== undefined ? `<span class="score">${score.toFixed(3)}</span>` : ""}
         </span>
@@ -587,8 +619,10 @@ function railHtml() {
     }
   }
 
+  const publicCount = es.filter((e) => (e.graph ?? "private") === "public").length;
   const colophon = [
     `<b>${es.length}</b> entries`,
+    publicCount > 0 ? `<b>${publicCount}</b> public` : null,
     `<b>${people.length}</b> people`,
     teams.length ? `<b>${teams.length}</b> teams` : null,
     `<b>${tags.length}</b> tags`,
@@ -663,6 +697,7 @@ function applyFacets(entries) {
     if (f.team && !e.teams.includes(f.team)) return false;
     if (f.tag && !e.tags.includes(f.tag)) return false;
     if (f.type && e.type !== f.type) return false;
+    if (f.graph && (e.graph ?? "private") !== f.graph) return false;
     if (f.since && e.date < f.since) return false;
     if (f.until && e.date > f.until) return false;
     return true;
@@ -792,6 +827,8 @@ function renderSearchPanel(opts = {}) {
   const typeCounts = TYPE_ORDER.map((t) => ({ t, n: state.entries.filter((e) => e.type === t).length })).filter(
     (x) => x.n > 0,
   );
+  const publicCount = state.entries.filter((e) => (e.graph ?? "private") === "public").length;
+  const privateCount = state.entries.length - publicCount;
 
   $("#search-panel").innerHTML = `
     <div class="searchbar">
@@ -807,6 +844,11 @@ function renderSearchPanel(opts = {}) {
             `<button class="chip" data-ftype="${esc(x.t)}" aria-pressed="${f.type === x.t}">${esc(x.t)}<span class="n">${x.n}</span></button>`,
         )
         .join("")}
+    </div>
+    <div class="scope-chips" role="group" aria-label="filter by graph">
+      <button class="chip" data-fgraph="" aria-pressed="${f.graph === ""}">all</button>
+      <button class="chip" data-fgraph="private" aria-pressed="${f.graph === "private"}">private<span class="n">${privateCount}</span></button>
+      <button class="chip" data-fgraph="public" aria-pressed="${f.graph === "public"}">public<span class="n">${publicCount}</span></button>
     </div>
     <div class="facets">
       ${comboboxHtml("person", f.person)}
@@ -938,6 +980,7 @@ function entryDetailHtml(e) {
       <div class="byline">
         <span>${esc(e.date)}</span>
         <span class="badge tdot gt-${esc(e.type)}">${esc(e.type)}</span>
+        ${graphBadge(e)}
         ${e.updated ? `<span>updated ${esc(e.updated)}</span>` : ""}
         <span>id: <code>${esc(e.id)}</code></span>
       </div>
@@ -1034,6 +1077,7 @@ const CONNECTOR_TEMPLATE = (/** @type {string} */ name) => `---
 name: ${name}
 enabled: true
 source_id_scheme: "${name}:<id>"
+# graph: private   # pin: skip routing; everything from this source files here
 # fetch:            # omit entirely for push-only connectors
 #   lookback_days: 7
 ---
@@ -1056,6 +1100,16 @@ const originBadge = (/** @type {Connector} */ c) =>
 /** Resolved file path from repo root; predicts the override path for unsaved drafts. */
 const connectorPath = (/** @type {Connector} */ c) =>
   c.path ?? `memory/connectors/${c.name}.md`;
+
+/** Graph pin on a connector — "everything from this source goes to graph X, skip routing". */
+const pinBadge = (/** @type {Connector} */ c) =>
+  c.graph ? `<span class="badge gpin" title="pin — all captures from this source file to the ${esc(c.graph)} graph, skipping routing">pinned: ${esc(c.graph)}</span>` : "";
+
+/** Routing prompt origin: committed default vs private override. */
+const routingOriginBadge = (/** @type {RoutingDoc} */ r) =>
+  r.origin === "override"
+    ? `<span class="badge origin-custom" title="private override in memory/routing/ — never committed to the main repo">custom</span>`
+    : `<span class="badge" title="committed default in routing/graph-routing.md — edits via this UI are saved as a private override">default</span>`;
 
 /** @param {string} ts */
 const shortTimestamp = (ts) => ts.slice(0, 16).replace("T", " ");
@@ -1230,10 +1284,10 @@ function chainSuggestionRow(s) {
       <span class="mmain">
         <span class="mtop">
           <span class="badge tdot gt-${esc(s.openType)}">${esc(s.openType)}</span>
-          <a href="#/entry/${encodeURIComponent(s.openId)}">${esc(s.openTitle)}</a>
+          <a href="#/entry/${encodeURIComponent(s.openId)}">${esc(s.openTitle)}</a>${graphBadgeById(s.openId)}
           <span class="arrow">→</span>
           <span class="badge tdot gt-${esc(s.laterType)}">${esc(s.laterType)}</span>
-          <a href="#/entry/${encodeURIComponent(s.laterId)}">${esc(s.laterTitle)}</a>
+          <a href="#/entry/${encodeURIComponent(s.laterId)}">${esc(s.laterTitle)}</a>${graphBadgeById(s.laterId)}
           <span class="score">${s.sim.toFixed(2)}</span>
           <span class="mactions"><button class="chip chip-primary" data-mlink="${esc(key)}" ${busy ? "disabled" : ""}>${busy ? "working…" : "link"}</button><button class="chip" data-mdismiss="${esc(key)}" ${busy ? "disabled" : ""} title="wrong pair — hide this suggestion permanently">dismiss</button></span>
         </span>
@@ -1380,6 +1434,7 @@ function renderConnectors() {
               <span class="cname">${esc(c.name)}</span>
               ${c.fetch ? `<span class="badge">pull</span>` : `<span class="badge">push</span>`}
               ${originBadge(c)}
+              ${pinBadge(c)}
               ${meta}
               ${connectorActivity(c)}
             </span>
@@ -1387,9 +1442,20 @@ function renderConnectors() {
         </a>`;
     })
     .join("");
+  const routingRow = `
+    <a class="crow crow-pinned" href="#/routing">
+      <span class="cdot ok"></span>
+      <span class="cmain">
+        <span class="ctop">
+          <span class="cname">graph-routing</span>
+          <span class="badge">routing</span>
+          <span class="csub">private/public routing prompt</span>
+        </span>
+      </span>
+    </a>`;
   main.innerHTML = `
     <div class="colophon">per-source ingestion config — frontmatter = fetch settings, body = the extraction prompt agents apply when capturing from that source<span class="sep">·</span>defaults live in <code>connectors/</code>, custom versions in <code>memory/connectors/</code> (private, never committed)</div>
-    <div class="ledger l-top">${rows || `<div class="empty">no connector files yet</div>`}</div>
+    <div class="ledger l-top">${routingRow}${rows || `<div class="empty">no connector files yet</div>`}</div>
     <div class="see-all"><button class="chip" id="new-connector">+ new connector</button></div>
   `;
   $("#new-connector").addEventListener("click", () => {
@@ -1438,6 +1504,62 @@ function renderConnectors() {
   });
 }
 
+/**
+ * Shared preview/edit chrome for the markdown-file editors (connectors + the
+ * routing prompt). Renders the mode chips, textarea, split preview, and save
+ * row into `host`, and wires save through `onSave(rawText)` — which performs
+ * the PUT plus any view-specific side effects, or throws to surface an error.
+ * @param {HTMLElement} host
+ * @param {{ raw: string, error?: string, ariaLabel: string, onSave: (raw: string) => Promise<void> }} opts
+ */
+function mountFileEditor(host, opts) {
+  host.innerHTML = `
+    <div class="editor-modes" role="group" aria-label="editor mode">
+      <button class="chip" data-emode="preview" aria-pressed="true">preview</button>
+      <button class="chip" data-emode="edit" aria-pressed="false">edit</button>
+    </div>
+    <textarea class="feditor" spellcheck="false" aria-label="${esc(opts.ariaLabel)}" hidden>${esc(opts.raw)}</textarea>
+    <div class="connector-preview fpreview"></div>
+    <div class="save-row">
+      <button class="chip fsave">save</button>
+      <span class="save-note fnote">${opts.error ? `<span class="cerr">${esc(opts.error.split("\n")[0])}</span>` : ""}</span>
+    </div>`;
+  const editor = /** @type {HTMLTextAreaElement} */ (host.querySelector(".feditor"));
+  const note = /** @type {HTMLElement} */ (host.querySelector(".fnote"));
+  const preview = /** @type {HTMLElement} */ (host.querySelector(".fpreview"));
+  const previewBtn = /** @type {HTMLElement} */ (host.querySelector('[data-emode="preview"]'));
+  const editBtn = /** @type {HTMLElement} */ (host.querySelector('[data-emode="edit"]'));
+  /** @param {"edit" | "preview"} next */
+  function setMode(next) {
+    previewBtn.setAttribute("aria-pressed", String(next === "preview"));
+    editBtn.setAttribute("aria-pressed", String(next === "edit"));
+    if (next === "preview") {
+      const { fm, body } = splitFrontmatter(editor.value);
+      preview.innerHTML =
+        (fm !== null ? `<pre class="preview-fm"><code>${esc(fm)}</code></pre>` : "") +
+        (body.trim()
+          ? `<article class="prose">${renderMarkdown(body)}</article>`
+          : `<div class="preview-empty">(no body)</div>`);
+    }
+    editor.hidden = next === "preview";
+    preview.hidden = next === "edit";
+    if (next === "edit") editor.focus();
+  }
+  previewBtn.addEventListener("click", () => setMode("preview"));
+  editBtn.addEventListener("click", () => setMode("edit"));
+  setMode("preview");
+  /** @type {HTMLElement} */ (host.querySelector(".fsave")).addEventListener("click", async () => {
+    note.innerHTML = "saving…";
+    try {
+      await opts.onSave(editor.value);
+      const at = new Date().toTimeString().slice(0, 8);
+      note.innerHTML = `<span class="csaved">saved ${at}</span>`;
+    } catch (err) {
+      note.innerHTML = `<span class="cerr">${esc(err instanceof Error ? err.message : String(err))}</span>`;
+    }
+  });
+}
+
 /** @param {string} name */
 function renderConnector(name) {
   const main = $("#main");
@@ -1459,55 +1581,23 @@ function renderConnector(name) {
       <h1>${esc(c.name)}</h1>
       <div class="byline">
         <span id="corigin">${originBadge(c)}</span>
+        ${pinBadge(c)}
         <span id="cpath"><code>${esc(connectorPath(c))}</code></span>
         ${c.last_pulled ? `<span>last pulled ${esc(c.last_pulled)}</span>` : ""}
         ${c.last_captured ? `<span>last captured ${esc(c.last_captured)}</span>` : ""}
       </div>
-      <div class="connector-editor">
-        <div class="editor-modes" role="group" aria-label="editor mode">
-          <button class="chip" id="cmode-preview" aria-pressed="true">preview</button>
-          <button class="chip" id="cmode-edit" aria-pressed="false">edit</button>
-        </div>
-        <textarea id="ceditor" spellcheck="false" aria-label="connector file" hidden>${esc(c.raw)}</textarea>
-        <div class="connector-preview" id="cpreview"></div>
-        <div class="save-row">
-          <button class="chip" id="csave">save</button>
-          <span class="save-note" id="cnote">${c.error ? `<span class="cerr">${esc(c.error.split("\n")[0])}</span>` : ""}</span>
-        </div>
-      </div>
+      <div class="connector-editor" id="ceditor-host"></div>
     </div>
   `;
-  const editor = /** @type {HTMLTextAreaElement} */ ($("#ceditor"));
-  const note = $("#cnote");
-  const preview = $("#cpreview");
-  const previewBtn = $("#cmode-preview");
-  const editBtn = $("#cmode-edit");
-  /** @param {"edit" | "preview"} next */
-  function setMode(next) {
-    previewBtn.setAttribute("aria-pressed", String(next === "preview"));
-    editBtn.setAttribute("aria-pressed", String(next === "edit"));
-    if (next === "preview") {
-      const { fm, body } = splitFrontmatter(editor.value);
-      preview.innerHTML =
-        (fm !== null ? `<pre class="preview-fm"><code>${esc(fm)}</code></pre>` : "") +
-        (body.trim()
-          ? `<article class="prose">${renderMarkdown(body)}</article>`
-          : `<div class="preview-empty">(no body)</div>`);
-    }
-    editor.hidden = next === "preview";
-    preview.hidden = next === "edit";
-    if (next === "edit") editor.focus();
-  }
-  previewBtn.addEventListener("click", () => setMode("preview"));
-  editBtn.addEventListener("click", () => setMode("edit"));
-  setMode("preview");
-  $("#csave").addEventListener("click", async () => {
-    note.innerHTML = "saving…";
-    try {
+  mountFileEditor($("#ceditor-host"), {
+    raw: c.raw,
+    error: c.error,
+    ariaLabel: "connector file",
+    onSave: async (raw) => {
       const res = await fetch(`/api/connectors/${encodeURIComponent(c.name)}`, {
         method: "PUT",
         headers: { "Content-Type": "text/markdown; charset=utf-8" },
-        body: editor.value,
+        body: raw,
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? `save failed (${res.status})`);
@@ -1516,15 +1606,82 @@ function renderConnector(name) {
       const saved = { ...c, origin: /** @type {const} */ ("override"), path: `memory/connectors/${c.name}.md` };
       $("#corigin").innerHTML = originBadge(saved);
       $("#cpath").innerHTML = `<code>${esc(saved.path)}</code>`;
-      const at = new Date().toTimeString().slice(0, 8);
-      note.innerHTML = `<span class="csaved">saved ${at}</span>`;
-    } catch (err) {
-      note.innerHTML = `<span class="cerr">${esc(err instanceof Error ? err.message : String(err))}</span>`;
-    }
+    },
+  });
+}
+
+// ---------- routing prompt ----------
+
+async function loadRouting() {
+  const res = await fetch("/api/routing");
+  if (!res.ok) throw new Error(`failed to load /api/routing (${res.status})`);
+  state.routing = /** @type {RoutingDoc} */ (await res.json());
+}
+
+function renderRouting() {
+  const main = $("#main");
+  if (state.routing === null) {
+    main.innerHTML = `<div class="loading">loading…</div>`;
+    loadRouting().then(render, (err) => {
+      main.innerHTML = `<div class="error-banner">${esc(err instanceof Error ? err.message : String(err))}</div>`;
+    });
+    return;
+  }
+  const r = state.routing;
+  main.innerHTML = `
+    <a class="back" href="#/connectors">← connectors</a>
+    <div class="detail">
+      <h1>graph-routing</h1>
+      <div class="byline">
+        ${routingOriginBadge(r)}
+        <span><code>${esc(r.path)}</code></span>
+        <span>default graph: <code>${esc(r.default_graph)}</code></span>
+      </div>
+      <div class="routing-explainer">Classifies each new capture as private or public. Default private on any doubt. Edits are saved as your private override.</div>
+      <div class="connector-editor" id="reditor-host"></div>
+    </div>
+  `;
+  mountFileEditor($("#reditor-host"), {
+    raw: r.raw,
+    error: r.error,
+    ariaLabel: "routing prompt file",
+    onSave: async (raw) => {
+      const res = await fetch("/api/routing", {
+        method: "PUT",
+        headers: { "Content-Type": "text/markdown; charset=utf-8" },
+        body: raw,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? `save failed (${res.status})`);
+      state.routing = null; // refetch — the override is now authoritative; badge flips to custom
+      render();
+    },
   });
 }
 
 // ---------- top-level render + events ----------
+
+/**
+ * Entries scoped to one graph. The public view is a straight filter. The
+ * private view additionally pulls in the public entries referenced by a private
+ * entry's `follows`/`sources` as `ghost:true` — so a cross-graph chain still
+ * draws an edge — without dragging the rest of the public subgraph in.
+ * @param {"private"|"public"} g @returns {Entry[]}
+ */
+function graphScopedEntries(g) {
+  const scoped = state.entries.filter((e) => (e.graph ?? "private") === g);
+  if (g === "public") return scoped;
+  /** @type {Set<string>} */
+  const referenced = new Set();
+  for (const e of scoped) {
+    for (const id of e.follows ?? []) referenced.add(id);
+    for (const id of e.sources ?? []) referenced.add(id);
+  }
+  const ghosts = state.entries
+    .filter((e) => (e.graph ?? "private") === "public" && referenced.has(e.id))
+    .map((e) => ({ ...e, ghost: true }));
+  return [...scoped, ...ghosts];
+}
 
 function render() {
   renderHeader();
@@ -1539,8 +1696,14 @@ function render() {
   const r = route();
   document.body.classList.toggle("view-graph", r.view === "graph");
   if (r.view === "record") renderRecord();
-  else if (r.view === "graph") renderGraphView($("#main"), state.entries, { typeOrder: TYPE_ORDER, openEntry: openEntryModal });
+  else if (r.view === "graph")
+    renderGraphView($("#main"), graphScopedEntries(r.graph), {
+      typeOrder: TYPE_ORDER,
+      openEntry: openEntryModal,
+      graph: r.graph,
+    });
   else if (r.view === "maintenance") renderMaintenance();
+  else if (r.view === "routing") renderRouting();
   else if (r.view === "connectors") renderConnectors();
   else if (r.view === "connector") renderConnector(r.name);
   else renderEntry(r.id);
@@ -1558,12 +1721,20 @@ document.addEventListener("click", (ev) => {
     if (state.mode === "semantic") runSemantic();
     return;
   }
+  const graphEl = t.closest("[data-fgraph]");
+  if (graphEl instanceof HTMLElement) {
+    ev.preventDefault();
+    state.facets.graph = graphEl.dataset.fgraph ?? "";
+    refreshSearchPanel();
+    if (state.mode === "semantic") runSemantic();
+    return;
+  }
   const chipEl = t.closest("[data-fk]");
   if (chipEl instanceof HTMLElement) {
     ev.preventDefault();
     ev.stopPropagation();
     const key = /** @type {keyof Facets} */ (chipEl.dataset.fk);
-    state.facets = { type: "", person: "", team: "", tag: "", since: "", until: "" };
+    state.facets = { type: "", person: "", team: "", tag: "", since: "", until: "", graph: "" };
     state.facets[key] = chipEl.dataset.fv ?? "";
     state.q = "";
     state.mode = "instant";
@@ -1579,7 +1750,7 @@ document.addEventListener("click", (ev) => {
     state.mode = "instant";
     state.hits = null;
     state.notice = "";
-    state.facets = { type: "", person: "", team: "", tag: "", since: "", until: "" };
+    state.facets = { type: "", person: "", team: "", tag: "", since: "", until: "", graph: "" };
     refreshSearchPanel();
     return;
   }

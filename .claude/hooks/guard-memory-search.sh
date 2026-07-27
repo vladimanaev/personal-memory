@@ -27,11 +27,12 @@ case " $path $pattern $glob " in
   *[Mm]emory*) deny ;;
 esac
 
-# Unscoped search (no path, or repo root, or a path inside memory/) would hit
-# the store → deny. A search scoped to a real non-memory path (e.g. src/) passes.
+# Unscoped search (no path, or repo root, or a path inside either store) would
+# hit a store → deny. A search scoped to a real non-memory path (e.g. src/) passes.
 case "$path" in
   ""|"."|"./"|"/") deny ;;
   memory|memory/*|./memory|./memory/*) deny ;;
+  memory-public|memory-public/*|./memory-public|./memory-public/*) deny ;;
 esac
 
 # Anything else (e.g. path=src) is allowed: emit nothing, exit 0.

@@ -31,14 +31,16 @@ command="$(json_get tool_input.command tool_input.cmd command cmd || true)"
 
 deny() {
   cat <<'JSON'
-{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Never write memory entries or .index/ by hand. Capture/update via the CLI instead:\n  npx tsx src/cli.ts add --title ... --type ... [--people ...] [--source-ids ...] --body \"...\"\nDelete via:\n  npx tsx src/cli.ts remove <id>\nmemory/summaries/ Synthesis and memory/connectors/ overrides remain editable."}}
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Never write memory entries or .index/ by hand — covers BOTH stores (memory/ and memory-public/). Capture/update via the CLI instead:\n  npx tsx src/cli.ts add --title ... --type ... [--graph public|private] [--people ...] [--source-ids ...] --body \"...\"\nDelete via:\n  npx tsx src/cli.ts remove <id>\nReclassify via:\n  npx tsx src/cli.ts move <id> --to <graph>\nmemory/summaries/ Synthesis, memory/connectors/, and memory/routing/ overrides remain editable."}}
 JSON
   exit 0
 }
 
 is_protected_path() {
   case "$1" in
-    *memory/entries/*|memory/entries/*|./memory/entries/*|*.index/*|.index/*|./.index/*) return 0 ;;
+    *memory/entries/*|memory/entries/*|./memory/entries/*) return 0 ;;
+    *memory-public/entries/*|memory-public/entries/*|./memory-public/entries/*) return 0 ;;
+    *.index/*|.index/*|./.index/*) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -68,7 +70,7 @@ case "$tool" in
       *cli.ts\ add*|*src/cli.ts\ remove*) exit 0 ;;
     esac
     case "$command" in
-      *memory/entries*|*.index/*|*.index*)
+      *memory/entries*|*memory-public/entries*|*.index/*|*.index*)
         case "$command" in
           *'>'*|*'tee '*|*'cp '*|*'mv '*|*'rm '*|*'sed -i'*|*'perl -pi'*|*'touch '*|*'truncate '*|*'dd '*|*'install '*|*'python '*|*'node '*) deny ;;
         esac

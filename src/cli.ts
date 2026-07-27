@@ -1,19 +1,21 @@
 #!/usr/bin/env -S npx tsx
 import { parseArgs } from "node:util";
-import { relative } from "node:path";
-import { rm } from "node:fs/promises";
+import { dirname, relative } from "node:path";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { FrontmatterSchema, type Frontmatter } from "./schema.js";
 import {
   loadAllEntries,
   makeId,
   writeEntry,
+  entryPath,
   hashEntry,
   findEntryBySourceIds,
   normalizeSourceId,
   ROOT,
 } from "./ingest.js";
 import { search, findSimilar, syncIndex, applyFilters, type SearchCompleteness, type SearchFilters } from "./store.js";
-import type { MemoryEntry } from "./schema.js";
+import type { GraphId, MemoryEntry } from "./schema.js";
+import { ensureStore, parseGraphId, storeFor, validateCrossGraphLinks } from "./graphs.js";
 import { commitMemoryRepo } from "./memory-git.js";
 import { buildChainIndex, entryStatus, validateFollowsTargets, type ChainAnnotation } from "./chains.js";
 import { applyChainLink, dismissSlugSuggestion, mergeSlugs, proposeSlugMerge, slugUsage, type SlugKind } from "./graph-maintenance.js";
@@ -39,7 +41,13 @@ function filtersFrom(values: Record<string, unknown>): SearchFilters {
     tag: (values.tag as string) || undefined,
     since: (values.since as string) || undefined,
     until: (values.until as string) || undefined,
+    graph: values.graph ? parseGraphId(values.graph) : undefined,
   };
+}
+
+/** ` [public]` marker for listings — private entries stay unlabeled (the default). */
+function graphSuffix(e: Pick<MemoryEntry, "graph">): string {
+  return e.graph === "public" ? "  [public]" : "";
 }
 
 function positiveInt(value: unknown, fallback: number, label: string): number {
@@ -130,6 +138,7 @@ async function cmdAdd(argv: string[]) {
       update: { type: "string" },
       "force-new": { type: "boolean" },
       "dup-threshold": { type: "string" },
+      graph: { type: "string" },
     },
     allowPositionals: false,
   });
@@ -143,6 +152,7 @@ async function cmdAdd(argv: string[]) {
   const sourceIds = list(values["source-ids"] as string).map(normalizeSourceId);
   const capturedConnectors = await resolveCapturedConnectors(sourceIds, list(values.connector as string));
   const uniq = (xs: string[]) => [...new Set(xs)];
+  const requestedGraph: GraphId = values.graph ? parseGraphId(values.graph) : "private";
   const entries = await loadAllEntries();
 
   // --- resolve the target: an existing entry to update in place, or a new one ---
@@ -156,6 +166,16 @@ async function cmdAdd(argv: string[]) {
       const matched = sourceIds.find((s) => (target!.source_ids ?? []).includes(s));
       console.log(`↻ matches existing ${target.id} via ${matched}`);
     }
+  }
+
+  // An update stays in the entry's own store — a re-capture must never
+  // silently relocate an entry between graphs. Reclassify explicitly instead.
+  const graph: GraphId = target?.graph ?? requestedGraph;
+  if (target && values.graph && requestedGraph !== target.graph) {
+    console.log(
+      `↻ ${target.id} lives in the ${target.graph} graph — --graph ${requestedGraph} ignored; ` +
+        `use 'cli.ts move ${target.id} --to ${requestedGraph}' to reclassify`,
+    );
   }
 
   // --- semantic guard for genuinely new captures (no source-id / --update match) ---
@@ -213,9 +233,29 @@ async function cmdAdd(argv: string[]) {
         },
   );
 
+  // --- a brand-new id must be unique across BOTH stores (chains/index/move key by id) ---
+  if (!target) {
+    const collision = entries.find((e) => e.id === fm.id);
+    if (collision) {
+      throw new Error(
+        `id '${fm.id}' already exists in the ${collision.graph} graph (${rel(collision.path)})\n` +
+          `  refresh it with --update ${fm.id}, or pick a distinct --id`,
+      );
+    }
+  }
+
+  // --- cross-graph guard: a public entry must never reference private ids ---
+  if (graph === "public") {
+    const byId = new Map(entries.map((e) => [e.id, e]));
+    validateCrossGraphLinks(byId, { id: fm.id, graph }, [
+      ...(fm.follows ?? []),
+      ...(fm.sources ?? []),
+    ]);
+  }
+
   // --- idempotency: skip a re-capture whose content is identical (hash ignores `updated`) ---
   if (target) {
-    const candidate: MemoryEntry = { ...fm, body: body.trim(), path: target.path };
+    const candidate: MemoryEntry = { ...fm, body: body.trim(), path: target.path, graph: target.graph };
     if (hashEntry(candidate) === hashEntry(target)) {
       console.log(`✓ unchanged ${fm.id}`);
       const captured = await markCapturedConnectors(capturedConnectors);
@@ -224,9 +264,10 @@ async function cmdAdd(argv: string[]) {
     }
   }
 
-  const path = await writeEntry(fm, body);
+  if (graph === "public") await ensureStore("public");
+  const path = await writeEntry(fm, body, graph);
   const stats = await syncIndex();
-  console.log(`✓ ${target ? "updated" : "created"} ${fm.id}`);
+  console.log(`✓ ${target ? "updated" : "created"} ${fm.id}${graph === "public" ? " [public]" : ""}`);
   console.log(`  ${rel(path)}`);
   console.log(`  indexed (+${stats.added} changed, ${stats.unchanged} unchanged)`);
   const captured = await markCapturedConnectors(capturedConnectors);
@@ -280,15 +321,93 @@ async function cmdRemove(argv: string[]) {
     console.log(`⚠ ${id} is followed by: ${followers.map((e) => e.id).join(", ")} — their links will dangle`);
   }
 
-  // Checkpoint first so the removed content is always recoverable from
-  // memory/.git history (the add-time auto-commit may not have run).
-  await commitMemoryRepo(`Checkpoint before remove: ${id}`);
+  // Checkpoint first so the removed content is always recoverable from the
+  // entry's OWN store history (the add-time auto-commit may not have run).
+  const storeDir = storeFor(target.graph).dir;
+  await commitMemoryRepo(`Checkpoint before remove: ${id}`, storeDir);
   await rm(target.path);
   const stats = await syncIndex();
-  await commitMemoryRepo(`Remove memory: ${id}`);
+  await commitMemoryRepo(`Remove memory: ${id}`, storeDir);
   console.log(`✓ removed ${id}`);
   console.log(`  ${rel(target.path)}`);
-  console.log(`  index synced (${stats.removed} removed); prior content kept in memory/.git history`);
+  console.log(`  index synced (${stats.removed} removed); prior content kept in ${rel(storeDir)}/.git history`);
+}
+
+async function cmdMove(argv: string[]) {
+  const { values, positionals } = parseArgs({
+    args: argv,
+    options: { to: { type: "string" } },
+    allowPositionals: true,
+  });
+  const id = positionals[0];
+  if (!id || positionals.length !== 1 || !values.to) {
+    throw new Error("usage: memory move <id> --to private|public");
+  }
+  const to = parseGraphId(values.to);
+  const entries = await loadAllEntries();
+  const target = entries.find((e) => e.id === id);
+  if (!target) throw new Error(`no entry with id '${id}'`);
+  if (target.graph === to) {
+    console.log(`✓ unchanged ${id} (already in the ${to} graph)`);
+    return;
+  }
+
+  // Direction preconditions — the public store must never reference a private id.
+  if (to === "public") {
+    const byId = new Map(entries.map((e) => [e.id, e]));
+    const refs = [...(target.follows ?? []), ...(target.sources ?? [])];
+    const violators = refs.filter((r) => {
+      const t = byId.get(r);
+      return t !== undefined && t.graph === "private";
+    });
+    if (violators.length) {
+      console.error(`✗ ${id} references private entries: ${violators.join(", ")}`);
+      console.error("  move those public first (or keep this entry private)");
+      process.exitCode = 2;
+      return;
+    }
+  } else {
+    const publicReferrers = entries.filter(
+      (e) => e.graph === "public" && ((e.follows?.includes(id) ?? false) || (e.sources?.includes(id) ?? false)),
+    );
+    if (publicReferrers.length) {
+      console.error(
+        `✗ public entries reference ${id}: ${publicReferrers.map((e) => e.id).join(", ")}`,
+      );
+      console.error("  move those private first (or leave this entry public)");
+      process.exitCode = 2;
+      return;
+    }
+  }
+
+  const from = target.graph;
+  await ensureStore(to);
+  // Checkpoint both repos so the move is fully undoable from either side.
+  await commitMemoryRepo(`Checkpoint before move: ${id}`, storeFor(from).dir);
+  await commitMemoryRepo(`Checkpoint before move: ${id}`, storeFor(to).dir);
+
+  // Relocate the file bytes verbatim — id, date, and content hash stay
+  // identical; only the store (and therefore the graph) changes.
+  const raw = await readFile(target.path, "utf8");
+  const dest = entryPath(target, to);
+  await mkdir(dirname(dest), { recursive: true });
+  await writeFile(dest, raw, "utf8");
+  await rm(target.path);
+
+  const stats = await syncIndex();
+  // The public repo's history never mentions the other graph — its messages
+  // are plain add/remove; the private repo records the move destination.
+  const msgFor = (g: GraphId) =>
+    g === "public"
+      ? to === "public"
+        ? `Add memory: ${id}`
+        : `Remove memory: ${id}`
+      : `Move memory: ${id} → ${to}`;
+  await commitMemoryRepo(msgFor(from), storeFor(from).dir);
+  await commitMemoryRepo(msgFor(to), storeFor(to).dir);
+  console.log(`✓ moved ${id} → ${to} graph`);
+  console.log(`  ${rel(dest)}`);
+  console.log(`  indexed (+${stats.added} changed, ${stats.unchanged} unchanged)`);
 }
 
 async function cmdIndex(argv: string[]) {
@@ -312,6 +431,7 @@ async function cmdQuery(argv: string[]) {
       tag: { type: "string" },
       since: { type: "string" },
       until: { type: "string" },
+      graph: { type: "string" },
       k: { type: "string", short: "k" },
       deep: { type: "boolean" },
     },
@@ -333,7 +453,7 @@ async function cmdQuery(argv: string[]) {
   }
   for (const h of hits) {
     const snippet = h.bestChunk.replace(/^#.*\n+/, "").replace(/\s+/g, " ").slice(0, 220);
-    console.log(`\n● ${h.entry.title}  [${h.entry.type} · ${h.entry.date}]  (score ${h.score.toFixed(3)})`);
+    console.log(`\n● ${h.entry.title}  [${h.entry.type} · ${h.entry.date}]${graphSuffix(h.entry)}  (score ${h.score.toFixed(3)})`);
     if (h.entry.people.length) console.log(`  people: ${h.entry.people.join(", ")}`);
     if (h.entry.updated) console.log(`  updated: ${h.entry.updated}`);
     if (h.entry.type === "summary" && h.entry.sources?.length) {
@@ -378,7 +498,7 @@ function printRecallText(report: RecallReport, showQueries: boolean): void {
   for (const h of report.hits) {
     const snippet = h.bestChunk.replace(/\s+/g, " ").slice(0, 220);
     const signals = h.reasons?.retrievalSignals.length ? ` via ${h.reasons.retrievalSignals.join("+")}` : "";
-    console.log(`\n- ${h.title}  [${h.type} · ${h.date}]  (score ${h.score.toFixed(3)}${signals})`);
+    console.log(`\n- ${h.title}  [${h.type} · ${h.date}]${graphSuffix(h)}  (score ${h.score.toFixed(3)}${signals})`);
     if (h.people.length) console.log(`  people: ${h.people.join(", ")}`);
     if (h.updated) console.log(`  updated: ${h.updated}`);
     if (h.type === "summary" && h.sources?.length) {
@@ -403,6 +523,7 @@ async function cmdRecall(argv: string[]) {
       tag: { type: "string" },
       since: { type: "string" },
       until: { type: "string" },
+      graph: { type: "string" },
       k: { type: "string", short: "k" },
       format: { type: "string" },
       complete: { type: "boolean" },
@@ -451,6 +572,7 @@ async function cmdList(argv: string[]) {
       tag: { type: "string" },
       since: { type: "string" },
       until: { type: "string" },
+      graph: { type: "string" },
       limit: { type: "string" },
     },
   });
@@ -461,18 +583,24 @@ async function cmdList(argv: string[]) {
   );
   const limit = values.limit ? Number(values.limit) : entries.length;
   for (const e of entries.slice(0, limit)) {
-    console.log(`${e.date}  ${e.type.padEnd(11)} ${e.title}${statusSuffix(e, chainIndex)}  (${rel(e.path)})`);
+    console.log(`${e.date}  ${e.type.padEnd(11)} ${e.title}${statusSuffix(e, chainIndex)}${graphSuffix(e)}  (${rel(e.path)})`);
   }
   console.log(`\n${entries.length} entr${entries.length === 1 ? "y" : "ies"}`);
 }
 
 async function cmdPerson(argv: string[]) {
-  const slug = argv[0];
-  if (!slug || slug.startsWith("-")) throw new Error("usage: memory person <slug>");
+  const { values, positionals } = parseArgs({
+    args: argv,
+    options: { graph: { type: "string" } },
+    allowPositionals: true,
+  });
+  const slug = positionals[0];
+  if (!slug || positionals.length !== 1) throw new Error("usage: memory person <slug> [--graph private|public]");
+  const graph = values.graph ? parseGraphId(values.graph) : undefined;
   const all = await loadAllEntries();
   const chainIndex = buildChainIndex(all);
   const entries = all
-    .filter((e) => e.people.includes(slug))
+    .filter((e) => e.people.includes(slug) && (!graph || e.graph === graph))
     .sort((a, b) => b.date.localeCompare(a.date));
   if (entries.length === 0) {
     console.log(`(no memories mention '${slug}')`);
@@ -480,7 +608,7 @@ async function cmdPerson(argv: string[]) {
   }
   console.log(`# Memories involving ${slug} (${entries.length})\n`);
   for (const e of entries) {
-    console.log(`${e.date}  [${e.type}] ${e.title}${statusSuffix(e, chainIndex)}  (${rel(e.path)})`);
+    console.log(`${e.date}  [${e.type}] ${e.title}${statusSuffix(e, chainIndex)}${graphSuffix(e)}  (${rel(e.path)})`);
   }
 }
 
@@ -491,14 +619,19 @@ async function cmdDigest(argv: string[]) {
       person: { type: "string" },
       quarter: { type: "string" }, // e.g. 2026-Q2
       tag: { type: "string" },
+      graph: { type: "string" },
     },
   });
   const person = values.person as string | undefined;
   const quarter = values.quarter as string | undefined;
   const tag = values.tag as string | undefined;
   if (!person && !quarter && !tag) {
-    throw new Error("usage: memory digest --person <slug> | --quarter <YYYY-Qn> | --tag <slug>");
+    throw new Error("usage: memory digest --person <slug> | --quarter <YYYY-Qn> | --tag <slug> [--graph private|public]");
   }
+  // A digest lives in one graph. A PRIVATE digest may cite sources from both
+  // graphs (private→public links are fine); a PUBLIC digest must restrict its
+  // candidates to public entries so its `sources` back-links can't leak.
+  const digestGraph: GraphId = values.graph ? parseGraphId(values.graph) : "private";
 
   let scope: SearchFilters = {};
   let id: string;
@@ -521,6 +654,12 @@ async function cmdDigest(argv: string[]) {
     title = `Rolling summary — ${quarter}`;
   }
 
+  if (digestGraph === "public") {
+    scope = { ...scope, graph: "public" };
+    // Ids are unique across BOTH stores — a public digest gets its own id so
+    // it never collides with the private digest of the same scope.
+    id = id.replace(/^summary-/, "summary-public-");
+  }
   const raw = applyFilters(await loadAllEntries(), scope)
     .filter((e) => e.type !== "summary")
     .sort((a, b) => a.date.localeCompare(b.date));
@@ -555,10 +694,35 @@ async function cmdDigest(argv: string[]) {
     sources: raw.map((e) => e.id),
   });
 
-  const path = await writeEntry(fm, body);
+  if (digestGraph === "public") await ensureStore("public");
+  const path = await writeEntry(fm, body, digestGraph);
   await syncIndex();
   console.log(`✓ digest written: ${rel(path)}`);
   console.log(`  ${raw.length} source entries linked. Refine the Synthesis section, then re-run \`memory index\`.`);
+}
+
+async function cmdRouting() {
+  const { loadRouting } = await import("./routing.js");
+  const routing = await loadRouting();
+  if (!routing) {
+    console.error("✗ no routing prompt found (expected routing/graph-routing.md or memory/routing/graph-routing.md)");
+    process.exitCode = 1;
+    return;
+  }
+  if (routing.error) {
+    console.error(`✗ ${routing.name}  [${routing.origin}]  ${rel(routing.path)}`);
+    console.error(`  ${routing.error.split("\n").join("\n  ")}`);
+    process.exitCode = 1;
+    return;
+  }
+  const fm = routing.fm!;
+  console.log(`✓ ${routing.name}  [${routing.origin}]  ${rel(routing.path)}`);
+  console.log(`  enabled: ${fm.enabled}   default_graph: ${fm.default_graph}`);
+  console.log(
+    routing.origin === "template"
+      ? "  (generic template — personal rules go in the override: memory/routing/graph-routing.md)"
+      : "  (private override — fully replaces the template)",
+  );
 }
 
 async function cmdMaintenance(argv: string[]) {
@@ -800,20 +964,27 @@ Usage:
             [--update <id>]      # refresh a specific entry in place
             [--force-new]        # bypass the near-duplicate guard
             [--dup-threshold N]  # cosine threshold for the guard (default 0.92)
+            [--graph private|public]  # which graph to file a NEW entry in (default private;
+                                      # updates stay in their entry's graph — reclassify with 'move')
   memory link <id> --follows <earlier-id,…>
             # add timeline links to an existing entry (e.g. a decision settling a pending-decision)
-  memory remove <id>   # delete an entry + sync index (prior content stays in memory/.git history)
+            # a PUBLIC entry can never follow a private one (link direction is enforced)
+  memory remove <id>   # delete an entry + sync index (prior content stays in its store's git history)
+  memory move <id> --to private|public
+            # reclassify an entry between graphs; validates link direction, checkpoints both repos
   memory index [--force]
-  memory query "<question>" ["<alt phrasing>" …] [--person X] [--type Y] [--since DATE] [--until DATE] [-k N] [--deep]
+  memory query "<question>" ["<alt phrasing>" …] [--person X] [--type Y] [--since DATE] [--until DATE] [--graph G] [-k N] [--deep]
             # each quoted positional is a separate phrasing; all are fused (2-4 recommended)
             # --deep: recall-over-precision preset (k=40, wider candidate pool)
-  memory recall "<question>" ["<agent phrasing>" …] [--person X] [--type Y] [--since DATE] [--until DATE] [-k N]
+  memory recall "<question>" ["<agent phrasing>" …] [--person X] [--type Y] [--since DATE] [--until DATE] [--graph G] [-k N]
             [--complete | --complete-if-small | --no-complete] [--require-complete] [--no-expand] [--format text|json]
             # first phrasing is primary; extras are agent-supplied; CLI adds deterministic expansions unless --no-expand
             # default: k=40, deep pools, complete-if-small (limit 200)
-  memory list [--person|--type|--team|--tag|--since|--until|--limit]
-  memory person <slug>
-  memory digest --person <slug> | --quarter <YYYY-Qn> | --tag <slug>
+            # --graph private|public scopes to one graph; default searches BOTH (public hits labeled)
+  memory list [--person|--type|--team|--tag|--since|--until|--graph|--limit]
+  memory person <slug> [--graph private|public]
+  memory digest --person <slug> | --quarter <YYYY-Qn> | --tag <slug> [--graph private|public]
+            # public digest: candidates restricted to public entries; written to the public store
   memory maintenance [--threshold N]  # read-only report: digest debt, index health, slug hygiene (default 15)
   memory slugs list --kind person|team|tag [--min-count N]
             # vocabulary with usage counts (for tag compaction / slug reuse)
@@ -823,6 +994,7 @@ Usage:
             # defer a merge decision: shows as a suggestion in maintenance + web UI until merged/ignored
   memory slugs dismiss --kind person|team|tag --from <slug> --to <slug>
             # permanently hide a wrong merge suggestion from maintenance
+  memory routing                     # show + validate the graph-routing prompt (template vs private override)
   memory connectors                  # list + validate connectors/<name>.md (fetch config + extraction prompt per source)
   memory connectors mark-pulled <name> [--at ISO_TIMESTAMP]
             # record that a connector sweep completed; captures are recorded by memory add
@@ -838,6 +1010,7 @@ async function main() {
     case "add": return cmdAdd(rest);
     case "link": return cmdLink(rest);
     case "remove": return cmdRemove(rest);
+    case "move": return cmdMove(rest);
     case "index": return cmdIndex(rest);
     case "query": return cmdQuery(rest);
     case "recall": return cmdRecall(rest);
@@ -847,6 +1020,7 @@ async function main() {
     case "maintenance": return cmdMaintenance(rest);
     case "slugs": return cmdSlugs(rest);
     case "connectors": return cmdConnectors(rest);
+    case "routing": return cmdRouting();
     case "ui": return cmdUi(rest);
     case undefined:
     case "help":

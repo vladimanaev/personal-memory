@@ -16,6 +16,9 @@ sent to any API by default.
 - User asks a question about people / past events, or wants to plan or
   remember → **recall**, grounded in the store (see `skills/recall-memory/SKILL.md`).
   Don't answer people/history questions from chat history alone.
+- User wants ONLY shareable memories (preparing a team update, doc, or any
+  output leaving the private context) → **public-only recall**
+  (see `skills/recall-public/SKILL.md`) — never falls back to private entries.
 - User wants to merge/consolidate/clean up similar tags (or person/team slugs)
   → **compact**, every merge user-confirmed (see `skills/compact-tags/SKILL.md`).
 
@@ -25,14 +28,16 @@ Run with `npx tsx src/cli.ts <cmd>` (Node ≥ 20 — `nvm use 20`).
 
 | Command | Purpose |
 |---|---|
-| `add --title … --type … --people a,b --date YYYY-MM-DD --body "…" [--source-ids …] [--follows <id,…>]` | Create/update an entry + index it (dedups on `--source-ids`; `--update <id>`, `--force-new`, `--dup-threshold N` resolve the dup guard; `--follows` chains it to earlier entries) |
-| `link <id> --follows <earlier-id,…>` | Add timeline links to an existing entry (validated: targets exist, not newer, no cycles; commits `memory/.git`) |
+| `add --title … --type … --people a,b --date YYYY-MM-DD --body "…" [--graph private\|public] [--source-ids …] [--follows <id,…>]` | Create/update an entry + index it (dedups on `--source-ids`; `--update <id>`, `--force-new`, `--dup-threshold N` resolve the dup guard; `--follows` chains it to earlier entries; `--graph` files a NEW entry in that graph — default private, updates stay in their entry's graph) |
+| `link <id> --follows <earlier-id,…>` | Add timeline links to an existing entry (validated: targets exist, not newer, no cycles, public never links to private; commits the entry's store) |
+| `move <id> --to private\|public` | Reclassify an entry between graphs: validates link direction, relocates the file verbatim, re-indexes, checkpoints both repos |
+| `routing` | Show + validate the graph-routing prompt (template `routing/graph-routing.md` vs private override `memory/routing/graph-routing.md`) |
 | `index [--force]` | Re-sync index with Markdown (incremental; `--force` rebuilds) |
-| `query "<q>" ["<alt phrasing>" …] [--person|--type|--team|--tag|--since|--until|-k|--deep]` | Hybrid (semantic+lexical) search; pass 2–4 phrasings (all fused); `--deep` = recall-over-precision (k=40, wider pools) |
+| `query "<q>" ["<alt phrasing>" …] [--person|--type|--team|--tag|--since|--until|--graph|-k|--deep]` | Hybrid (semantic+lexical) search; pass 2–4 phrasings (all fused); `--deep` = recall-over-precision (k=40, wider pools); `--graph private\|public` scopes (default: both, public hits labeled) |
 | `recall "<q>" ["<agent phrasing>" …] [filters] [--complete|--complete-if-small|--require-complete|--no-expand|--format json]` | Agent-facing recall with weighted query expansion, completeness reporting, and stable JSON output |
 | `list [filters] [--limit n]` | Structured browse, newest first |
 | `person <slug>` | Everything about a person |
-| `digest --person <slug> \| --quarter <YYYY-Qn> \| --tag <slug>` | Build/refresh a rolling summary |
+| `digest --person <slug> \| --quarter <YYYY-Qn> \| --tag <slug> [--graph private\|public]` | Build/refresh a rolling summary (a public digest draws only on public entries and lands in the public store) |
 | `maintenance [--threshold N]` | Hygiene report: digest debt (suggested `digest` commands), index health, connector validity, possible unlinked chains (suggested `link` commands) + dangling links, similar-slug warnings |
 | `slugs list --kind person\|team\|tag [--min-count N]` | Slug vocabulary with usage counts (for tag compaction / slug reuse) |
 | `slugs merge --kind person\|team\|tag --from <slug> --to <slug> [--dry-run] [--create-target]` | Sanctioned slug merge: rewrites the affected frontmatter arrays, syncs the index, checkpoints `memory/.git` before/after |
@@ -43,10 +48,24 @@ Run with `npx tsx src/cli.ts <cmd>` (Node ≥ 20 — `nvm use 20`).
 
 ## Data model
 
-- **Source of truth:** Markdown files under `memory/entries/YYYY/MM/<id>.md`.
+- **Two graphs, two stores:** the PRIVATE graph lives in `memory/` (secret,
+  local-only) and the PUBLIC graph in `memory-public/` (deliberately shareable
+  as a unit). Same internal layout, each its own nested git repo, both
+  gitignored in the main repo. An entry's graph is **derived from its
+  location** — no frontmatter field — so files never drift and `move` never
+  rewrites content. Ids are unique across BOTH stores. Every new capture is
+  routed by the graph-routing prompt (`routing/graph-routing.md` template,
+  fully replaced by the `memory/routing/graph-routing.md` override — same
+  two-layer pattern as connectors); **default private on any doubt**.
+  Hard rule: a public entry never references a private id via `follows` or
+  `sources` (enforced at `add`/`link`/`move`); private→public references are
+  fine.
+- **Source of truth:** Markdown files under `memory/entries/YYYY/MM/<id>.md`
+  (and `memory-public/entries/…` for public ones).
   One memory per file. `memory/` is **gitignored in the main repo** (personal
   data never gets pushed) and versioned in its own local-only nested git repo
-  (`memory/.git`, no remote — the auto-commit hook commits there). Frontmatter:
+  (`memory/.git`, no remote — the auto-commit hook commits there, covering
+  both stores). Frontmatter:
 
   ```yaml
   id: 2026-06-28-acme-codev-kickoff   # date-prefixed kebab slug
@@ -119,15 +138,17 @@ Run with `npx tsx src/cli.ts <cmd>` (Node ≥ 20 — `nvm use 20`).
    the only correct ways to discover memories. Keyword/file search misses
    semantic matches and won't scale. Use `Read` only on the specific files a
    recall/query result cites.
-2. **Write through the CLI — never hand-create/edit files under `memory/entries/`
-   or `.index/`.** Capture and update go ONLY through `cli.ts add` (same
-   `--source-ids` updates in place; `--update <id>` for manual notes); timeline
-   links through `cli.ts add --follows` / `cli.ts link`; deletion
-   ONLY through `cli.ts remove <id>`. A
-   hand-written file skips index sync, dedup, and auto-commit — invisible to
-   recall and unversioned. **Read `MEMORY-GUARDRAILS.md` before any write under
-   `memory/`** (it also lists the allowed exceptions: `memory/summaries/`
-   Synthesis prose, `memory/connectors/` overrides).
+2. **Write through the CLI — never hand-create/edit files under
+   `memory/entries/`, `memory-public/entries/`, or `.index/`.** Capture and
+   update go ONLY through `cli.ts add` (same `--source-ids` updates in place;
+   `--update <id>` for manual notes); timeline links through
+   `cli.ts add --follows` / `cli.ts link`; deletion ONLY through
+   `cli.ts remove <id>`; graph reclassification ONLY through
+   `cli.ts move <id> --to <graph>`. A hand-written file skips index sync,
+   dedup, and auto-commit — invisible to recall and unversioned. **Read
+   `MEMORY-GUARDRAILS.md` before any write under either store** (it also lists
+   the allowed exceptions: `memory/summaries/` + `memory-public/summaries/`
+   Synthesis prose, `memory/connectors/` overrides, `memory/routing/` override).
 3. **One entry per source thread — a living record, not append-on-refetch.** A
    re-capture with a known `source_id` updates that entry in place (`date` =
    first-seen, `updated` = last refresh). Don't hand-rewrite history to tidy up,

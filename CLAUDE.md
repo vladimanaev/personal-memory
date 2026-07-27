@@ -4,6 +4,13 @@ This repo is **the user's local Personal Memory** store. It is a
 RAG store, not a normal codebase. Two jobs: **capture** memories and **recall**
 them. The retrieval engine is the `memory` CLI — use it.
 
+The store is **two graphs**: PRIVATE (`memory/` — secret, local-only) and
+PUBLIC (`memory-public/` — safe to share with others), each its own nested git
+repo. Recall spans both by default (public hits labeled `[public]`;
+`--graph private|public` narrows); every capture is routed by the
+graph-routing prompt with **private as the default on any doubt**. A public
+entry must never reference a private id — the CLI enforces the direction.
+
 > Run commands with Node ≥ 20: `nvm use 20` then `npx tsx src/cli.ts <cmd>`.
 
 ## ⛔ The one rule that matters: never search memory by hand
@@ -49,6 +56,16 @@ A hook enforces this; a denial means "use `cli.ts add`", not "find another way".
 When the user wants to log/remember something, use the `log-memory` skill and
 `npx tsx src/cli.ts add …`. Reuse existing people/team slugs (check `memory list`
 first).
+
+**Graph routing:** before every `add`, apply the routing prompt —
+`memory/routing/graph-routing.md` if it exists, else the template
+`routing/graph-routing.md` (`npx tsx src/cli.ts routing` shows which resolves).
+Confident public verdict → `--graph public`; anything else → omit the flag
+(private default). Never ask to confirm a private verdict; mention the verdict
+only when routing public. Wrong verdicts are fixed with
+`npx tsx src/cli.ts move <id> --to public|private`, never by moving files.
+For public-only recall (preparing shareable content), use the `recall-public`
+skill (`/recall-public`) — it never falls back to private memories.
 
 **Timeline chains:** when the new memory develops or settles an earlier matter
 (e.g. a `decision` resolving a `pending-decision`), pass `--follows <earlier-id>`

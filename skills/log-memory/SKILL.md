@@ -46,7 +46,23 @@ index files, and the entry paths that CLI output cites.
 2. **Write a clear body**: what happened, context, decisions, and follow-ups /
    action items. Be concrete (names, numbers, dates) — future recall quality
    depends on it.
-3. **Store it** by running the CLI (body via `--body` or piped on stdin):
+3. **Route it: private or public graph.** The store is split into a PRIVATE
+   graph (`memory/` — secret, local-only) and a PUBLIC graph (`memory-public/`
+   — safe to share with others). Every new capture gets a verdict:
+   - Read the routing prompt: `memory/routing/graph-routing.md` if it exists,
+     else the template `routing/graph-routing.md` (`npx tsx src/cli.ts routing`
+     shows which one resolves and whether routing is enabled).
+   - Apply it to the entry you're about to store. On a **confident public**
+     verdict pass `--graph public`; otherwise pass nothing — private is the
+     default, and **any doubt means private**. Never ask the user to confirm a
+     private verdict; mention the verdict in the confirmation only when public.
+   - **Chain guard**: if `--follows` targets a private entry, the new entry is
+     private regardless of its own content — a public entry must never
+     reference a private id (the CLI rejects it).
+   - A wrong verdict is corrected later with
+     `npx tsx src/cli.ts move <id> --to public|private` — never by editing or
+     moving files.
+4. **Store it** by running the CLI (body via `--body` or piped on stdin):
 
    ```bash
    npx tsx src/cli.ts add \
@@ -57,8 +73,9 @@ index files, and the entry paths that CLI output cites.
    ```
 
    `add` writes the Markdown file **and** updates the vector index automatically.
-4. **Confirm** back to the user: the entry `id`, its file path, and a one-line
-   recap of what you stored (and whether it was `created`, `updated`, or `unchanged`).
+5. **Confirm** back to the user: the entry `id`, its file path, a one-line
+   recap of what you stored (and whether it was `created`, `updated`, or
+   `unchanged`), and the graph when it was routed public.
 
 ## Timeline links (`--follows`) — chain evolving matters
 
@@ -126,3 +143,7 @@ reports a candidate and exits, decide:
   `npx tsx src/cli.ts maintenance` flags suspiciously-similar slugs that may be
   the same person/team under two names.
 - Prefer one focused entry per event over a giant catch-all note.
+- **Private on doubt.** Mixed private+public content → private; never split one
+  event into two entries to force part of it public. Re-captures of an existing
+  entry stay in that entry's graph (the CLI ignores a conflicting `--graph` and
+  points at `move`).

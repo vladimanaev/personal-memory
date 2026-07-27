@@ -83,6 +83,13 @@ export const ConnectorSchema = z
     /** Canonical source-id pattern for dedup, e.g. `gmail:<thread-id>`. */
     source_id_scheme: z.string().min(1),
     /**
+     * Graph pin: when set, EVERY capture from this source is filed in this
+     * graph and the routing prompt is skipped (typical: `graph: private` on
+     * DM-heavy sources). When absent, each captured item is routed by the
+     * graph-routing prompt.
+     */
+    graph: z.enum(["private", "public"]).optional(),
+    /**
      * Pull config read by the pull-memories skill (gmail: queries; slack:
      * channels). Omitted entirely for push-only connectors like raw-capture.
      * `lookback_days` is the one shared key: the default window when no
@@ -97,10 +104,40 @@ export const ConnectorSchema = z
 
 export type Connector = z.infer<typeof ConnectorSchema>;
 
+/**
+ * Routing-prompt file frontmatter — `routing/graph-routing.md` (git-tracked
+ * default template) or `memory/routing/graph-routing.md` (private override
+ * that fully replaces it). The body is the natural-language classification
+ * prompt an agent applies to every new capture to pick its graph.
+ */
+export const RoutingSchema = z
+  .object({
+    /** Must equal the filename stem (`graph-routing`). */
+    name: slug,
+    /** false = skip routing entirely; every capture goes to `default_graph`. */
+    enabled: z.boolean().default(true),
+    /** Machine-readable fallback verdict — applied on any doubt. */
+    default_graph: z.enum(["private", "public"]).default("private"),
+  })
+  .strict();
+
+export type Routing = z.infer<typeof RoutingSchema>;
+
+/**
+ * Which physical store an entry lives in. `private` is the local-only
+ * `memory/` repo; `public` is the shareable `memory-public/` repo. Derived
+ * from the file's on-disk location — never stored in frontmatter, so the two
+ * can't drift and existing files never need touching.
+ */
+export type GraphId = "private" | "public";
+export const GRAPH_IDS = ["private", "public"] as const satisfies readonly GraphId[];
+
 /** A fully-parsed memory: validated frontmatter + Markdown body + file path. */
 export interface MemoryEntry extends Frontmatter {
   body: string;
   path: string;
+  /** Derived from `path` (which store the file sits in); excluded from the content hash. */
+  graph: GraphId;
 }
 
 /**
@@ -124,6 +161,8 @@ export interface MemoryRecord {
   people: string;
   teams: string;
   tags: string;
+  /** Which store the entry lives in (`private` | `public`) — enables SQL scope prefilters. */
+  graph: string;
   /** Content hash of the whole source entry — drives incremental indexing. */
   hash: string;
   /** The text that was embedded (title + chunk of body). */

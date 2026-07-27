@@ -7,6 +7,7 @@ import { spawn } from "node:child_process";
 import { loadAllEntries, ROOT } from "./ingest.js";
 import { search, indexStatus, type SearchFilters } from "./store.js";
 import { loadConnectors, loadConnectorState, writeConnector, relConnector } from "./connectors.js";
+import { loadRouting, writeRouting } from "./routing.js";
 import { getMaintenanceSnapshot, launchMaintenanceRun, startMaintenanceScheduler } from "./scheduled-maintenance.js";
 import { applyChainLink, dismissChainSuggestion, dismissSlugSuggestion, mergeSlugs, type SlugKind } from "./graph-maintenance.js";
 import { buildChainIndex } from "./chains.js";
@@ -83,6 +84,7 @@ async function apiSearch(res: ServerResponse, params: URLSearchParams): Promise<
     sendJson(res, 400, { error: "missing q" });
     return;
   }
+  const graphParam = params.get("graph");
   const filters: SearchFilters = {
     person: params.get("person") || undefined,
     type: params.get("type") || undefined,
@@ -90,6 +92,7 @@ async function apiSearch(res: ServerResponse, params: URLSearchParams): Promise<
     tag: params.get("tag") || undefined,
     since: params.get("since") || undefined,
     until: params.get("until") || undefined,
+    graph: graphParam === "private" || graphParam === "public" ? graphParam : undefined,
   };
   const deep = params.get("deep") === "1" || params.get("deep") === "true";
   const k = Number(params.get("k")) || (deep ? 40 : 8);
@@ -108,6 +111,7 @@ async function apiConnectors(res: ServerResponse): Promise<void> {
     path: relConnector(c.path),
     enabled: c.fm?.enabled ?? false,
     source_id_scheme: c.fm?.source_id_scheme,
+    graph: c.fm?.graph,
     fetch: c.fm?.fetch,
     last_pulled: state[c.name]?.last_pulled,
     last_captured: state[c.name]?.last_captured,
@@ -162,6 +166,47 @@ async function apiPutConnector(
     return;
   }
   sendJson(res, 200, { ok: true, name });
+}
+
+async function apiRouting(res: ServerResponse): Promise<void> {
+  const routing = await loadRouting();
+  if (!routing) {
+    sendJson(res, 404, { error: "no routing prompt found" });
+    return;
+  }
+  sendJson(res, 200, {
+    name: routing.name,
+    origin: routing.origin,
+    path: relConnector(routing.path),
+    enabled: routing.fm?.enabled ?? false,
+    default_graph: routing.fm?.default_graph,
+    body: routing.body,
+    raw: routing.raw,
+    ...(routing.error ? { error: routing.error } : {}),
+  });
+}
+
+async function apiPutRouting(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  let raw: string;
+  try {
+    raw = await readBody(req);
+  } catch (err) {
+    sendJson(res, (err as { status?: number }).status ?? 500, {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return;
+  }
+  if (!raw.trim()) {
+    sendJson(res, 400, { error: "empty body — send the full routing file text" });
+    return;
+  }
+  try {
+    await writeRouting(raw); // always lands in the private override layer
+  } catch (err) {
+    sendJson(res, 400, { error: err instanceof Error ? err.message : String(err) });
+    return;
+  }
+  sendJson(res, 200, { ok: true, name: "graph-routing" });
 }
 
 function slugKind(value: unknown): SlugKind | null {
@@ -345,6 +390,10 @@ export function startServer(opts: { port: number; open: boolean }): Promise<neve
         await apiSearch(res, url.searchParams);
       } else if (url.pathname === "/api/connectors") {
         if (req.method === "GET") await apiConnectors(res);
+        else sendJson(res, 405, { error: "method not allowed" });
+      } else if (url.pathname === "/api/routing") {
+        if (req.method === "GET") await apiRouting(res);
+        else if (req.method === "PUT") await apiPutRouting(req, res);
         else sendJson(res, 405, { error: "method not allowed" });
       } else if (url.pathname === "/api/maintenance") {
         if (req.method === "GET") await apiMaintenance(res);

@@ -31,21 +31,25 @@ esac
 root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cd "$root" || exit 0
 
-[ -d memory/.git ] || exit 0
+# Both stores are checked (not parsed from --graph: a source-id match can
+# redirect the write to the OTHER store); each commits into its own repo.
+for store in memory memory-public; do
+  [ -d "$store/.git" ] || continue
 
-git -C memory add -A . 2>/dev/null || exit 0
+  git -C "$store" add -A . 2>/dev/null || continue
 
-if git -C memory diff --cached --quiet 2>/dev/null; then
-  exit 0
-fi
+  if git -C "$store" diff --cached --quiet 2>/dev/null; then
+    continue
+  fi
 
-newest="$(git -C memory diff --cached --name-only 2>/dev/null | grep -E '^entries/.*\.md$' | head -n1 || true)"
-title=""
-if [ -n "$newest" ] && [ -f "memory/$newest" ]; then
-  title="$(sed -n 's/^title:[[:space:]]*//p' "memory/$newest" | head -n1 | sed "s/^[\"']//; s/[\"']$//")"
-fi
+  newest="$(git -C "$store" diff --cached --name-only 2>/dev/null | grep -E '^entries/.*\.md$' | head -n1 || true)"
+  title=""
+  if [ -n "$newest" ] && [ -f "$store/$newest" ]; then
+    title="$(sed -n 's/^title:[[:space:]]*//p' "$store/$newest" | head -n1 | sed "s/^[\"']//; s/[\"']$//")"
+  fi
 
-git -C memory commit -q \
-  -m "Log memory: ${title:-entry update}" \
-  -m "Auto-committed by Codex PostToolUse hook after \`cli.ts add\`." \
-  >/dev/null 2>&1 || true
+  git -C "$store" commit -q \
+    -m "Log memory: ${title:-entry update}" \
+    -m "Auto-committed by Codex PostToolUse hook after \`cli.ts add\`." \
+    >/dev/null 2>&1 || true
+done

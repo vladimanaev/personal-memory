@@ -2,7 +2,9 @@ import { execFile } from "node:child_process";
 import { existsSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { MEMORY_DIR } from "./ingest.js";
+import { storeFor, type GraphId } from "./graphs.js";
+
+const MEMORY_DIR = storeFor("private").dir;
 
 const execFileP = promisify(execFile);
 
@@ -48,6 +50,17 @@ async function git(dir: string, args: string[]) {
 
 /** Serializes commitMemoryRepo calls so concurrent callers can't race on index.lock. */
 let queue: Promise<unknown> = Promise.resolve();
+
+/** Commit the given graphs' stores in order (skipping absent/clean repos). */
+export async function commitStores(
+  graphs: Iterable<GraphId>,
+  message: string | ((graph: GraphId) => string),
+): Promise<void> {
+  for (const graph of graphs) {
+    const msg = typeof message === "function" ? message(graph) : message;
+    await commitMemoryRepo(msg, storeFor(graph).dir);
+  }
+}
 
 /** Stage + commit everything in the nested memory repo; false if absent/clean. */
 export function commitMemoryRepo(message: string, dir: string = MEMORY_DIR): Promise<boolean> {

@@ -4,7 +4,7 @@ import * as lancedb from "@lancedb/lancedb";
 import type { OptimizeStats } from "@lancedb/lancedb";
 import { getEmbedder, type Embedder } from "./embed.js";
 import { chunkEntry, displayChunkText, entrySearchText, hashEntry, loadAllEntries, INDEX_DIR } from "./ingest.js";
-import { packSlugs, type MemoryEntry, type MemoryRecord } from "./schema.js";
+import { packSlugs, type GraphId, type MemoryEntry, type MemoryRecord } from "./schema.js";
 import { readLexical, buildLexical, syncLexical, bm25Scores, tokenize } from "./lexical.js";
 import { buildChainIndex, type ChainAnnotation } from "./chains.js";
 
@@ -15,9 +15,10 @@ const TABLE = "memory";
  * Bump when the row schema or indexing semantics change: a mismatch (including
  * a meta.json written before versioning existed) forces one clean rebuild of
  * the table from the Markdown source of truth. v2: people/teams/tags columns.
- * v3: semantic chunks include compact metadata headers.
+ * v3: semantic chunks include compact metadata headers. v4: graph column
+ * (private/public store split).
  */
-const INDEX_VERSION = 3;
+const INDEX_VERSION = 4;
 
 interface IndexMeta {
   embedderId: string;
@@ -67,6 +68,7 @@ async function recordsFor(entries: MemoryEntry[], embedder: Embedder): Promise<M
     people: packSlugs(p.entry.people),
     teams: packSlugs(p.entry.teams),
     tags: packSlugs(p.entry.tags),
+    graph: p.entry.graph,
     hash: p.hash,
     text: p.text,
     vector: vectors[i]!,
@@ -100,19 +102,25 @@ export async function syncIndex(opts: { force?: boolean } = {}): Promise<{
 
   let table = await openTable(db);
 
-  // Current per-entry hashes from the index (rowId -> hash).
-  const existing = new Map<string, string>(); // id -> hash
+  // Current per-entry hash + graph from the index. A `move` between stores
+  // changes the graph but NOT the content hash, so the graph must participate
+  // in change detection or moved entries would keep their stale scope.
+  const existing = new Map<string, { hash: string; graph: string }>();
   if (table && !force) {
-    const rows = (await table.query().select(["id", "hash"]).toArray()) as {
+    const rows = (await table.query().select(["id", "hash", "graph"]).toArray()) as {
       id: string;
       hash: string;
+      graph: string;
     }[];
-    for (const r of rows) existing.set(r.id, r.hash);
+    for (const r of rows) existing.set(r.id, { hash: r.hash, graph: r.graph });
   }
 
   const wanted = new Map(entries.map((e) => [e.id, hashEntry(e)]));
 
-  const changed = entries.filter((e) => existing.get(e.id) !== wanted.get(e.id));
+  const changed = entries.filter((e) => {
+    const cur = existing.get(e.id);
+    return cur?.hash !== wanted.get(e.id) || cur?.graph !== e.graph;
+  });
   const removedIds = [...existing.keys()].filter((id) => !wanted.has(id));
   const unchanged = entries.length - changed.length;
 
@@ -218,6 +226,8 @@ export interface SearchFilters {
   tag?: string;
   since?: string; // ISO date inclusive
   until?: string; // ISO date inclusive
+  /** Scope to one store; undefined = both graphs. */
+  graph?: GraphId;
 }
 
 export type QueryOrigin = "primary" | "agent" | "cli";
@@ -273,6 +283,7 @@ function matchesFilters(e: MemoryEntry, f: SearchFilters): boolean {
   if (f.type && e.type !== f.type) return false;
   if (f.since && e.date < f.since) return false;
   if (f.until && e.date > f.until) return false;
+  if (f.graph && e.graph !== f.graph) return false;
   return true;
 }
 
@@ -282,7 +293,7 @@ export function applyFilters(entries: MemoryEntry[], f: SearchFilters): MemoryEn
 }
 
 function hasAnyFilter(f: SearchFilters): boolean {
-  return Boolean(f.person || f.team || f.tag || f.type || f.since || f.until);
+  return Boolean(f.person || f.team || f.tag || f.type || f.since || f.until || f.graph);
 }
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]*$/;
@@ -301,6 +312,7 @@ function whereClause(f: SearchFilters): string | undefined {
   if (f.person && SLUG_RE.test(f.person)) parts.push(`people LIKE '%|${f.person}|%'`);
   if (f.team && SLUG_RE.test(f.team)) parts.push(`teams LIKE '%|${f.team}|%'`);
   if (f.tag && SLUG_RE.test(f.tag)) parts.push(`tags LIKE '%|${f.tag}|%'`);
+  if (f.graph && SLUG_RE.test(f.graph)) parts.push(`graph = '${f.graph}'`);
   return parts.length ? parts.join(" AND ") : undefined;
 }
 
@@ -596,7 +608,7 @@ export interface SimilarHit {
  */
 export async function findSimilar(
   text: string,
-  opts: { limit?: number; minSim?: number } = {},
+  opts: { limit?: number; minSim?: number; graph?: GraphId } = {},
 ): Promise<SimilarHit[]> {
   const { limit = 5, minSim = 0.92 } = opts;
   const db = await lancedb.connect(INDEX_DIR);
@@ -607,7 +619,10 @@ export async function findSimilar(
   const [qvec] = await embedder.embed([text]);
   // `search(vector)` is typed as Query | VectorQuery; a vector arg yields a
   // VectorQuery at runtime, which is what exposes distanceType().
-  const vq = table.search(qvec!) as lancedb.VectorQuery;
+  let vq = table.search(qvec!) as lancedb.VectorQuery;
+  if (opts.graph && SLUG_RE.test(opts.graph)) {
+    vq = vq.where(`graph = '${opts.graph}'`) as lancedb.VectorQuery;
+  }
   // Generous pool: near-duplicates rank at the very top by construction, but
   // multi-chunk entries crowding the head must not push a real dup past the cap.
   const rows = (await vq

@@ -4,11 +4,12 @@ import { existsSync } from "node:fs";
 import { join, relative } from "node:path";
 import matter from "gray-matter";
 import { FrontmatterSchema, type Frontmatter, type MemoryEntry } from "./schema.js";
+import { GRAPH_IDS, graphOfPath, storeFor, type GraphId } from "./graphs.js";
 
 export const ROOT = process.cwd();
-export const MEMORY_DIR = join(ROOT, "memory");
-export const ENTRIES_DIR = join(MEMORY_DIR, "entries");
-export const SUMMARIES_DIR = join(MEMORY_DIR, "summaries");
+export const MEMORY_DIR = storeFor("private").dir;
+export const ENTRIES_DIR = storeFor("private").entriesDir;
+export const SUMMARIES_DIR = storeFor("private").summariesDir;
 export const INDEX_DIR = join(ROOT, ".index");
 
 // Hashes memoized by the entry-cache loader so sync never recomputes them.
@@ -27,8 +28,10 @@ export function hashEntry(e: MemoryEntry): string {
 
 function frontmatterOf(e: MemoryEntry): Frontmatter {
   // `updated` is excluded so a refresh-date bump never churns the index and so
-  // content-equality can be tested via the hash alone.
-  const { body: _b, path: _p, updated: _u, ...fm } = e;
+  // content-equality can be tested via the hash alone. `graph` is excluded
+  // because it is derived from location — moving an entry between stores must
+  // not change its content hash (and pre-split hashes must stay valid).
+  const { body: _b, path: _p, updated: _u, graph: _g, ...fm } = e;
   return fm;
 }
 
@@ -80,7 +83,7 @@ export async function parseEntry(path: string): Promise<MemoryEntry> {
         parsed.error.issues.map((i) => `  - ${i.path.join(".")}: ${i.message}`).join("\n"),
     );
   }
-  return { ...parsed.data, body: content.trim(), path };
+  return { ...parsed.data, body: content.trim(), path, graph: graphOfPath(path) };
 }
 
 // --- parsed-entry cache -------------------------------------------------
@@ -114,12 +117,13 @@ async function readEntryCache(): Promise<EntryCache> {
   return { version: ENTRY_CACHE_VERSION, files: {} };
 }
 
-/** Load every memory (raw entries + summaries), via the parse cache. */
+/** Load every memory across both graphs (raw entries + summaries), via the parse cache. */
 export async function loadAllEntries(): Promise<MemoryEntry[]> {
-  const files = [
-    ...(await listMarkdown(ENTRIES_DIR)),
-    ...(await listMarkdown(SUMMARIES_DIR)),
-  ];
+  const files: string[] = [];
+  for (const graph of GRAPH_IDS) {
+    const store = storeFor(graph);
+    files.push(...(await listMarkdown(store.entriesDir)), ...(await listMarkdown(store.summariesDir)));
+  }
   const cache = await readEntryCache();
   let dirty = false;
 
@@ -131,12 +135,13 @@ export async function loadAllEntries(): Promise<MemoryEntry[]> {
       const st = await stat(path);
       const cached = cache.files[rel];
       if (cached && cached.mtimeMs === st.mtimeMs && cached.size === st.size) {
-        const entry: MemoryEntry = { ...cached.fm, body: cached.body, path };
+        // `graph` is re-derived from the path, never trusted from the cache.
+        const entry: MemoryEntry = { ...cached.fm, body: cached.body, path, graph: graphOfPath(path) };
         hashMemo.set(entry, cached.hash);
         return entry;
       }
       const entry = await parseEntry(path);
-      const { body: _b, path: _p, ...fm } = entry;
+      const { body: _b, path: _p, graph: _g, ...fm } = entry;
       cache.files[rel] = {
         mtimeMs: st.mtimeMs,
         size: st.size,
@@ -148,6 +153,19 @@ export async function loadAllEntries(): Promise<MemoryEntry[]> {
       return entry;
     }),
   );
+
+  // Ids must be unique ACROSS stores — chains, the index, --update, and move
+  // all key by id, so a collision would make them ambiguous.
+  const byId = new Map<string, MemoryEntry>();
+  for (const e of entries) {
+    const dup = byId.get(e.id);
+    if (dup) {
+      throw new Error(
+        `duplicate memory id '${e.id}' across stores:\n  - ${relative(ROOT, dup.path)}\n  - ${relative(ROOT, e.path)}`,
+      );
+    }
+    byId.set(e.id, e);
+  }
 
   for (const rel of Object.keys(cache.files)) {
     if (!seen.has(rel)) {
@@ -248,15 +266,20 @@ export function makeId(date: string, title: string): string {
 }
 
 /** Target path for an entry, partitioned by year/month (summaries are flat). */
-export function entryPath(fm: Frontmatter): string {
-  if (fm.type === "summary") return join(SUMMARIES_DIR, `${fm.id}.md`);
+export function entryPath(fm: Frontmatter, graph: GraphId = "private"): string {
+  const store = storeFor(graph);
+  if (fm.type === "summary") return join(store.summariesDir, `${fm.id}.md`);
   const [year, month] = fm.date.split("-");
-  return join(ENTRIES_DIR, year!, month!, `${fm.id}.md`);
+  return join(store.entriesDir, year!, month!, `${fm.id}.md`);
 }
 
 /** Serialize + write a memory file (creating dirs). Returns the path written. */
-export async function writeEntry(fm: Frontmatter, body: string): Promise<string> {
-  const path = entryPath(fm);
+export async function writeEntry(
+  fm: Frontmatter,
+  body: string,
+  graph: GraphId = "private",
+): Promise<string> {
+  const path = entryPath(fm, graph);
   await mkdir(join(path, ".."), { recursive: true });
   // gray-matter stringify keeps key order predictable & arrays inline-friendly.
   const file = matter.stringify(`\n${body.trim()}\n`, fm);

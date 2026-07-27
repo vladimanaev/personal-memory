@@ -102,11 +102,30 @@ quarter?", "who's ready for promotion?", "prep for my staff meeting") →
 3. Synthesize: themes, what changed over time, open threads, risks, and what to
    watch next. Cite the entries you drew from.
 
+## Graph scope — private vs public
+
+The store holds two graphs: **private** (`memory/` — secret, local-only) and
+**public** (`memory-public/` — shareable with others). `recall` / `query` /
+`list` / `person` search **both graphs by default**, fused into one ranking;
+public hits are labeled `[public]` in text output (and carry `graph` in
+`--format json`). `--graph private|public` narrows the scope.
+
+- Answering the user's own questions → default (both graphs) is right.
+- Preparing anything that will be **shared or leave the private context**
+  (team update, doc for others, message draft) → recall with `--graph public`,
+  or use the dedicated `recall-public` skill — and never quote a private
+  entry's content, id, title, or path into shareable output.
+- Chains may cross in ONE direction: a private entry can follow (reference) a
+  public one; a public entry never references a private id. So a public hit's
+  `⤷ superseded by` may point at a *private* entry (the matter went private),
+  but a private hit is only ever superseded by another private entry.
+
 ## Filters available
 
 `--person <slug>` · `--type <type>` · `--team <slug>` · `--tag <slug>` ·
-`--since <YYYY-MM-DD>` · `--until <YYYY-MM-DD>` · `-k <n>` · `--complete` ·
-`--complete-if-small` · `--require-complete` · `--no-expand` · `--format json`
+`--since <YYYY-MM-DD>` · `--until <YYYY-MM-DD>` · `--graph private|public` ·
+`-k <n>` · `--complete` · `--complete-if-small` · `--require-complete` ·
+`--no-expand` · `--format json`
 
 ## Keeping recall sharp (compaction)
 

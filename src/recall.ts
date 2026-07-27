@@ -75,6 +75,8 @@ export interface RecallHit {
   id: string;
   title: string;
   type: MemoryEntry["type"];
+  /** Which store the entry lives in (`private` | `public`). */
+  graph: MemoryEntry["graph"];
   date: string;
   updated?: string;
   people: string[];
@@ -220,6 +222,7 @@ export async function recall(positionals: string[], opts: RecallOptions = {}): P
       id: h.entry.id,
       title: h.entry.title,
       type: h.entry.type,
+      graph: h.entry.graph,
       date: h.entry.date,
       ...(h.entry.updated ? { updated: h.entry.updated } : {}),
       people: h.entry.people,

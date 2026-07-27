@@ -514,6 +514,14 @@ h2 {
   margin: 14px 0 10px;
 }
 
+/* graph scope selector — same chip language as .type-chips, one row below it */
+.scope-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 10px;
+}
+
 /* ---------- entries view ---------- */
 
 .searchbar {
@@ -812,6 +820,17 @@ h2 {
 
 .badge.origin-custom {
   color: var(--accent-text);
+}
+
+/* public-graph / pin markers — a subtle outlined pill so shareable entries read
+   at a glance without shouting; private (the default) stays unmarked */
+.badge.gpub,
+.badge.gpin {
+  color: var(--accent-text);
+  border: 1px solid var(--accent-soft);
+  border-radius: 999px;
+  padding: 1px 7px;
+  letter-spacing: 0.05em;
 }
 
 /* colored type dot on a badge — text stays muted, only the dot wears --tc */
@@ -1559,6 +1578,21 @@ body.view-graph .site-header {
   fill: var(--tc, var(--cat-entry));
 }
 
+/* ghost = a public entry surfaced in the private graph for a cross-graph chain
+   edge — dashed + dimmed so it reads as "elsewhere", still clickable */
+.gn-ghost .nshape {
+  fill: none;
+  stroke: var(--tc, var(--cat-entry));
+  stroke-width: 1.25;
+  stroke-dasharray: 3 2;
+  opacity: 0.6;
+}
+
+.gn-ghost .glabel {
+  fill: var(--muted);
+  font-style: italic;
+}
+
 /* per-type color token — consumed by graph dots, legend glyphs, badge dots */
 .gt-event { --tc: var(--type-event); }
 .gt-decision { --tc: var(--type-decision); }
@@ -1881,6 +1915,28 @@ button:disabled {
 
 .crow:hover .cname {
   color: var(--accent-text);
+}
+
+/* pinned entry point to the routing prompt — sits above the connector list,
+   visually lifted off the plain rows */
+.crow-pinned {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 8px;
+  padding-inline: 10px;
+}
+
+.csub {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.routing-explainer {
+  margin-top: 14px;
+  font-size: 13px;
+  color: var(--muted);
+  max-width: 72ch;
 }
 
 .cdot {

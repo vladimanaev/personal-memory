@@ -90,3 +90,5 @@ target/
 
 # Personal memory data — never push (versioned in its own nested repo)
 memory/
+# Public memory graph — shareable, but versioned in its own nested repo too
+memory-public/

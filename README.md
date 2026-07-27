@@ -195,11 +195,21 @@ achievement, feedback, meeting, note, summary
 
 ## How It Works
 
-Personal Memory separates durable content from derived search state:
+Personal Memory separates durable content from derived search state, and
+splits the durable content into two graphs:
 
-- `memory/entries/YYYY/MM/<id>.md` stores raw memory entries.
+- `memory/entries/YYYY/MM/<id>.md` stores PRIVATE raw memory entries
+  (secret, local-only — the default graph).
+- `memory-public/entries/YYYY/MM/<id>.md` stores PUBLIC memory entries —
+  a physically separate store (own nested git repo) deliberately safe to
+  share with others. New captures are classified by an editable routing
+  prompt (`routing/graph-routing.md`, overridden by
+  `memory/routing/graph-routing.md`); anything doubtful stays private.
+  Recall spans both graphs by default (`--graph` narrows); a public entry
+  can never reference a private one.
 - `memory/summaries/<id>.md` stores additive summaries created by `digest`.
-- `.index/` stores rebuildable local search artifacts.
+- `.index/` stores rebuildable local search artifacts (both graphs, with a
+  `graph` column).
 - `connectors/<name>.md` stores public connector templates.
 - `memory/connectors/<name>.md` stores private connector overrides.
 
@@ -257,7 +267,11 @@ npm run index -- --force
 
 The default setup is intentionally local:
 
-- `memory/` is ignored by the main git repository.
+- `memory/` and `memory-public/` are ignored by the main git repository
+  (each is versioned in its own local nested git repo).
+- Private/public separation is physical: the shareable unit is the
+  `memory-public/` directory alone, and nothing in it may reference the
+  private graph — not even an entry id.
 - `.index/` is ignored and can be regenerated.
 - The UI binds to `127.0.0.1`.
 - Embeddings run locally with `Xenova/bge-small-en-v1.5`.
@@ -285,7 +299,9 @@ folder. The important conventions live in:
 - [skills/log-memory/SKILL.md](skills/log-memory/SKILL.md) - creating or
   updating memories
 - [skills/recall-memory/SKILL.md](skills/recall-memory/SKILL.md) - retrieving
-  grounded context
+  grounded context (both graphs)
+- [skills/recall-public/SKILL.md](skills/recall-public/SKILL.md) - public-only
+  recall for shareable output
 - [skills/compact-tags/SKILL.md](skills/compact-tags/SKILL.md) - merging
   similar/duplicate tags with per-merge confirmation
 - [.claude/commands/remember.md](.claude/commands/remember.md),
@@ -312,7 +328,9 @@ src/                      TypeScript CLI, indexing, schema, server, and UI APIs
 src/ui/                   Local browser UI
 skills/                   Agent skills for capture, recall, and pull workflows
 connectors/               Public connector templates
-memory/                   Private memories and connector overrides (gitignored)
+routing/                  Default graph-routing prompt template
+memory/                   PRIVATE memory graph + connector/routing overrides (gitignored, own nested repo)
+memory-public/            PUBLIC (shareable) memory graph (gitignored, own nested repo)
 .index/                   Rebuildable local index (gitignored)
 .claude/                  Claude Code commands, hooks, and settings
 docs/assets/              Public README assets

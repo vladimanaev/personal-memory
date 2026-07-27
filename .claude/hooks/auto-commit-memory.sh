@@ -20,26 +20,30 @@ esac
 
 cd "${CLAUDE_PROJECT_DIR:-.}" || exit 0
 
-# The nested memory repo must exist; never fall back to the parent repo.
-[ -d memory/.git ] || exit 0
+# Both stores are checked (not parsed from --graph: a source-id match can
+# redirect the write to the OTHER store), and each commits into its own
+# nested repo. Never fall back to the parent repo.
+for store in memory memory-public; do
+  [ -d "$store/.git" ] || continue
 
-# Stage everything in the nested repo (paths are relative to memory/).
-git -C memory add -A . 2>/dev/null || exit 0
+  # Stage everything in the nested repo (paths are relative to the store).
+  git -C "$store" add -A . 2>/dev/null || continue
 
-# Nothing staged → nothing to commit.
-if git -C memory diff --cached --quiet 2>/dev/null; then
-  exit 0
-fi
+  # Nothing staged → nothing to commit.
+  if git -C "$store" diff --cached --quiet 2>/dev/null; then
+    continue
+  fi
 
-# Derive a message from the title of the newest staged entry, if any.
-newest="$(git -C memory diff --cached --name-only 2>/dev/null | grep -E '^entries/.*\.md$' | head -n1)"
-title=""
-if [ -n "$newest" ] && [ -f "memory/$newest" ]; then
-  title="$(sed -n 's/^title:[[:space:]]*//p' "memory/$newest" | head -n1 | sed "s/^[\"']//; s/[\"']$//")"
-fi
-msg="Log memory: ${title:-entry update}"
+  # Derive a message from the title of the newest staged entry, if any.
+  newest="$(git -C "$store" diff --cached --name-only 2>/dev/null | grep -E '^entries/.*\.md$' | head -n1)"
+  title=""
+  if [ -n "$newest" ] && [ -f "$store/$newest" ]; then
+    title="$(sed -n 's/^title:[[:space:]]*//p' "$store/$newest" | head -n1 | sed "s/^[\"']//; s/[\"']$//")"
+  fi
+  msg="Log memory: ${title:-entry update}"
 
-git -C memory commit -q \
-  -m "$msg" \
-  -m "Auto-committed by PostToolUse hook after \`cli.ts add\`." \
-  >/dev/null 2>&1 || true
+  git -C "$store" commit -q \
+    -m "$msg" \
+    -m "Auto-committed by PostToolUse hook after \`cli.ts add\`." \
+    >/dev/null 2>&1 || true
+done
