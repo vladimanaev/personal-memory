@@ -2,7 +2,7 @@ import { loadAllEntries } from "./ingest.js";
 import { indexStatus } from "./store.js";
 import { lexicalStatus } from "./lexical.js";
 import type { MemoryEntry } from "./schema.js";
-import { analyzeChainLinks, analyzeGraphHygiene, readSlugDismissals, readSlugProposals, slugDismissalKeys, writeGraphMaintenanceAudit } from "./graph-maintenance.js";
+import { analyzeChainLinks, analyzeGraphHygiene, readSlugDismissals, readSlugProposals, reconcileGraphAudit, slugDismissalKeys, writeGraphMaintenanceAudit } from "./graph-maintenance.js";
 import { buildChainIndex, entryStatus } from "./chains.js";
 
 /**
@@ -113,9 +113,17 @@ export async function runMaintenance(threshold: number): Promise<void> {
   }
 
   console.log("\n## Slug hygiene");
-  const audit = analyzeGraphHygiene(entries, undefined, slugDismissalKeys(await readSlugDismissals()), await readSlugProposals());
+  // reconcileGraphAudit lets an enabled reference source auto-dismiss or
+  // boost person/team pairs; on any source problem it returns the heuristic
+  // audit untouched. Same reconciliation as every other audit writer.
+  const audit = await reconcileGraphAudit(
+    analyzeGraphHygiene(entries, undefined, slugDismissalKeys(await readSlugDismissals()), await readSlugProposals()),
+  );
   audit.chainSuggestions = chainSuggestions;
   await writeGraphMaintenanceAudit(audit);
+  for (const s of audit.sourceDismissed ?? []) {
+    console.log(`(auto-dismissed) ${s.kind}: '${s.from}' → '${s.to}' — ${s.sourceReason}`);
+  }
   if (audit.suggestions.length === 0) {
     console.log("(no suspiciously-similar slugs)");
   } else {

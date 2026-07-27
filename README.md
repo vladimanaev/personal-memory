@@ -148,6 +148,7 @@ memory maintenance [--threshold n]
 memory connectors
 memory connectors mark-pulled <name> [--at ISO_TIMESTAMP]
 memory connectors mark-captured <name> [--at ISO_TIMESTAMP]
+memory sources
 memory ui [--port n] [--no-open]
 ```
 
@@ -169,6 +170,8 @@ Personal Memory separates durable content from derived search state:
 - `.index/` stores rebuildable local search artifacts.
 - `connectors/<name>.md` stores public connector templates.
 - `memory/connectors/<name>.md` stores private connector overrides.
+- `sources/<name>.md` stores public reference-source templates.
+- `memory/sources/<name>.md` stores private reference-source overrides.
 
 Each entry has strict YAML frontmatter:
 
@@ -204,6 +207,53 @@ read time — nothing to keep in sync:
 Links are validated at write time (targets must exist, must not be newer, and
 cycles are rejected). Settle an open matter by logging a new linked entry, not
 by rewriting the old one — the history stays intact.
+
+### Reference sources
+
+The people/team graph is built from what agents write in frontmatter, so slug
+quality normally rests on heuristics. A reference source gives it ground truth:
+an authoritative directory you already have — a company directory, an LDAP/HR
+export, a contacts API, a hand-kept CSV — exposed to the store as a local
+lookup command.
+
+Sources follow the connector layering: `sources/<name>.md` is the generic
+git-tracked template, and a private `memory/sources/<name>.md` override
+(gitignored) carries the real command. The frontmatter declares the lookup
+contract; the body tells agents when to consult it:
+
+```yaml
+name: people-directory
+kind: person             # what this source resolves: person | team
+enabled: true
+lookup:
+  command: "my-directory lookup {query}"   # prints a JSON array of matches
+  refresh: "my-directory sync"             # optional: refresh a local cache
+  cache_ttl_days: 14
+```
+
+The command receives `{query}` shell-quoted and prints a JSON array of matches,
+minimally `[{"name": "Jane Doe", "id": "jdoe", "title": "…", "team": "…"}]`.
+It is user-supplied and local-first — the store never ships credentials or
+fetches anything itself.
+
+Where the store uses it:
+
+- **`memory maintenance` slug hygiene**: before reporting a person/team merge
+  suggestion, both slugs are looked up. Two matches with differing stable ids
+  → the suggestion is auto-dismissed (recorded in the audit with the
+  evidence); the same identity → its confidence is boosted. Matches without
+  ids can only confirm, never refute. A disabled source, failed command, or
+  non-JSON output degrades silently to today's heuristics — the same
+  reconciliation runs wherever the audit is rebuilt (CLI, UI, scheduled
+  maintenance).
+- **Agent slug minting**: agents consult an enabled source before minting a
+  new person/team slug — exactly one match mints from the canonical name
+  (tagged `slug-minted-from-directory`); zero or multiple matches means no
+  mint. See [AGENTS.md](AGENTS.md).
+
+Sources never gate a write — capture stays immediate; they only make
+suggestions and repairs smarter. `memory sources` lists and validates the
+resolved files.
 
 The index combines:
 

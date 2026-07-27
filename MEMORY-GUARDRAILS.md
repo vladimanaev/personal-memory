@@ -47,6 +47,7 @@ four things a manual write skips:
 | `memory/entries/**` | ❌ never by hand | `cli.ts add` / `add --update <id>` / `cli.ts link <id> --follows …` / `cli.ts remove <id>` / `cli.ts slugs merge` only |
 | `memory/summaries/**` | ✏️ only the `## Synthesis` section of a scaffold `digest` created — then run `cli.ts index` | Edit tool |
 | `memory/connectors/**` | ✅ private connector overrides | Edit tool or web UI |
+| `memory/sources/**` | ✅ private reference-source overrides | Edit tool |
 | `.index/**` | ❌ never | rebuildable derivative; `cli.ts index` regenerates |
 
 ## Enforcement

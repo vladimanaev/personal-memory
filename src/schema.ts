@@ -97,6 +97,49 @@ export const ConnectorSchema = z
 
 export type Connector = z.infer<typeof ConnectorSchema>;
 
+/**
+ * Reference-source file frontmatter — `sources/<name>.md`. A source is an
+ * authoritative directory (company directory, LDAP export, contacts CLI) the
+ * store may CONSULT — never a capture path. Frontmatter = the lookup contract;
+ * body = agent guidance (when to consult it, how to act on matches), exactly
+ * like connector bodies are extraction prompts. Lookups are user-supplied
+ * local commands; the store never ships credentials or fetches anything itself.
+ */
+export const SourceSchema = z
+  .object({
+    /** Must equal the filename stem (`sources/<name>.md`). */
+    name: slug,
+    /** What this source resolves — checked against person/team slug kinds. */
+    kind: z.enum(["person", "team"]),
+    enabled: z.boolean().default(true),
+    lookup: z
+      .object({
+        /**
+         * Command printing a JSON array of matches for `{query}` (substituted
+         * shell-quoted), e.g. `[{"name": "Jane Doe", "id": "jdoe", …}]`.
+         * The placeholder must be an unquoted token: the CLI single-quotes the
+         * value itself, and a template like `--name "{query}"` would neuter
+         * that quoting and let query text reach the shell.
+         */
+        command: z
+          .string()
+          .min(1)
+          .refine((c) => c.includes("{query}"), "must contain the {query} placeholder")
+          .refine(
+            (c) => !/["']\{query\}|\{query\}["']/.test(c),
+            "{query} must be an unquoted token — the CLI shell-quotes it itself",
+          ),
+        /** Optional command that refreshes a local cache of the directory. */
+        refresh: z.string().min(1).optional(),
+        /** How stale that cache may get before `refresh` is worth running. */
+        cache_ttl_days: z.number().int().positive().optional(),
+      })
+      .strict(),
+  })
+  .strict();
+
+export type Source = z.infer<typeof SourceSchema>;
+
 /** A fully-parsed memory: validated frontmatter + Markdown body + file path. */
 export interface MemoryEntry extends Frontmatter {
   body: string;

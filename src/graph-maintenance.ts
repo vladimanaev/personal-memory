@@ -47,6 +47,11 @@ export interface ChainLinkSuggestion {
   shared: string[];
 }
 
+/** A suggestion a reference source ruled out, with the directory evidence. */
+export interface SourceDismissedSuggestion extends SlugSuggestion {
+  sourceReason: string;
+}
+
 export interface GraphMaintenanceAudit {
   generatedAt: string;
   counts: Record<SlugKind, number>;
@@ -54,6 +59,9 @@ export interface GraphMaintenanceAudit {
   suggestions: SlugSuggestion[];
   /** Absent in audits written before timeline chains existed. */
   chainSuggestions?: ChainLinkSuggestion[];
+  /** Suggestions auto-dismissed by reference-source evidence — kept in the
+   *  audit so a wrong dismissal stays diagnosable. Absent when none. */
+  sourceDismissed?: SourceDismissedSuggestion[];
 }
 
 export interface SlugMergePreview {
@@ -285,15 +293,51 @@ export function analyzeGraphHygiene(
     suggestionCounts[p.kind]++;
   }
 
-  suggestions.sort(
-    (a, b) =>
-      b.confidence - a.confidence ||
-      b.affectedEntries - a.affectedEntries ||
-      b.lastSeen?.localeCompare(a.lastSeen ?? "") ||
-      a.kind.localeCompare(b.kind) ||
-      a.from.localeCompare(b.from),
-  );
+  suggestions.sort(compareSuggestions);
   return { generatedAt, counts, suggestionCounts, suggestions };
+}
+
+function compareSuggestions(a: SlugSuggestion, b: SlugSuggestion): number {
+  return (
+    b.confidence - a.confidence ||
+    b.affectedEntries - a.affectedEntries ||
+    b.lastSeen?.localeCompare(a.lastSeen ?? "") ||
+    a.kind.localeCompare(b.kind) ||
+    a.from.localeCompare(b.from)
+  );
+}
+
+/**
+ * Let an enabled reference source pass judgment on the audit's person/team
+ * merge suggestions (see sources.ts): pairs resolving to distinct directory
+ * ids move to `sourceDismissed`, pairs resolving to the same identity get a
+ * confidence boost and a re-sort. Every audit that gets persisted goes
+ * through here — the CLI report, the UI's refresh paths, and scheduled
+ * maintenance must never disagree about what the directory said. Any
+ * source-layer failure (unreadable files included) returns the audit
+ * unchanged: sources are an optional enhancement, never a gate.
+ */
+export async function reconcileGraphAudit(
+  audit: GraphMaintenanceAudit,
+  getSources?: () => Promise<import("./sources.js").SourceFile[]>,
+  run?: import("./sources.js").LookupRunner,
+): Promise<GraphMaintenanceAudit> {
+  try {
+    const { loadSources, reconcileSuggestions } = await import("./sources.js");
+    const sources = await (getSources ? getSources() : loadSources());
+    const { kept, dismissed } = await reconcileSuggestions(audit.suggestions, sources, run);
+    audit.suggestions = kept.sort(compareSuggestions);
+    for (const { suggestion } of dismissed) audit.suggestionCounts[suggestion.kind]--;
+    if (dismissed.length > 0) {
+      audit.sourceDismissed = dismissed.map(({ suggestion, reason }) => ({
+        ...suggestion,
+        sourceReason: reason,
+      }));
+    }
+  } catch {
+    // fall through with the heuristic audit untouched
+  }
+  return audit;
 }
 
 /** "clearly related" for bge-small — well below the 0.92 near-duplicate bar. */
@@ -542,7 +586,9 @@ export async function readGraphMaintenanceAudit(): Promise<GraphMaintenanceAudit
 
 export async function refreshGraphMaintenanceAudit(): Promise<GraphMaintenanceAudit> {
   const entries = await loadAllEntries();
-  const audit = analyzeGraphHygiene(entries, undefined, slugDismissalKeys(await readSlugDismissals()), await readSlugProposals());
+  const audit = await reconcileGraphAudit(
+    analyzeGraphHygiene(entries, undefined, slugDismissalKeys(await readSlugDismissals()), await readSlugProposals()),
+  );
   audit.chainSuggestions = await analyzeChainLinks(entries);
   await writeGraphMaintenanceAudit(audit);
   return audit;

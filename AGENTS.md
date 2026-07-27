@@ -39,6 +39,7 @@ Run with `npx tsx src/cli.ts <cmd>` (Node ≥ 20 — `nvm use 20`).
 | `slugs propose --kind person\|team\|tag --from <slug> --to <slug> --reason "…"` | Defer a merge decision: parks the pair as a suggestion in `maintenance` + web UI until merged or ignored there |
 | `slugs dismiss --kind person\|team\|tag --from <slug> --to <slug>` | Permanently hide a wrong merge suggestion from `maintenance` |
 | `connectors` | List + validate connector files, templates + private overrides (exit 1 if any invalid) |
+| `sources` | List + validate reference-source files, templates + private overrides (exit 1 if any invalid) |
 | `ui [--port N] [--no-open]` | Local web UI — stats, browse, search, connector editing, maintenance screen (default port 4664; memory writes limited to slug merges + chain links, both via the same validated code paths as the CLI) |
 
 ## Data model
@@ -90,6 +91,17 @@ Run with `npx tsx src/cli.ts <cmd>` (Node ≥ 20 — `nvm use 20`).
   `add -A`, or `git -C memory commit` manually); template changes are committed
   to the main repo. Pull state (`last_pulled`) lives in
   `.index/connector-state.json`, not in the files.
+- **Reference sources:** `sources/<name>.md` — authoritative directories
+  (company directory, LDAP export, contacts CLI) the store may **consult**,
+  never a capture path. Same layering as connectors: generic git-tracked
+  template, fully replaced by a private `memory/sources/<name>.md` override
+  (real command lives there, never pushed). Frontmatter declares the lookup
+  contract (`kind: person|team`, `lookup.command` printing a JSON array of
+  matches for a shell-quoted `{query}`); body = agent guidance. `maintenance`
+  slug hygiene consults an enabled source to auto-dismiss merge suggestions
+  whose slugs resolve to distinct identities and to boost ones resolving to
+  the same identity; any lookup problem degrades to plain heuristics. Sources
+  never gate a write. `memory sources` lists + validates.
 - **Summaries:** `memory/summaries/<id>.md` (`type: summary`) — an **additive**
   compaction layer with `sources:` back-links. They augment, never replace, raw
   entries. `digest` writes a scaffold; the agent refines the `## Synthesis`
@@ -135,6 +147,12 @@ Run with `npx tsx src/cli.ts <cmd>` (Node ≥ 20 — `nvm use 20`).
    different events are new entries.
 4. **Slug discipline** — the same person/team always gets the same kebab slug;
    check existing entries (`memory list`, `memory/people/`) before inventing one.
+   Before minting a **new** person/team slug, consult an enabled reference
+   source of that kind (`memory sources`; the file body says how): run the
+   lookup with the full name — **exactly one match** → mint from the canonical
+   directory name and tag the entry `slug-minted-from-directory`; zero or
+   multiple matches → don't mint, keep the name in the body only. Never let a
+   lookup gate a capture — if the source is unavailable, log anyway.
 5. **Always ground recall in citations** (entry file paths). If memory is silent,
    say so and offer to log it.
 6. **Stay local** — default embeddings are on-device. Only set
