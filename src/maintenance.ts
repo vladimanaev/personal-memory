@@ -114,8 +114,18 @@ export async function runMaintenance(threshold: number): Promise<void> {
 
   console.log("\n## Slug hygiene");
   const audit = analyzeGraphHygiene(entries, undefined, slugDismissalKeys(await readSlugDismissals()), await readSlugProposals());
+  // When an enabled reference source exists, let the directory answer for
+  // person/team pairs: distinct identities auto-dismiss, same identity boosts.
+  // Any lookup problem leaves the suggestions exactly as computed above.
+  const { loadSources, reconcileSuggestions } = await import("./sources.js");
+  const { kept, dismissed } = await reconcileSuggestions(audit.suggestions, await loadSources());
+  audit.suggestions = kept;
+  for (const { suggestion } of dismissed) audit.suggestionCounts[suggestion.kind]--;
   audit.chainSuggestions = chainSuggestions;
   await writeGraphMaintenanceAudit(audit);
+  for (const { suggestion: s, reason } of dismissed) {
+    console.log(`(auto-dismissed) ${s.kind}: '${s.from}' → '${s.to}' — ${reason}`);
+  }
   if (audit.suggestions.length === 0) {
     console.log("(no suspiciously-similar slugs)");
   } else {
