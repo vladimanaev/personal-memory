@@ -72,7 +72,8 @@ duplicates, **anchor each capture to its source** with `--source-ids`:
   prompt (what's memory-worthy, what to ignore, how to write it) in
   `connectors/<name>.md` — read that file before capturing from the source.
   Currently: `connectors/gmail.md` (`gmail:<thread-id>`), `connectors/slack.md`
-  (`slack:<channel-id>:<message-ts>`). For pasted text/screenshots follow
+  (`slack:<channel-id>:<message-ts>`), `connectors/gchat.md`
+  (`gchat:<space-id>:<thread-id>`). For pasted text/screenshots follow
   `connectors/raw-capture.md` and pass `--connector raw-capture` to `memory add`
   so the connector UI records that the raw-capture prompt was used.
 - Sources without a connector file use these fallback conventions:

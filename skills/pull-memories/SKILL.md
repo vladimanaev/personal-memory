@@ -41,6 +41,8 @@ so re-pulling the same window updates entries in place (`↻ matches existing` /
    - **slack**: for each `fetch.channels` entry, read recent channel history /
      search within the window; follow threads that look memory-worthy. Also
      sweep threads where the user was mentioned if the config says so.
+   - **gchat**: for each `fetch.spaces` entry, read recent space messages
+     within the window; follow threads that look memory-worthy.
 
 5. **Filter + capture** by applying the connector's body prompt. For each
    memory-worthy item:
