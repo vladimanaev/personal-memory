@@ -1,0 +1,19 @@
+{
+  "name": "personal-memory",
+  "version": "0.1.0",
+  "description": "Capture and recall long-horizon personal memory from any project. Bundles the store's four skills — log-memory, recall-memory, pull-memories, compact-tags — which drive the local `memory` CLI in your personal-memory clone (set MEMORY_HOME to point at it).",
+  "author": {
+    "name": "vladimanaev",
+    "url": "https://github.com/vladimanaev"
+  },
+  "repository": "https://github.com/vladimanaev/personal-memory",
+  "license": "Apache-2.0",
+  "keywords": [
+    "memory",
+    "rag",
+    "recall",
+    "capture",
+    "local-first",
+    "skills"
+  ]
+}

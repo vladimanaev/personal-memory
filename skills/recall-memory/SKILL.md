@@ -10,6 +10,24 @@ consult the memory before answering people/history
 questions — do not rely on conversation history alone, which won't survive
 across sessions.
 
+## Locating the store
+
+Everything in this skill is **store-relative** — not just the
+`npx tsx src/cli.ts …` commands (the CLI resolves the store from its working
+directory), but every path involved: `memory/…` and `connectors/…` files,
+index files, and the entry paths that CLI output cites.
+
+- Working inside the personal-memory repo already (`src/cli.ts` and
+  `connectors/` present)? Run the commands and read the paths as written.
+- Installed via the plugin marketplace and working in another project?
+  `MEMORY_HOME` must point at the user's personal-memory clone. Run every
+  command as `cd "$MEMORY_HOME" && npx tsx src/cli.ts …`, and resolve every
+  store-relative file you read or edit under it too — entry paths printed by
+  the CLI, connector files, `memory/summaries/…`, and git checks as
+  `git -C "$MEMORY_HOME/memory" …`.
+- Neither? Ask the user where their personal-memory clone lives and suggest
+  exporting `MEMORY_HOME` in their shell profile.
+
 ## ⛔ Retrieve through the CLI — never grep the files
 
 | Tempting shortcut | Why it's wrong |
