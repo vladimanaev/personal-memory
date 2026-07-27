@@ -55,8 +55,13 @@ both CLIs:
 
 # Codex
 codex plugin marketplace add https://github.com/vladimanaev/personal-memory
-codex plugin add personal-memory
+codex plugin add personal-memory@personal-memory
 ```
+
+> Install from Git (as above), not from a local path: a local-path
+> marketplace add copies the working tree verbatim into the plugin cache —
+> including the private, gitignored `memory/` store. A Git add clones tracked
+> content only.
 
 Then tell the installed skills where your clone lives (the CLI resolves the
 store from its working directory):

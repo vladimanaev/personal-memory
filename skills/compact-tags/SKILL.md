@@ -19,15 +19,18 @@ merge, so every step is reversible.
 
 ## Locating the store
 
-Every `npx tsx src/cli.ts …` command in this skill must run from the
-**personal-memory repo root** — the CLI resolves the store (`memory/`,
-`connectors/`, the index) from its working directory.
+Everything in this skill is **store-relative** — not just the
+`npx tsx src/cli.ts …` commands (the CLI resolves the store from its working
+directory), but every path involved: the dismissals file read in step 2,
+`memory/…` paths, and the `git -C memory` audit-trail checks.
 
 - Working inside the personal-memory repo already (`src/cli.ts` and
-  `connectors/` present)? Run the commands as written.
+  `connectors/` present)? Run the commands and read the paths as written.
 - Installed via the plugin marketplace and working in another project?
-  `MEMORY_HOME` must point at the user's personal-memory clone — run every
-  command as `cd "$MEMORY_HOME" && npx tsx src/cli.ts …`.
+  `MEMORY_HOME` must point at the user's personal-memory clone. Run every
+  command as `cd "$MEMORY_HOME" && npx tsx src/cli.ts …`, resolve every
+  store-relative file under it, and run the audit-trail checks as
+  `git -C "$MEMORY_HOME/memory" …`.
 - Neither? Ask the user where their personal-memory clone lives and suggest
   exporting `MEMORY_HOME` in their shell profile.
 
