@@ -51,10 +51,13 @@ test("every skill directory ships a SKILL.md whose frontmatter name matches", ()
 
 test("every skill tells installed copies how to locate the store", () => {
   // Installed via the marketplace, skills run from foreign projects where the
-  // CLI's cwd-relative store resolution breaks — each must carry the
-  // MEMORY_HOME contract.
+  // CLI's cwd-relative store resolution breaks — each must carry the operative
+  // MEMORY_HOME contract, not just mention the variable: cd into the store for
+  // CLI commands, and point nested-git checks at its memory/ repo.
   for (const dir of skillDirs) {
     const body = readFileSync(join(ROOT, "skills", dir, "SKILL.md"), "utf8");
-    assert.ok(body.includes("MEMORY_HOME"), `${dir}/SKILL.md lacks the MEMORY_HOME store-location contract`);
+    for (const phrase of [`cd "$MEMORY_HOME" && npx tsx src/cli.ts`, `git -C "$MEMORY_HOME/memory"`]) {
+      assert.ok(body.includes(phrase), `${dir}/SKILL.md lacks the store-location instruction: ${phrase}`);
+    }
   }
 });
