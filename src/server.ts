@@ -111,7 +111,6 @@ async function apiConnectors(res: ServerResponse): Promise<void> {
     path: relConnector(c.path),
     enabled: c.fm?.enabled ?? false,
     source_id_scheme: c.fm?.source_id_scheme,
-    graph: c.fm?.graph,
     fetch: c.fm?.fetch,
     last_pulled: state[c.name]?.last_pulled,
     last_captured: state[c.name]?.last_captured,

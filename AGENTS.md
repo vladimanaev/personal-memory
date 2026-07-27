@@ -19,6 +19,9 @@ sent to any API by default.
 - User wants ONLY shareable memories (preparing a team update, doc, or any
   output leaving the private context) → **public-only recall**
   (see `skills/recall-public/SKILL.md`) — never falls back to private entries.
+- User wants to review/promote memories to the shareable public graph →
+  **promotion review**, every move user-confirmed
+  (see `skills/promote-public/SKILL.md`).
 - User wants to merge/consolidate/clean up similar tags (or person/team slugs)
   → **compact**, every merge user-confirmed (see `skills/compact-tags/SKILL.md`).
 
@@ -28,10 +31,12 @@ Run with `npx tsx src/cli.ts <cmd>` (Node ≥ 20 — `nvm use 20`).
 
 | Command | Purpose |
 |---|---|
-| `add --title … --type … --people a,b --date YYYY-MM-DD --body "…" [--graph private\|public] [--source-ids …] [--follows <id,…>]` | Create/update an entry + index it (dedups on `--source-ids`; `--update <id>`, `--force-new`, `--dup-threshold N` resolve the dup guard; `--follows` chains it to earlier entries; `--graph` files a NEW entry in that graph — default private, updates stay in their entry's graph) |
+| `add --title … --type … --people a,b --date YYYY-MM-DD --body "…" [--source-ids …] [--follows <id,…>]` | Create/update an entry + index it (dedups on `--source-ids`; `--update <id>`, `--force-new`, `--dup-threshold N` resolve the dup guard; `--follows` chains it to earlier entries). Always lands PRIVATE; `--graph public` exists but is reserved for an explicit user request that passes the eligibility prompt |
 | `link <id> --follows <earlier-id,…>` | Add timeline links to an existing entry (validated: targets exist, not newer, no cycles, public never links to private; commits the entry's store) |
-| `move <id> --to private\|public` | Reclassify an entry between graphs: validates link direction, relocates the file verbatim, re-indexes, checkpoints both repos |
-| `routing` | Show + validate the graph-routing prompt (template `routing/graph-routing.md` vs private override `memory/routing/graph-routing.md`) |
+| `move <id> --to private\|public` | Reclassify an entry between graphs: validates link direction, relocates the file verbatim, re-indexes, checkpoints both repos. The ONLY way an entry goes public — used by the promote-public review after per-entry user confirmation |
+| `promote candidates [--since\|--until\|--limit]` | Private entries awaiting public-promotion review (dismissed ones hidden until their content changes; private-ref blockers flagged) |
+| `promote dismiss <id> [--reason "…"]` | Record a "keep private" decision — hidden from candidates until the entry's content changes |
+| `routing` | Show + validate the public-eligibility prompt (template `routing/graph-routing.md` vs private override `memory/routing/graph-routing.md`) |
 | `index [--force]` | Re-sync index with Markdown (incremental; `--force` rebuilds) |
 | `query "<q>" ["<alt phrasing>" …] [--person|--type|--team|--tag|--since|--until|--graph|-k|--deep]` | Hybrid (semantic+lexical) search; pass 2–4 phrasings (all fused); `--deep` = recall-over-precision (k=40, wider pools); `--graph private\|public` scopes (default: both, public hits labeled) |
 | `recall "<q>" ["<agent phrasing>" …] [filters] [--complete|--complete-if-small|--require-complete|--no-expand|--format json]` | Agent-facing recall with weighted query expansion, completeness reporting, and stable JSON output |
@@ -53,13 +58,15 @@ Run with `npx tsx src/cli.ts <cmd>` (Node ≥ 20 — `nvm use 20`).
   as a unit). Same internal layout, each its own nested git repo, both
   gitignored in the main repo. An entry's graph is **derived from its
   location** — no frontmatter field — so files never drift and `move` never
-  rewrites content. Ids are unique across BOTH stores. Every new capture is
-  routed by the graph-routing prompt (`routing/graph-routing.md` template,
-  fully replaced by the `memory/routing/graph-routing.md` override — same
-  two-layer pattern as connectors); **default private on any doubt**.
-  Hard rule: a public entry never references a private id via `follows` or
-  `sources` (enforced at `add`/`link`/`move`); private→public references are
-  fine.
+  rewrites content. Ids are unique across BOTH stores. **Capture always lands
+  private**; entries go public only through the user-confirmed promotion
+  review (`promote candidates` → judge against the eligibility prompt
+  (`routing/graph-routing.md` template, fully replaced by the
+  `memory/routing/graph-routing.md` override — same two-layer pattern as
+  connectors) → per-entry user yes → `move <id> --to public`), or when the
+  user explicitly asks to log something public. Hard rule: a public entry
+  never references a private id via `follows` or `sources` (enforced at
+  `add`/`link`/`move`); private→public references are fine.
 - **Source of truth:** Markdown files under `memory/entries/YYYY/MM/<id>.md`
   (and `memory-public/entries/…` for public ones).
   One memory per file. `memory/` is **gitignored in the main repo** (personal

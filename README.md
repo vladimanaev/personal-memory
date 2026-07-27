@@ -202,11 +202,12 @@ splits the durable content into two graphs:
   (secret, local-only — the default graph).
 - `memory-public/entries/YYYY/MM/<id>.md` stores PUBLIC memory entries —
   a physically separate store (own nested git repo) deliberately safe to
-  share with others. New captures are classified by an editable routing
-  prompt (`routing/graph-routing.md`, overridden by
-  `memory/routing/graph-routing.md`); anything doubtful stays private.
-  Recall spans both graphs by default (`--graph` narrows); a public entry
-  can never reference a private one.
+  share with others. Capture always lands private; entries are promoted to
+  the public graph only through a user-confirmed review (`/promote-public`,
+  driven by `memory promote candidates` + `memory move`), judged against an
+  editable eligibility prompt (`routing/graph-routing.md`, overridden by
+  `memory/routing/graph-routing.md`). Recall spans both graphs by default
+  (`--graph` narrows); a public entry can never reference a private one.
 - `memory/summaries/<id>.md` stores additive summaries created by `digest`.
 - `.index/` stores rebuildable local search artifacts (both graphs, with a
   `graph` column).
@@ -302,6 +303,8 @@ folder. The important conventions live in:
   grounded context (both graphs)
 - [skills/recall-public/SKILL.md](skills/recall-public/SKILL.md) - public-only
   recall for shareable output
+- [skills/promote-public/SKILL.md](skills/promote-public/SKILL.md) - user-confirmed
+  promotion of private memories to the public graph
 - [skills/compact-tags/SKILL.md](skills/compact-tags/SKILL.md) - merging
   similar/duplicate tags with per-merge confirmation
 - [.claude/commands/remember.md](.claude/commands/remember.md),

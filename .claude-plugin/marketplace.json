@@ -8,7 +8,7 @@
     {
       "name": "personal-memory",
       "source": "./",
-      "description": "Personal Memory skills: capture with private/public routing (log-memory), recall across both graphs (recall-memory), public-only recall (recall-public), source sweeps (pull-memories), and tag hygiene (compact-tags) against your local personal-memory store.",
+      "description": "Personal Memory skills: capture (log-memory \u2014 always private), recall across both graphs (recall-memory), public-only recall (recall-public), user-confirmed public promotion (promote-public), source sweeps (pull-memories), and tag hygiene (compact-tags) against your local personal-memory store.",
       "version": "0.2.0"
     }
   ]

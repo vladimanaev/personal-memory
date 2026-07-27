@@ -39,7 +39,7 @@ const skillDirs = readdirSync(join(ROOT, "skills")).filter((d) =>
 );
 
 test("every skill directory ships a SKILL.md whose frontmatter name matches", () => {
-  assert.ok(skillDirs.length >= 5);
+  assert.ok(skillDirs.length >= 6);
   for (const dir of skillDirs) {
     const path = join(ROOT, "skills", dir, "SKILL.md");
     assert.ok(existsSync(path), `missing ${dir}/SKILL.md`);

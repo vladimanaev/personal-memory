@@ -4,22 +4,29 @@ enabled: true
 default_graph: private
 ---
 
-# Routing a new memory: private or public graph
+# Public-graph eligibility — what may leave the private store
 
-Apply this to EVERY new capture before running `memory add`. Produce a single
-verdict — `private` or `public` — and apply it automatically: pass
-`--graph public` only on a confident public verdict; otherwise omit the flag
-(private is the default). Never ask the user to confirm a private verdict;
-briefly note the verdict only when routing to public.
+Every capture is logged to the PRIVATE graph. An entry reaches the PUBLIC
+graph (`memory-public/` — shareable with others) only through two doors, and
+this prompt is the criteria for both:
 
-This is a generic template. Personal routing rules (specific people, projects,
-channels, or topics that must always stay private or may go public) belong in
-the private override at `memory/routing/graph-routing.md`, which fully
-replaces this file.
+1. **Promotion review** (`/promote-public`): candidates from
+   `memory promote candidates` are judged against this prompt and moved with
+   `memory move <id> --to public` only after the user confirms each one.
+2. **Explicit capture**: the user literally says to log something as public —
+   only then may `add --graph public` be used, and it must still satisfy the
+   criteria below.
 
-## Private (the default)
+Never route to public automatically at capture time.
 
-Route to private when the content involves ANY of the following:
+This is a generic template. Personal rules (specific people, projects, or
+topics that must always stay private, or standing areas that are fine to
+share) belong in the private override at `memory/routing/graph-routing.md`,
+which fully replaces this file.
+
+## NOT eligible — stays private (the default)
+
+Anything involving:
 
 - Personal feelings, reflections, frustrations, or private opinions about
   people or plans.
@@ -35,9 +42,7 @@ Route to private when the content involves ANY of the following:
 - Security incidents with sensitive detail, legal matters, unreleased
   business numbers.
 
-## Public (shareable with others)
-
-Route to public ONLY when ALL of these hold:
+## Eligible for public ONLY when ALL of these hold
 
 - The user could paste the entry into a team channel unedited.
 - It is about work artifacts, not about people's behavior or performance:
@@ -51,11 +56,15 @@ Route to public ONLY when ALL of these hold:
 
 ## Hard rules
 
-- Any doubt → `private`. Mixed private+public content → `private`; never
-  split one event into two entries to force part of it public.
+- Any doubt → stays private. Mixed private+public content → stays private;
+  never split one event into two entries to force part of it public.
 - A public entry must NEVER `--follows` or otherwise reference a private
-  entry id. If the natural chain parent is private, the new entry is private
-  too, regardless of its own content. (Private → public references are fine —
-  the CLI enforces this direction.)
-- A wrong verdict is corrected later with `memory move <id> --to <graph>`,
-  never by hand-editing or moving files.
+  entry id — the CLI enforces this at `add`, `link`, and `move` time, and
+  `promote candidates` flags such entries as blocked. Move the referenced
+  entries public first, or keep the chain private.
+- Promotion is per-entry and user-confirmed — never move an entry the user
+  has not explicitly approved. "No" answers are recorded with
+  `memory promote dismiss <id>` so the entry isn't proposed again (until its
+  content changes).
+- A wrong placement is corrected with `memory move <id> --to <graph>`, never
+  by hand-editing or moving files.

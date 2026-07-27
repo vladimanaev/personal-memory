@@ -6,16 +6,17 @@ import { RoutingSchema, type Routing } from "./schema.js";
 import { ROOT, MEMORY_DIR } from "./ingest.js";
 
 /**
- * The graph-routing prompt — ONE fixed-name file resolved from two layers,
- * exactly like connectors:
+ * The public-eligibility prompt — ONE fixed-name file resolved from two
+ * layers, exactly like connectors:
  *
  * - `routing/graph-routing.md` — generic, git-tracked default TEMPLATE.
  * - `memory/routing/graph-routing.md` — private OVERRIDE inside the gitignored
  *   memory/ dir; when present it fully replaces the template.
  *
  * Frontmatter = the machine-readable envelope (`enabled`, `default_graph`);
- * body = the natural-language classification prompt an agent applies to every
- * new capture. Edits (by hand or the web UI's PUT) go to the override layer.
+ * body = the natural-language criteria for what may enter the public graph,
+ * applied during the promotion review (capture always lands private). Edits
+ * (by hand or the web UI's PUT) go to the override layer.
  */
 export const ROUTING_NAME = "graph-routing";
 export const ROUTING_DIR = join(ROOT, "routing");

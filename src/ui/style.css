@@ -822,10 +822,9 @@ h2 {
   color: var(--accent-text);
 }
 
-/* public-graph / pin markers — a subtle outlined pill so shareable entries read
+/* public-graph marker — a subtle outlined pill so shareable entries read
    at a glance without shouting; private (the default) stays unmarked */
-.badge.gpub,
-.badge.gpin {
+.badge.gpub {
   color: var(--accent-text);
   border: 1px solid var(--accent-soft);
   border-radius: 999px;

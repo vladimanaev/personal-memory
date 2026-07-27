@@ -7,9 +7,10 @@ them. The retrieval engine is the `memory` CLI — use it.
 The store is **two graphs**: PRIVATE (`memory/` — secret, local-only) and
 PUBLIC (`memory-public/` — safe to share with others), each its own nested git
 repo. Recall spans both by default (public hits labeled `[public]`;
-`--graph private|public` narrows); every capture is routed by the
-graph-routing prompt with **private as the default on any doubt**. A public
-entry must never reference a private id — the CLI enforces the direction.
+`--graph private|public` narrows). **Capture ALWAYS lands private** — entries
+reach the public graph only through the user-confirmed promotion review
+(`/promote-public`), or when the user explicitly asks to log something public.
+A public entry must never reference a private id — the CLI enforces the direction.
 
 > Run commands with Node ≥ 20: `nvm use 20` then `npx tsx src/cli.ts <cmd>`.
 
@@ -57,15 +58,18 @@ When the user wants to log/remember something, use the `log-memory` skill and
 `npx tsx src/cli.ts add …`. Reuse existing people/team slugs (check `memory list`
 first).
 
-**Graph routing:** before every `add`, apply the routing prompt —
-`memory/routing/graph-routing.md` if it exists, else the template
-`routing/graph-routing.md` (`npx tsx src/cli.ts routing` shows which resolves).
-Confident public verdict → `--graph public`; anything else → omit the flag
-(private default). Never ask to confirm a private verdict; mention the verdict
-only when routing public. Wrong verdicts are fixed with
-`npx tsx src/cli.ts move <id> --to public|private`, never by moving files.
-For public-only recall (preparing shareable content), use the `recall-public`
-skill (`/recall-public`) — it never falls back to private memories.
+**Graphs:** every capture is logged PRIVATE — never pass `--graph public`
+unless the user explicitly asked for a public memory (and it satisfies the
+eligibility prompt: `memory/routing/graph-routing.md` override, else the
+`routing/graph-routing.md` template; `npx tsx src/cli.ts routing` shows which
+resolves). Entries otherwise reach the public graph only via the
+**promotion review**: `/promote-public` (`skills/promote-public/SKILL.md`) —
+`memory promote candidates` → judge against the eligibility prompt → the user
+confirms each entry → `memory move <id> --to public`; declines are recorded
+with `memory promote dismiss <id>`. Wrong placements are fixed with `move`,
+never by moving files. For public-only recall (preparing shareable content),
+use the `recall-public` skill (`/recall-public`) — it never falls back to
+private memories.
 
 **Timeline chains:** when the new memory develops or settles an earlier matter
 (e.g. a `decision` resolving a `pending-decision`), pass `--follows <earlier-id>`

@@ -1,7 +1,7 @@
 {
   "name": "personal-memory",
   "version": "0.2.0",
-  "description": "Capture and recall long-horizon personal memory from any project. Bundles the store's five skills \u2014 log-memory (with private/public graph routing), recall-memory, recall-public, pull-memories, compact-tags \u2014 which drive the local `memory` CLI in your personal-memory clone (set MEMORY_HOME to point at it).",
+  "description": "Capture and recall long-horizon personal memory from any project. Bundles the store's six skills \u2014 log-memory (capture, always private), recall-memory, recall-public, promote-public (user-confirmed promotion to the shareable public graph), pull-memories, compact-tags \u2014 which drive the local `memory` CLI in your personal-memory clone (set MEMORY_HOME to point at it).",
   "author": {
     "name": "vladimanaev",
     "url": "https://github.com/vladimanaev"

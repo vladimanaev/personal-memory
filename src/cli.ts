@@ -701,6 +701,48 @@ async function cmdDigest(argv: string[]) {
   console.log(`  ${raw.length} source entries linked. Refine the Synthesis section, then re-run \`memory index\`.`);
 }
 
+async function cmdPromote(argv: string[]) {
+  const sub = argv[0];
+  const { dismissPromotion, promotionCandidates, readPromotionDismissals } = await import("./promote.js");
+
+  if (sub === "dismiss") {
+    const { values, positionals } = parseArgs({
+      args: argv.slice(1),
+      options: { reason: { type: "string" } },
+      allowPositionals: true,
+    });
+    const id = positionals[0];
+    if (!id || positionals.length !== 1) throw new Error("usage: memory promote dismiss <id> [--reason \"…\"]");
+    const d = await dismissPromotion(id, values.reason as string | undefined);
+    console.log(`✓ ${d.id} stays private — won't be proposed again unless its content changes`);
+    return;
+  }
+
+  if (sub === "candidates" || sub === undefined) {
+    const { values } = parseArgs({
+      args: sub ? argv.slice(1) : argv,
+      options: { since: { type: "string" }, until: { type: "string" }, limit: { type: "string" } },
+    });
+    const entries = await loadAllEntries();
+    const candidates = promotionCandidates(entries, await readPromotionDismissals(), {
+      since: values.since as string | undefined,
+      until: values.until as string | undefined,
+    });
+    const limit = values.limit ? positiveInt(values.limit, candidates.length, "--limit") : candidates.length;
+    for (const c of candidates.slice(0, limit)) {
+      const blocked = c.blockedBy.length ? `  [blocked by private refs: ${c.blockedBy.join(", ")}]` : "";
+      console.log(`${c.date}  ${c.type.padEnd(11)} ${c.id}${blocked}`);
+    }
+    console.log(
+      `\n${candidates.length} candidate${candidates.length === 1 ? "" : "s"} ` +
+        `(private entries not yet reviewed; apply the eligibility prompt before proposing any)`,
+    );
+    return;
+  }
+
+  throw new Error("usage: memory promote candidates [--since DATE] [--until DATE] [--limit N] | promote dismiss <id> [--reason \"…\"]");
+}
+
 async function cmdRouting() {
   const { loadRouting } = await import("./routing.js");
   const routing = await loadRouting();
@@ -994,7 +1036,10 @@ Usage:
             # defer a merge decision: shows as a suggestion in maintenance + web UI until merged/ignored
   memory slugs dismiss --kind person|team|tag --from <slug> --to <slug>
             # permanently hide a wrong merge suggestion from maintenance
-  memory routing                     # show + validate the graph-routing prompt (template vs private override)
+  memory routing                     # show + validate the public-eligibility prompt (template vs private override)
+  memory promote candidates [--since DATE] [--until DATE] [--limit N]
+            # private entries awaiting public-promotion review (dismissed ones hidden until edited)
+  memory promote dismiss <id> [--reason "…"]   # record "keep private" — hidden until content changes
   memory connectors                  # list + validate connectors/<name>.md (fetch config + extraction prompt per source)
   memory connectors mark-pulled <name> [--at ISO_TIMESTAMP]
             # record that a connector sweep completed; captures are recorded by memory add
@@ -1021,6 +1066,7 @@ async function main() {
     case "slugs": return cmdSlugs(rest);
     case "connectors": return cmdConnectors(rest);
     case "routing": return cmdRouting();
+    case "promote": return cmdPromote(rest);
     case "ui": return cmdUi(rest);
     case undefined:
     case "help":

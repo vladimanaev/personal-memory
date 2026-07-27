@@ -11,12 +11,18 @@ shell redirection, not "just this once". The store is TWO graphs — private
 (`memory/`) and public/shareable (`memory-public/`), each its own nested git
 repo — and the contract covers both equally.
 
-- **Capture** goes ONLY through the CLI:
-  `npx tsx src/cli.ts add --title … --type … [--graph public|private] [--people …] [--source-ids …] --body "…"`
+- **Capture** goes ONLY through the CLI and ALWAYS lands in the private graph:
+  `npx tsx src/cli.ts add --title … --type … [--people …] [--source-ids …] --body "…"`
   (via the `log-memory` / `pull-memories` skills, or `/remember` / `/pull-memories`).
-  The graph verdict comes from the routing prompt (`cli.ts routing` shows which
-  file resolves); default private on any doubt.
-- **Reclassify** an entry between graphs ONLY through
+  `--graph public` is reserved for an explicit user request that satisfies the
+  eligibility prompt (`cli.ts routing` shows which file resolves) — never an
+  agent's own judgment.
+- **Promotion to public** happens ONLY through the user-confirmed review
+  (`promote-public` skill / `/promote-public`): `cli.ts promote candidates` →
+  eligibility judgment → **per-entry user confirmation** →
+  `cli.ts move <id> --to public`; declines recorded with
+  `cli.ts promote dismiss <id>`. Never move an entry the user hasn't approved.
+- **Reclassify** between graphs ONLY through
   `npx tsx src/cli.ts move <id> --to public|private` — never by moving files.
   It validates link direction, relocates the file, re-indexes, and checkpoints
   both repos. A public entry must never reference a private id (`follows` or

@@ -64,7 +64,8 @@ check" — that is exactly the leak this skill exists to prevent.
 
 ## Populating the public graph
 
-If recall keeps coming up empty, the graphs may need rebalancing — an entry
-can be reclassified with `npx tsx src/cli.ts move <id> --to public` (the CLI
-validates that it references no private ids). Suggest this to the user when
-relevant; never move entries yourself without their explicit confirmation.
+If recall keeps coming up empty, the public graph probably just hasn't had a
+promotion review lately — suggest running `/promote-public`
+(`skills/promote-public/SKILL.md`), the user-confirmed flow that moves
+eligible private entries public. Never move entries yourself without the
+user's explicit per-entry confirmation.

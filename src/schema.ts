@@ -83,13 +83,6 @@ export const ConnectorSchema = z
     /** Canonical source-id pattern for dedup, e.g. `gmail:<thread-id>`. */
     source_id_scheme: z.string().min(1),
     /**
-     * Graph pin: when set, EVERY capture from this source is filed in this
-     * graph and the routing prompt is skipped (typical: `graph: private` on
-     * DM-heavy sources). When absent, each captured item is routed by the
-     * graph-routing prompt.
-     */
-    graph: z.enum(["private", "public"]).optional(),
-    /**
      * Pull config read by the pull-memories skill (gmail: queries; slack:
      * channels). Omitted entirely for push-only connectors like raw-capture.
      * `lookback_days` is the one shared key: the default window when no
@@ -105,10 +98,12 @@ export const ConnectorSchema = z
 export type Connector = z.infer<typeof ConnectorSchema>;
 
 /**
- * Routing-prompt file frontmatter — `routing/graph-routing.md` (git-tracked
- * default template) or `memory/routing/graph-routing.md` (private override
- * that fully replaces it). The body is the natural-language classification
- * prompt an agent applies to every new capture to pick its graph.
+ * Public-eligibility prompt frontmatter — `routing/graph-routing.md`
+ * (git-tracked default template) or `memory/routing/graph-routing.md`
+ * (private override that fully replaces it). The body is the
+ * natural-language criteria for what may enter the PUBLIC graph — applied
+ * during the user-confirmed promotion review (and the rare explicit
+ * "log as public" capture); capture itself always lands private.
  */
 export const RoutingSchema = z
   .object({

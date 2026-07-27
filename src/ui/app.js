@@ -55,7 +55,6 @@ import { comboboxHtml, wireCombobox } from "./combobox.js";
  * @property {boolean} enabled
  * @property {string} [source_id_scheme]
  * @property {Record<string, unknown>} [fetch]
- * @property {"private"|"public"} [graph] pin — everything from this source files to this graph, skipping routing
  * @property {string} [last_pulled]
  * @property {string} [last_captured]
  * @property {string} [body]
@@ -1077,7 +1076,6 @@ const CONNECTOR_TEMPLATE = (/** @type {string} */ name) => `---
 name: ${name}
 enabled: true
 source_id_scheme: "${name}:<id>"
-# graph: private   # pin: skip routing; everything from this source files here
 # fetch:            # omit entirely for push-only connectors
 #   lookback_days: 7
 ---
@@ -1101,9 +1099,6 @@ const originBadge = (/** @type {Connector} */ c) =>
 const connectorPath = (/** @type {Connector} */ c) =>
   c.path ?? `memory/connectors/${c.name}.md`;
 
-/** Graph pin on a connector — "everything from this source goes to graph X, skip routing". */
-const pinBadge = (/** @type {Connector} */ c) =>
-  c.graph ? `<span class="badge gpin" title="pin — all captures from this source file to the ${esc(c.graph)} graph, skipping routing">pinned: ${esc(c.graph)}</span>` : "";
 
 /** Routing prompt origin: committed default vs private override. */
 const routingOriginBadge = (/** @type {RoutingDoc} */ r) =>
@@ -1434,7 +1429,6 @@ function renderConnectors() {
               <span class="cname">${esc(c.name)}</span>
               ${c.fetch ? `<span class="badge">pull</span>` : `<span class="badge">push</span>`}
               ${originBadge(c)}
-              ${pinBadge(c)}
               ${meta}
               ${connectorActivity(c)}
             </span>
@@ -1449,7 +1443,7 @@ function renderConnectors() {
         <span class="ctop">
           <span class="cname">graph-routing</span>
           <span class="badge">routing</span>
-          <span class="csub">private/public routing prompt</span>
+          <span class="csub">public-graph eligibility criteria</span>
         </span>
       </span>
     </a>`;
@@ -1581,7 +1575,6 @@ function renderConnector(name) {
       <h1>${esc(c.name)}</h1>
       <div class="byline">
         <span id="corigin">${originBadge(c)}</span>
-        ${pinBadge(c)}
         <span id="cpath"><code>${esc(connectorPath(c))}</code></span>
         ${c.last_pulled ? `<span>last pulled ${esc(c.last_pulled)}</span>` : ""}
         ${c.last_captured ? `<span>last captured ${esc(c.last_captured)}</span>` : ""}
@@ -1637,7 +1630,7 @@ function renderRouting() {
         <span><code>${esc(r.path)}</code></span>
         <span>default graph: <code>${esc(r.default_graph)}</code></span>
       </div>
-      <div class="routing-explainer">Classifies each new capture as private or public. Default private on any doubt. Edits are saved as your private override.</div>
+      <div class="routing-explainer">Eligibility criteria for the public graph — capture always lands private; entries move public only through a confirmed promotion review (or an explicit "log as public"). Edits are saved as your private override.</div>
       <div class="connector-editor" id="reditor-host"></div>
     </div>
   `;
