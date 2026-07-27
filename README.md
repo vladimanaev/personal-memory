@@ -68,7 +68,7 @@ Plan with memory:
 Pull from connected sources:
 
 ```text
-"Pull recent memories from Gmail and Slack."
+"Pull recent memories from Gmail, Slack, and Google Chat."
 "Use the connector settings to ingest memory-worthy updates from the last week."
 "Every 4 hours, pull Gmail and Slack and log anything memory-worthy."
 ```

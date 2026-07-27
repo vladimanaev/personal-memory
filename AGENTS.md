@@ -63,8 +63,8 @@ Run with `npx tsx src/cli.ts <cmd>` (Node ≥ 20 — `nvm use 20`).
   ```
 
   **Source ids** are canonical `scheme:rest` external references and are the
-  dedup key: `slack:<channel>:<ts>`, `gmail:<thread-id>`, `gcal:<event-id>`,
-  `gdrive:<file-id>`. A re-capture carrying a known source id **updates the
+  dedup key: `slack:<channel>:<ts>`, `gmail:<thread-id>`,
+  `gchat:<space-id>:<thread-id>`, `gcal:<event-id>`, `gdrive:<file-id>`. A re-capture carrying a known source id **updates the
   existing entry in place** rather than creating a duplicate. Captures without a
   source id pass through a semantic near-duplicate guard at `add` time.
 
@@ -77,7 +77,7 @@ Run with `npx tsx src/cli.ts <cmd>` (Node ≥ 20 — `nvm use 20`).
   `[open]` / `[resolved → <id>]`. Settle an open matter with a **new** linked
   entry — never by rewriting the old one. Removing a followed entry leaves a
   dangling link (tolerated; `maintenance` reports it). (`gmail`, `slack`,
-  `raw-capture`). `connectors/<name>.md` = generic git-tracked **template** (no
+  `gchat`, `raw-capture`). `connectors/<name>.md` = generic git-tracked **template** (no
   personal queries/channels/names). `memory/connectors/<name>.md` = private
   **override** that fully replaces the template of the same name — it lives in
   the gitignored `memory/` dir, so personalization is never pushed; the loader

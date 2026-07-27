@@ -72,7 +72,8 @@ duplicates, **anchor each capture to its source** with `--source-ids`:
   prompt (what's memory-worthy, what to ignore, how to write it) in
   `connectors/<name>.md` — read that file before capturing from the source.
   Currently: `connectors/gmail.md` (`gmail:<thread-id>`), `connectors/slack.md`
-  (`slack:<channel-id>:<message-ts>`). For pasted text/screenshots follow
+  (`slack:<channel-id>:<message-ts>`), `connectors/gchat.md`
+  (`gchat:<space-id>:<thread-id>`). For pasted text/screenshots follow
   `connectors/raw-capture.md` and pass `--connector raw-capture` to `memory add`
   so the connector UI records that the raw-capture prompt was used.
 - Sources without a connector file use these fallback conventions:
@@ -100,8 +101,8 @@ reports a candidate and exits, decide:
   `updated` = last refresh. Do not create a second entry for the same thread.
 - **Genuinely new or different events are new entries.** Don't fold an unrelated
   event into an existing one just because it's similar.
-- **Always pass `--source-ids`** when the material came from Slack/email/calendar
-  — it's the dedup anchor.
+- **Always pass `--source-ids`** when the material came from Slack/email/
+  Google Chat/calendar — it's the dedup anchor.
 - **Slug discipline**: consistent `people`/`team` slugs are what make later
   filtering and per-person recall work. When unsure, check existing entries;
   `npx tsx src/cli.ts maintenance` flags suspiciously-similar slugs that may be
