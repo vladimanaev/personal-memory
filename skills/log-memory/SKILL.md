@@ -101,8 +101,8 @@ reports a candidate and exits, decide:
   `updated` = last refresh. Do not create a second entry for the same thread.
 - **Genuinely new or different events are new entries.** Don't fold an unrelated
   event into an existing one just because it's similar.
-- **Always pass `--source-ids`** when the material came from Slack/email/calendar
-  — it's the dedup anchor.
+- **Always pass `--source-ids`** when the material came from Slack/email/
+  Google Chat/calendar — it's the dedup anchor.
 - **Slug discipline**: consistent `people`/`team` slugs are what make later
   filtering and per-person recall work. When unsure, check existing entries;
   `npx tsx src/cli.ts maintenance` flags suspiciously-similar slugs that may be

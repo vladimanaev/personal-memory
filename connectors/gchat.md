@@ -28,7 +28,11 @@ re-fetches).
 
 Writing the entry:
 
-- Anchor to the **thread**: `gchat:<space-id>:<thread-id>`. One entry per
+- Anchor to the **thread**: `gchat:<space-id>:<thread-id>`, always with the
+  **bare ids** — strip the API resource-name prefixes (a thread name like
+  `spaces/AAAA0000000/threads/BBBB1111111` becomes
+  `gchat:AAAA0000000:BBBB1111111`). Source-id matching is exact, so a
+  non-canonical form would silently duplicate the thread. One entry per
   thread — new replies update the entry in place.
 - Body: what happened, who was involved, what was decided, follow-ups.
   Concrete names, numbers, dates.
