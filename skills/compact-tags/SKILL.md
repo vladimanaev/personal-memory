@@ -17,6 +17,20 @@ rewrites `from → to` inside each affected entry's frontmatter, entry bodies ar
 untouched, and `memory/.git` is checkpointed before and committed after each
 merge, so every step is reversible.
 
+## Locating the store
+
+Every `npx tsx src/cli.ts …` command in this skill must run from the
+**personal-memory repo root** — the CLI resolves the store (`memory/`,
+`connectors/`, the index) from its working directory.
+
+- Working inside the personal-memory repo already (`src/cli.ts` and
+  `connectors/` present)? Run the commands as written.
+- Installed via the plugin marketplace and working in another project?
+  `MEMORY_HOME` must point at the user's personal-memory clone — run every
+  command as `cd "$MEMORY_HOME" && npx tsx src/cli.ts …`.
+- Neither? Ask the user where their personal-memory clone lives and suggest
+  exporting `MEMORY_HOME` in their shell profile.
+
 ## Steps
 
 1. **Determine the mode.**

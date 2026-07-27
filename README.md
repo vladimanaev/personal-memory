@@ -41,6 +41,34 @@ claude
 
 Or open this folder as the workspace in Codex.
 
+### Use it from any project (plugin marketplace)
+
+The four memory skills also ship as a plugin, so capture-worthy moments in
+*other* repos ("remember that we decided X" mid-review) don't require
+switching sessions. The repo itself is the marketplace — one manifest serves
+both CLIs:
+
+```bash
+# Claude Code (inside a session)
+/plugin marketplace add vladimanaev/personal-memory
+/plugin install personal-memory@personal-memory
+
+# Codex
+codex plugin marketplace add https://github.com/vladimanaev/personal-memory
+codex plugin add personal-memory
+```
+
+Then tell the installed skills where your clone lives (the CLI resolves the
+store from its working directory):
+
+```bash
+# in your shell profile
+export MEMORY_HOME="$HOME/path/to/personal-memory"
+```
+
+Inside the personal-memory repo the skills keep working as before —
+`MEMORY_HOME` is only consulted when you're elsewhere.
+
 Capture:
 
 ```text
