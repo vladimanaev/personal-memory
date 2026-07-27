@@ -2,7 +2,7 @@ import { loadAllEntries } from "./ingest.js";
 import { indexStatus } from "./store.js";
 import { lexicalStatus } from "./lexical.js";
 import type { MemoryEntry } from "./schema.js";
-import { analyzeChainLinks, analyzeGraphHygiene, readSlugDismissals, readSlugProposals, slugDismissalKeys, writeGraphMaintenanceAudit } from "./graph-maintenance.js";
+import { analyzeChainLinks, analyzeGraphHygiene, readSlugDismissals, readSlugProposals, reconcileGraphAudit, slugDismissalKeys, writeGraphMaintenanceAudit } from "./graph-maintenance.js";
 import { buildChainIndex, entryStatus } from "./chains.js";
 
 /**
@@ -113,18 +113,16 @@ export async function runMaintenance(threshold: number): Promise<void> {
   }
 
   console.log("\n## Slug hygiene");
-  const audit = analyzeGraphHygiene(entries, undefined, slugDismissalKeys(await readSlugDismissals()), await readSlugProposals());
-  // When an enabled reference source exists, let the directory answer for
-  // person/team pairs: distinct identities auto-dismiss, same identity boosts.
-  // Any lookup problem leaves the suggestions exactly as computed above.
-  const { loadSources, reconcileSuggestions } = await import("./sources.js");
-  const { kept, dismissed } = await reconcileSuggestions(audit.suggestions, await loadSources());
-  audit.suggestions = kept;
-  for (const { suggestion } of dismissed) audit.suggestionCounts[suggestion.kind]--;
+  // reconcileGraphAudit lets an enabled reference source auto-dismiss or
+  // boost person/team pairs; on any source problem it returns the heuristic
+  // audit untouched. Same reconciliation as every other audit writer.
+  const audit = await reconcileGraphAudit(
+    analyzeGraphHygiene(entries, undefined, slugDismissalKeys(await readSlugDismissals()), await readSlugProposals()),
+  );
   audit.chainSuggestions = chainSuggestions;
   await writeGraphMaintenanceAudit(audit);
-  for (const { suggestion: s, reason } of dismissed) {
-    console.log(`(auto-dismissed) ${s.kind}: '${s.from}' → '${s.to}' — ${reason}`);
+  for (const s of audit.sourceDismissed ?? []) {
+    console.log(`(auto-dismissed) ${s.kind}: '${s.from}' → '${s.to}' — ${s.sourceReason}`);
   }
   if (audit.suggestions.length === 0) {
     console.log("(no suspiciously-similar slugs)");

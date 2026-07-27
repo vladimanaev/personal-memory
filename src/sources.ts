@@ -132,8 +132,21 @@ export function buildLookupCommand(template: string, query: string): string {
   return template.replaceAll("{query}", `'${query.replace(/'/g, `'\\''`)}'`);
 }
 
-const isMatch = (m: unknown): m is DirectoryMatch =>
-  typeof m === "object" && m !== null && typeof (m as { name?: unknown }).name === "string";
+/**
+ * Full shape check, not just `name`: reconciliation uses matches as NEGATIVE
+ * evidence (a dismissal), so a malformed `id` (number, object, empty string)
+ * must degrade the whole result to unresolved rather than flow into an
+ * identity comparison.
+ */
+const isMatch = (m: unknown): m is DirectoryMatch => {
+  if (typeof m !== "object" || m === null) return false;
+  const { name, id, title, team } = m as Record<string, unknown>;
+  if (typeof name !== "string" || name.trim() === "") return false;
+  for (const opt of [id, title, team]) {
+    if (opt !== undefined && (typeof opt !== "string" || opt.trim() === "")) return false;
+  }
+  return true;
+};
 
 /**
  * Run one lookup. Returns the parsed matches, or null when the source is
@@ -169,7 +182,21 @@ export interface MergeSuggestionLike {
 const DIRECTORY_CONFIRMED_CONFIDENCE = 0.95;
 
 const matchLabel = (m: DirectoryMatch) => (m.id ? `${m.name} (${m.id})` : m.name);
-const matchIdentity = (m: DirectoryMatch) => m.id ?? m.name;
+
+/** Display names compare loosely — case and whitespace are not identity. */
+const normalizedName = (m: DirectoryMatch) => m.name.trim().toLowerCase().replace(/\s+/g, " ");
+
+/**
+ * What two single-match lookups prove. Asymmetric on purpose: dismissing a
+ * suggestion (negative evidence) requires two differing STABLE ids — display
+ * names ("Jane Doe" vs "Jane A. Doe") may legitimately differ for the same person,
+ * so without both ids the strongest verdict is a boost on equal names.
+ */
+function compareIdentities(a: DirectoryMatch, b: DirectoryMatch): "same" | "distinct" | "unknown" {
+  if (a.id && b.id) return a.id === b.id ? "same" : "distinct";
+  if (!a.id && !b.id && normalizedName(a) === normalizedName(b)) return "same";
+  return "unknown";
+}
 
 /**
  * Check each person/team merge suggestion against the first enabled source of
@@ -177,10 +204,12 @@ const matchIdentity = (m: DirectoryMatch) => m.id ?? m.name;
  * matches, a failed lookup, or no usable source all leave the suggestion
  * exactly as it was (hard requirement: sources degrade to today's behavior).
  *
- * - both slugs resolve to DISTINCT identities → the suggestion is dismissed
+ * - both slugs resolve to DISTINCT ids → the suggestion is dismissed
  *   (returned separately with the reason, for reporting)
  * - both resolve to the SAME identity → confidence is boosted and the reason
  *   is appended
+ * - anything in between (missing ids + differing names) proves nothing →
+ *   unchanged
  */
 export async function reconcileSuggestions<T extends MergeSuggestionLike>(
   suggestions: T[],
@@ -216,17 +245,23 @@ export async function reconcileSuggestions<T extends MergeSuggestionLike>(
     }
     const [mf] = from as [DirectoryMatch];
     const [mt] = to as [DirectoryMatch];
-    if (matchIdentity(mf) === matchIdentity(mt)) {
-      kept.push({
-        ...s,
-        confidence: Math.max(s.confidence, DIRECTORY_CONFIRMED_CONFIDENCE),
-        reasons: [...s.reasons, `${source.name}: '${s.from}' and '${s.to}' both resolve to ${matchLabel(mf)}`],
-      });
-    } else {
-      dismissed.push({
-        suggestion: s,
-        reason: `${source.name}: '${s.from}' → ${matchLabel(mf)}, '${s.to}' → ${matchLabel(mt)} — distinct identities`,
-      });
+    switch (compareIdentities(mf, mt)) {
+      case "same":
+        kept.push({
+          ...s,
+          confidence: Math.max(s.confidence, DIRECTORY_CONFIRMED_CONFIDENCE),
+          reasons: [...s.reasons, `${source.name}: '${s.from}' and '${s.to}' both resolve to ${matchLabel(mf)}`],
+        });
+        break;
+      case "distinct":
+        dismissed.push({
+          suggestion: s,
+          reason: `${source.name}: '${s.from}' → ${matchLabel(mf)}, '${s.to}' → ${matchLabel(mt)} — distinct identities`,
+        });
+        break;
+      case "unknown":
+        kept.push(s); // ids missing/mixed — proves nothing either way
+        break;
     }
   }
   return { kept, dismissed };

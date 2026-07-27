@@ -117,11 +117,18 @@ export const SourceSchema = z
         /**
          * Command printing a JSON array of matches for `{query}` (substituted
          * shell-quoted), e.g. `[{"name": "Jane Doe", "id": "jdoe", …}]`.
+         * The placeholder must be an unquoted token: the CLI single-quotes the
+         * value itself, and a template like `--name "{query}"` would neuter
+         * that quoting and let query text reach the shell.
          */
         command: z
           .string()
           .min(1)
-          .refine((c) => c.includes("{query}"), "must contain the {query} placeholder"),
+          .refine((c) => c.includes("{query}"), "must contain the {query} placeholder")
+          .refine(
+            (c) => !/["']\{query\}|\{query\}["']/.test(c),
+            "{query} must be an unquoted token — the CLI shell-quotes it itself",
+          ),
         /** Optional command that refreshes a local cache of the directory. */
         refresh: z.string().min(1).optional(),
         /** How stale that cache may get before `refresh` is worth running. */

@@ -239,10 +239,13 @@ fetches anything itself.
 Where the store uses it:
 
 - **`memory maintenance` slug hygiene**: before reporting a person/team merge
-  suggestion, both slugs are looked up. Two distinct identities → the
-  suggestion is auto-dismissed with the reason; the same identity → its
-  confidence is boosted. A disabled source, failed command, or non-JSON output
-  degrades silently to today's heuristics.
+  suggestion, both slugs are looked up. Two matches with differing stable ids
+  → the suggestion is auto-dismissed (recorded in the audit with the
+  evidence); the same identity → its confidence is boosted. Matches without
+  ids can only confirm, never refute. A disabled source, failed command, or
+  non-JSON output degrades silently to today's heuristics — the same
+  reconciliation runs wherever the audit is rebuilt (CLI, UI, scheduled
+  maintenance).
 - **Agent slug minting**: agents consult an enabled source before minting a
   new person/team slug — exactly one match mints from the canonical name
   (tagged `slug-minted-from-directory`); zero or multiple matches means no

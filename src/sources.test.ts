@@ -14,6 +14,11 @@ import {
   type LookupRunner,
   type SourceFile,
 } from "./sources.js";
+import {
+  reconcileGraphAudit,
+  type GraphMaintenanceAudit,
+  type SlugSuggestion,
+} from "./graph-maintenance.js";
 
 const VALID = `---
 name: people-directory
@@ -56,6 +61,22 @@ test("parseSource rejects an unknown kind", () => {
 test("parseSource rejects a lookup command without {query}", () => {
   const raw = VALID.replace("dir-lookup {query}", "dir-lookup");
   assert.throws(() => parseSource(raw, "people-directory"), /\{query\} placeholder/);
+});
+
+test("parseSource rejects {query} wrapped in quotes (would neuter the CLI's quoting)", () => {
+  for (const line of [
+    `command: 'dir-lookup "{query}"'`,
+    `command: "dir-lookup '{query}'"`,
+  ]) {
+    const raw = VALID.replace(`command: "dir-lookup {query}"`, line);
+    assert.throws(() => parseSource(raw, "people-directory"), /unquoted token/);
+  }
+});
+
+test("parseSource accepts {query} attached to an unquoted flag", () => {
+  const raw = VALID.replace("dir-lookup {query}", "dir-lookup --name={query}");
+  const { fm } = parseSource(raw, "people-directory");
+  assert.equal(fm.lookup.command, "dir-lookup --name={query}");
 });
 
 test("parseSource rejects a missing lookup block and unknown keys", () => {
@@ -128,6 +149,9 @@ test("lookupDirectory degrades to null on failure, non-JSON, or bad shapes", asy
     async () => "not json",
     async () => `{"name": "Jane"}`, // object, not array
     async () => `[{"id": "no-name"}]`, // element missing required name
+    async () => `[{"name": ""}]`, // empty name
+    async () => `[{"name": "Jane", "id": 5}]`, // non-string id
+    async () => `[{"name": "Jane", "id": {"v": 1}}]`, // structured id
   ];
   for (const run of cases) {
     assert.equal(await lookupDirectory(SOURCE, "jane doe", run), null);
@@ -247,14 +271,107 @@ test("tag suggestions pass through untouched even with a person source", async (
   assert.deepEqual(kept, input);
 });
 
-test("identity falls back to name when the directory has no ids", async () => {
+test("equal names without ids still boost (case/whitespace-insensitive)", async () => {
   const run = fakeDirectory({
-    "jane d": [{ name: "Jane Doe" }],
+    "jane d": [{ name: "jane  DOE " }],
     "jane doe": [{ name: "Jane Doe" }],
   });
   const { kept, dismissed } = await reconcileSuggestions([suggestion("jane-d", "jane-doe")], [sourceFile()], run);
   assert.equal(dismissed.length, 0);
   assert.equal(kept[0]!.confidence, 0.95);
+});
+
+test("differing names without ids never dismiss — no stable-id evidence", async () => {
+  const run = fakeDirectory({
+    "jane d": [{ name: "Jane Doe" }],
+    "jane doe": [{ name: "Jane A. Doe" }],
+  });
+  const input = [suggestion("jane-d", "jane-doe")];
+  const { kept, dismissed } = await reconcileSuggestions(input, [sourceFile()], run);
+  assert.equal(dismissed.length, 0);
+  assert.deepEqual(kept, input); // unchanged: could be the same person
+});
+
+test("an id on only one side proves nothing — suggestion untouched", async () => {
+  const run = fakeDirectory({
+    "jane d": [{ name: "Jane Doe", id: "jdoe" }],
+    "jane doe": [{ name: "Jane Doe" }],
+  });
+  const input = [suggestion("jane-d", "jane-doe")];
+  const { kept, dismissed } = await reconcileSuggestions(input, [sourceFile()], run);
+  assert.equal(dismissed.length, 0);
+  assert.deepEqual(kept, input);
+});
+
+// ---------------- audit-level reconciliation ----------------
+
+function fullSuggestion(from: string, to: string, confidence: number): SlugSuggestion {
+  return {
+    kind: "person",
+    from,
+    to,
+    confidence,
+    affectedEntries: 1,
+    fromCount: 1,
+    toCount: 2,
+    sharedEntries: 0,
+    lastSeen: "2026-07-01",
+    reasons: ["edit similarity 0.90"],
+  };
+}
+
+function makeAudit(suggestions: SlugSuggestion[]): GraphMaintenanceAudit {
+  const suggestionCounts = { person: 0, team: 0, tag: 0 };
+  for (const s of suggestions) suggestionCounts[s.kind]++;
+  return {
+    generatedAt: "2026-07-27T00:00:00Z",
+    counts: { person: 4, team: 0, tag: 0 },
+    suggestionCounts,
+    suggestions,
+  };
+}
+
+test("reconcileGraphAudit persists dismissals with reasons and fixes counts", async () => {
+  const run = fakeDirectory({
+    "dana m": [{ name: "Dana Magen", id: "dmagen" }],
+    "dana n": [{ name: "Dana Nadler", id: "dnadler" }],
+  });
+  const audit = await reconcileGraphAudit(
+    makeAudit([fullSuggestion("dana-m", "dana-n", 0.72)]),
+    async () => [sourceFile()],
+    run,
+  );
+  assert.equal(audit.suggestions.length, 0);
+  assert.equal(audit.suggestionCounts.person, 0);
+  assert.equal(audit.sourceDismissed?.length, 1);
+  assert.equal(audit.sourceDismissed![0]!.from, "dana-m");
+  assert.match(audit.sourceDismissed![0]!.sourceReason, /distinct identities/);
+});
+
+test("reconcileGraphAudit re-sorts after a confidence boost", async () => {
+  const jane = [{ name: "Jane Doe", id: "jdoe" }];
+  const run = fakeDirectory({ "jane d": jane, "jane doe": jane, "bob x": [], "bob y": [] });
+  const audit = await reconcileGraphAudit(
+    // sorted by confidence as analyzeGraphHygiene emits: 0.90 first
+    makeAudit([fullSuggestion("bob-x", "bob-y", 0.9), fullSuggestion("jane-d", "jane-doe", 0.72)]),
+    async () => [sourceFile()],
+    run,
+  );
+  assert.deepEqual(
+    audit.suggestions.map((s) => [s.from, s.confidence]),
+    [["jane-d", 0.95], ["bob-x", 0.9]], // boosted pair overtakes
+  );
+  assert.equal(audit.suggestionCounts.person, 2);
+  assert.equal(audit.sourceDismissed, undefined);
+});
+
+test("reconcileGraphAudit returns the audit unchanged when source loading throws", async () => {
+  const input = makeAudit([fullSuggestion("dana-m", "dana-n", 0.72)]);
+  const before = JSON.parse(JSON.stringify(input)) as GraphMaintenanceAudit;
+  const audit = await reconcileGraphAudit(input, async () => {
+    throw new Error("EACCES: permission denied, scandir");
+  });
+  assert.deepEqual(audit, before);
 });
 
 test("lookups are cached per slug across suggestions", async () => {

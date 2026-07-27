@@ -5,9 +5,11 @@ enabled: false
 lookup:
   command: "your-directory-lookup {query}"
   # command: prints a JSON array of matches for {query} (substituted
-  # shell-quoted), minimally: [{"name": "Jane Doe", "id": "jdoe",
-  # "title": "Engineer", "team": "Platform"}]. Only "name" is required;
-  # "id" (when present) is the identity key.
+  # shell-quoted — keep the placeholder an unquoted token), minimally:
+  # [{"name": "Jane Doe", "id": "jdoe", "title": "Engineer",
+  # "team": "Platform"}]. Only "name" is required, but return a stable
+  # "id" when you can: refuting a merge suggestion requires differing
+  # ids on both matches — names alone can only confirm, never refute.
   # Point it at YOUR directory — a CSV-backed script, an ldapsearch
   # wrapper, a contacts CLI. The store never ships credentials or
   # fetches anything itself; it only runs this local command.
