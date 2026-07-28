@@ -5,28 +5,36 @@ hard contract, not a style preference.**
 
 ## ⛔ The rule
 
-**Never create, edit, move, or delete files under `memory/entries/` or
-`memory-public/entries/` yourself** — not with Write/Edit tools, not with
-shell redirection, not "just this once". The store is TWO graphs — private
-(`memory/`) and public/shareable (`memory-public/`), each its own nested git
-repo — and the contract covers both equally.
+**Never create, edit, move, or delete files under `memory/entries/` or any
+`memory-graphs/<name>/entries/` yourself** — not with Write/Edit tools, not
+with shell redirection, not "just this once". The store is one private graph
+(`memory/`) plus N named shared graphs (`memory-graphs/<slug>/`), each its
+own nested git repo — and the contract covers every store equally. One entry
+can be a member of several graphs (byte-identical synced copies); ONLY the
+CLI keeps them in sync.
 
 - **Capture** goes ONLY through the CLI and ALWAYS lands in the private graph:
   `npx tsx src/cli.ts add --title … --type … [--people …] [--source-ids …] --body "…"`
   (via the `log-memory` / `pull-memories` skills, or `/remember` / `/pull-memories`).
-  `--graph public` is reserved for an explicit user request that satisfies the
-  eligibility prompt (`cli.ts routing` shows which file resolves) — never an
-  agent's own judgment.
-- **Promotion to public** happens ONLY through the user-confirmed review
-  (`promote-public` skill / `/promote-public`): `cli.ts promote candidates` →
-  eligibility judgment → **per-entry user confirmation** →
-  `cli.ts move <id> --to public`; declines recorded with
-  `cli.ts promote dismiss <id>`. Never move an entry the user hasn't approved.
-- **Reclassify** between graphs ONLY through
-  `npx tsx src/cli.ts move <id> --to public|private` — never by moving files.
-  It validates link direction, relocates the file, re-indexes, and checkpoints
-  both repos. A public entry must never reference a private id (`follows` or
-  `sources`) — the CLI enforces this at `add`, `link`, and `move` time.
+  `--graph <name>` is reserved for an explicit user request that satisfies
+  that graph's eligibility criteria — never an agent's own judgment.
+- **Membership** changes ONLY through
+  `cli.ts copy <id> --to <graph>` (add a synced copy; entry stays private) and
+  `cli.ts move <id> --to <graph>` (replace the WHOLE membership) — never by
+  relocating files. Both validate containment, re-index, and checkpoint every
+  affected repo. A shared graph is self-contained: its members never reference
+  non-members (`follows`/`sources`) — enforced at `add`, `link`, `copy`,
+  `move`, and `rules apply` time.
+- **Distribution** into shared graphs happens through (a) the user's standing
+  rules (`memory/graphs/rules.json`, editable config; `cli.ts rules apply` —
+  ALWAYS dry-run + show the plan before a confirmed backfill) or (b) the
+  user-confirmed promotion review (`/promote`): `cli.ts promote candidates
+  --to <graph>` → eligibility judgment → **per-entry user confirmation** →
+  `copy`/`move`; declines recorded with `promote dismiss <id> --graph <g>`.
+  Never place an entry in a shared graph the user hasn't approved (a saved
+  rule IS standing approval).
+- **Consistency**: drifted copies are repaired ONLY by `cli.ts graphs sync`
+  (private wins, checkpointed) — never by hand-editing a copy.
 - **Update** an existing entry the same way: re-run `add` with the same
   `--source-ids` (updates in place), or `add --update <id>` for manual notes.
 - **Timeline links** ONLY through `add --follows <id,…>` at capture time,
@@ -60,18 +68,20 @@ four things a manual write skips:
 
 | Path | Agent may write? | How |
 |---|---|---|
-| `memory/entries/**` | ❌ never by hand | `cli.ts add` / `add --update <id>` / `cli.ts link <id> --follows …` / `cli.ts remove <id>` / `cli.ts move <id> --to …` / `cli.ts slugs merge` only |
-| `memory-public/entries/**` | ❌ never by hand | same CLI paths (with `--graph public` on `add`) |
-| `memory/summaries/**`, `memory-public/summaries/**` | ✏️ only the `## Synthesis` section of a scaffold `digest` created — then run `cli.ts index` | Edit tool |
+| `memory/entries/**` | ❌ never by hand | `cli.ts add` / `add --update <id>` / `link` / `remove` / `copy` / `move` / `slugs merge` / `rules apply` only |
+| `memory-graphs/*/entries/**` | ❌ never by hand | same CLI paths |
+| `memory/summaries/**`, `memory-graphs/*/summaries/**` | ✏️ only the `## Synthesis` section of a scaffold `digest` created — then run `cli.ts index` | Edit tool |
 | `memory/connectors/**` | ✅ private connector overrides | Edit tool or web UI |
-| `memory/routing/**` | ✅ the private graph-routing override | Edit tool or web UI (`#/routing`) |
+| `memory/routing/**` | ✅ the private eligibility-prompt override | Edit tool or web UI (`#/routing`) |
+| `memory/graphs/rules.json` | ✅ distribution-rules config | Edit tool or web UI (`#/graphs`) |
+| `memory-graphs/*/GRAPH.md` | ✅ graph manifests | Edit tool or web UI |
 | `.index/**` | ❌ never | rebuildable derivative; `cli.ts index` regenerates |
 
 ## Enforcement
 
 - **Claude Code**: a PreToolUse hook (`.claude/hooks/guard-memory-write.sh`)
-  denies Write/Edit/Bash calls that would touch `memory/entries/`,
-  `memory-public/entries/`, or `.index/`.
+  denies Write/Edit/Bash calls that would touch `memory/entries/`, any
+  `memory-graphs/<name>/entries/`, or `.index/`.
   A denial is not an obstacle to work around — it means: use `cli.ts add`.
 - **Codex / other agents**: no hook layer — this file IS the enforcement.
   AGENTS.md requires reading it before any write under `memory/`.

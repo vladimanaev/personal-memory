@@ -46,22 +46,25 @@ index files, and the entry paths that CLI output cites.
 2. **Write a clear body**: what happened, context, decisions, and follow-ups /
    action items. Be concrete (names, numbers, dates) — future recall quality
    depends on it.
-3. **Every capture is PRIVATE.** The store is split into a PRIVATE graph
-   (`memory/` — secret, local-only) and a PUBLIC graph (`memory-public/` —
-   safe to share with others), but capture never routes to public on its own:
+3. **Every capture is PRIVATE.** The store is one PRIVATE graph (`memory/` —
+   secret, local-only) plus named SHARED graphs (`memory-graphs/<slug>/` —
+   separable, per-audience), but capture never routes to a shared graph on
+   its own:
    - Log to the private graph by default — no flag, no routing judgment, no
-     asking. Entries reach the public graph later through the user-confirmed
-     promotion review (`/promote-public`).
-   - The ONLY exception: the user **explicitly says** to log something as
-     public ("log this as a public memory"). Then check it against the
-     eligibility prompt (`memory/routing/graph-routing.md` if present, else
-     `routing/graph-routing.md`; `npx tsx src/cli.ts routing` shows which
-     resolves) and pass `--graph public` only if it qualifies — if it doesn't,
-     log it private and tell the user why.
-   - **Chain guard**: an entry whose `--follows` targets a private entry can
-     never be public — the CLI rejects the link direction.
+     asking. Entries reach shared graphs later via the user's standing
+     distribution rules (which may **auto-copy the fresh capture** — the CLI
+     prints `→ rule: copied … → <graph>` lines; include them in your
+     confirmation) or the user-confirmed promotion review (`/promote`).
+   - The ONLY exception: the user **explicitly says** to log something into a
+     named graph ("log this as a public memory", "log this to team-x"). Then
+     check it against that graph's eligibility criteria (`GRAPH.md` body;
+     for public, the routing prompt — `npx tsx src/cli.ts routing`) and pass
+     `--graph <name>` only if it qualifies — otherwise log it private and
+     tell the user why.
+   - **Containment guard**: an entry that `--follows` a non-member can never
+     enter a shared graph — the CLI rejects it.
    - A wrong placement is corrected later with
-     `npx tsx src/cli.ts move <id> --to public|private` — never by editing or
+     `npx tsx src/cli.ts copy|move <id> --to <graph>` — never by editing or
      moving files.
 4. **Store it** by running the CLI (body via `--body` or piped on stdin):
 
@@ -75,8 +78,9 @@ index files, and the entry paths that CLI output cites.
 
    `add` writes the Markdown file **and** updates the vector index automatically.
 5. **Confirm** back to the user: the entry `id`, its file path, a one-line
-   recap of what you stored (and whether it was `created`, `updated`, or
-   `unchanged`), and the graph in the rare case it was explicitly logged public.
+   recap of what you stored (`created` / `updated` / `unchanged`), and any
+   graph memberships (explicit `--graph`, or rule-driven auto-copies the CLI
+   reported).
 
 ## Timeline links (`--follows`) — chain evolving matters
 
@@ -144,8 +148,9 @@ reports a candidate and exits, decide:
   `npx tsx src/cli.ts maintenance` flags suspiciously-similar slugs that may be
   the same person/team under two names.
 - Prefer one focused entry per event over a giant catch-all note.
-- **Capture is private; promotion is a separate, reviewed step.** Never pass
-  `--graph public` unless the user explicitly asked for a public memory. Mixed
-  private+public content → private; never split one event into two entries to
-  force part of it public. Re-captures of an existing entry stay in that
-  entry's graph (the CLI ignores a conflicting `--graph` and points at `move`).
+- **Capture is private; sharing is rules or a reviewed step.** Never pass
+  `--graph <name>` unless the user explicitly asked for that graph. Mixed
+  private+shareable content → private; never split one event into two entries
+  to force part of it shareable. Re-captures of an existing entry keep its
+  membership and refresh EVERY copy (the CLI ignores a conflicting `--graph`
+  and points at `copy`/`move`).

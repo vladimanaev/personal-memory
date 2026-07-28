@@ -68,9 +68,11 @@ index files, and the entry paths that CLI output cites.
      (e.g. `gmail:<thread-id>`, `slack:<channel-id>:<thread-root-ts>`).
    - Follow `skills/log-memory/SKILL.md` for slugs and body quality (reuse
      existing people/team slugs — `memory list` first).
-   - **Every pulled capture is PRIVATE** — never pass `--graph`. Entries reach
-     the public graph only through the user-confirmed promotion review
-     (`/promote-public`), never during a sweep.
+   - **Every pulled capture is PRIVATE** — never pass `--graph`. Entries
+     reach shared graphs only via the user's standing distribution rules
+     (the CLI auto-applies them and prints `→ rule: copied …` lines — include
+     those in the report) or the user-confirmed promotion review
+     (`/promote`), never by your judgment during a sweep.
    - `npx tsx src/cli.ts add --title … --type … --people … --source-ids <id> --body …`
    - `memory add` records `<name>.last_captured` automatically when the source
      id prefix matches a known connector. Re-fetched items stay in their

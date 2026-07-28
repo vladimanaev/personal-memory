@@ -102,28 +102,34 @@ quarter?", "who's ready for promotion?", "prep for my staff meeting") →
 3. Synthesize: themes, what changed over time, open threads, risks, and what to
    watch next. Cite the entries you drew from.
 
-## Graph scope — private vs public
+## Graph scope — private + named shared graphs
 
-The store holds two graphs: **private** (`memory/` — secret, local-only) and
-**public** (`memory-public/` — shareable with others). `recall` / `query` /
-`list` / `person` search **both graphs by default**, fused into one ranking;
-public hits are labeled `[public]` in text output (and carry `graph` in
-`--format json`). `--graph private|public` narrows the scope.
+The store holds N graphs: **private** (`memory/` — secret, local-only, the
+home of every capture) and any number of **named shared graphs**
+(`memory-graphs/<slug>/` — separable stores for specific audiences; `public`
+is the built-in one; `npx tsx src/cli.ts graphs list` shows the registry).
+One memory can be a **member of several graphs** (synced copies; private
+stays its home). `recall` / `query` / `list` / `person` search **all graphs
+by default**, fused into one ranking; non-private memberships are labeled
+`[<graph>,…]` in text output (and hits carry `graphs: []` in
+`--format json`). `--graph <name>` narrows to that graph's members.
 
-- Answering the user's own questions → default (both graphs) is right.
+- Answering the user's own questions → default (all graphs) is right.
 - Preparing anything that will be **shared or leave the private context**
-  (team update, doc for others, message draft) → recall with `--graph public`,
-  or use the dedicated `recall-public` skill — and never quote a private
-  entry's content, id, title, or path into shareable output.
-- Chains may cross in ONE direction: a private entry can follow (reference) a
-  public one; a public entry never references a private id. So a public hit's
-  `⤷ superseded by` may point at a *private* entry (the matter went private),
-  but a private hit is only ever superseded by another private entry.
+  (team update, doc for others, message draft) → recall with
+  `--graph <name>` of the intended audience, or use the `recall-public`
+  skill — and never quote a private-only entry's content, id, title, or path
+  into shareable output.
+- Containment: a shared graph is self-contained — its entries reference only
+  fellow members. Only PRIVATE entries may reference entries in other graphs,
+  so a shared-graph hit's `⤷ superseded by` may point at a private-only entry
+  (the matter continued privately); note only that newer non-shareable
+  context exists, without describing it in shareable output.
 
 ## Filters available
 
 `--person <slug>` · `--type <type>` · `--team <slug>` · `--tag <slug>` ·
-`--since <YYYY-MM-DD>` · `--until <YYYY-MM-DD>` · `--graph private|public` ·
+`--since <YYYY-MM-DD>` · `--until <YYYY-MM-DD>` · `--graph <name>` ·
 `-k <n>` · `--complete` · `--complete-if-small` · `--require-complete` ·
 `--no-expand` · `--format json`
 

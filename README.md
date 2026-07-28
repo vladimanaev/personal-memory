@@ -200,14 +200,19 @@ splits the durable content into two graphs:
 
 - `memory/entries/YYYY/MM/<id>.md` stores PRIVATE raw memory entries
   (secret, local-only — the default graph).
-- `memory-public/entries/YYYY/MM/<id>.md` stores PUBLIC memory entries —
-  a physically separate store (own nested git repo) deliberately safe to
-  share with others. Capture always lands private; entries are promoted to
-  the public graph only through a user-confirmed review (`/promote-public`,
-  driven by `memory promote candidates` + `memory move`), judged against an
-  editable eligibility prompt (`routing/graph-routing.md`, overridden by
-  `memory/routing/graph-routing.md`). Recall spans both graphs by default
-  (`--graph` narrows); a public entry can never reference a private one.
+- `memory-graphs/<slug>/entries/YYYY/MM/<id>.md` stores each named SHARED
+  graph — physically separate stores (each its own nested git repo)
+  deliberately safe to hand to a specific audience; `public` is the built-in
+  one, and new graphs are created with `memory graphs create` or the UI's
+  Graphs screen (each carries a `GRAPH.md` manifest with its description and
+  eligibility notes). One memory can be a member of several graphs — the CLI
+  materializes byte-identical synced copies, with private always the home.
+  Capture always lands private; entries enter shared graphs through
+  per-tag/per-type distribution rules (configured in the UI, dry-run
+  preview, auto-applied to future captures), a user-confirmed promotion
+  review (`/promote --to <graph>`), or an explicit request. Recall spans all
+  graphs by default (`--graph <name>` narrows); every shared store is
+  self-contained — its entries never reference non-members.
 - `memory/summaries/<id>.md` stores additive summaries created by `digest`.
 - `.index/` stores rebuildable local search artifacts (both graphs, with a
   `graph` column).
@@ -264,40 +269,40 @@ rm -rf .index
 npm run index -- --force
 ```
 
-## Upgrading an existing clone to the two-graph layout
+## Upgrading an existing clone to the multi-graph layout
 
-Pulling the private/public split onto a machine with an existing store is
-safe by construction: `memory/` is gitignored and versioned in its own nested
+Pulling the multi-graph changes onto a machine with an existing store is safe
+by construction: every store is gitignored and versioned in its own nested
 repo, so `git pull` cannot touch a single entry file, and **every existing
-memory is automatically private** — an entry's graph is derived from its
-location, so nothing needs migrating or reclassifying. The empty public store
-and the new index format also heal lazily on first use.
+private memory stays private** — membership is derived from file locations,
+so nothing inside `memory/` needs migrating or reclassifying.
 
-Still, run the (idempotent) init script right after pulling:
+Run the (idempotent) migration right after pulling — the engine refuses to
+run on the old layout until it does:
 
 ```bash
 git pull
-./scripts/init-public-graph.sh
+npx tsx scripts/migrate-graphs.ts
 ```
 
-It checkpoints `memory/.git`, creates `memory-public/` with its own git repo,
-and rebuilds the index eagerly. The rebuild matters: the pre-split index has
-no `graph` column, so until it runs — it happens automatically on the next
-`memory add` or `memory index`, taking a few minutes once — graph-scoped
-queries like `recall --graph public` fail with a schema error. Running the
-script makes that one-time cost happen when you expect it instead of
-mid-question. (Marketplace/plugin users: update the clone `MEMORY_HOME`
-points at before using the new `promote`/`move`/`routing` commands.)
+It checkpoints every nested repo, relocates `memory-public/` to
+`memory-graphs/public/` (a plain directory rename — its git history moves
+with it), writes the public graph's `GRAPH.md` manifest, rebuilds the search
+index (the new format has a membership column; the rebuild takes a few
+minutes once), and finishes with a consistency check
+(`memory graphs sync --dry-run`). Re-running it is a no-op.
+(Marketplace/plugin users: update the clone `MEMORY_HOME` points at before
+using the new `graphs`/`copy`/`rules` commands.)
 
 ## Privacy
 
 The default setup is intentionally local:
 
-- `memory/` and `memory-public/` are ignored by the main git repository
-  (each is versioned in its own local nested git repo).
-- Private/public separation is physical: the shareable unit is the
-  `memory-public/` directory alone, and nothing in it may reference the
-  private graph — not even an entry id.
+- `memory/` and `memory-graphs/` are ignored by the main git repository
+  (every store is versioned in its own local nested git repo).
+- Graph separation is physical: each shareable unit is one
+  `memory-graphs/<slug>/` directory alone, and nothing in it may reference
+  anything outside that graph — not even an entry id.
 - `.index/` is ignored and can be regenerated.
 - The UI binds to `127.0.0.1`.
 - Embeddings run locally with `Xenova/bge-small-en-v1.5`.
@@ -326,10 +331,12 @@ folder. The important conventions live in:
   updating memories
 - [skills/recall-memory/SKILL.md](skills/recall-memory/SKILL.md) - retrieving
   grounded context (both graphs)
-- [skills/recall-public/SKILL.md](skills/recall-public/SKILL.md) - public-only
+- [skills/recall-public/SKILL.md](skills/recall-public/SKILL.md) - single-graph
   recall for shareable output
 - [skills/promote-public/SKILL.md](skills/promote-public/SKILL.md) - user-confirmed
-  promotion of private memories to the public graph
+  promotion of private memories into named shared graphs
+- [skills/manage-graphs/SKILL.md](skills/manage-graphs/SKILL.md) - graph
+  creation, distribution rules, and consistency repair
 - [skills/compact-tags/SKILL.md](skills/compact-tags/SKILL.md) - merging
   similar/duplicate tags with per-merge confirmation
 - [.claude/commands/remember.md](.claude/commands/remember.md),
@@ -357,8 +364,8 @@ src/ui/                   Local browser UI
 skills/                   Agent skills for capture, recall, and pull workflows
 connectors/               Public connector templates
 routing/                  Default graph-routing prompt template
-memory/                   PRIVATE memory graph + connector/routing overrides (gitignored, own nested repo)
-memory-public/            PUBLIC (shareable) memory graph (gitignored, own nested repo)
+memory/                   PRIVATE memory graph + connector/routing/rules config (gitignored, own nested repo)
+memory-graphs/            Named SHARED graphs, one dir per graph (gitignored, each its own nested repo)
 .index/                   Rebuildable local index (gitignored)
 .claude/                  Claude Code commands, hooks, and settings
 docs/assets/              Public README assets

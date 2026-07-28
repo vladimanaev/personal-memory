@@ -1,15 +1,18 @@
 ---
 name: promote-public
-description: Use when the user wants to review private memories and promote the shareable ones to the public graph — "review what can go public", "promote memories", "publish recent memories", or after a stretch of capturing. Proposes candidates one by one; every move is user-confirmed.
+description: Use when the user wants to review private memories and promote shareable ones into a named graph — "review what can go public", "promote memories", "share entries with team-x", "publish recent memories". Proposes candidates one by one; every copy/move is user-confirmed.
 ---
 
-# Promoting memories to the public graph
+# Promoting memories into a shared graph
 
-Capture always lands in the PRIVATE graph. This skill is the one sanctioned
-flow that moves entries to the PUBLIC graph (`memory-public/` — shareable
-with others): scan candidates, judge them against the eligibility prompt,
-and let the **user confirm every single move**. Nothing is ever promoted
-without an explicit per-entry yes.
+Capture always lands in the PRIVATE graph. This skill is the ad-hoc sanctioned
+flow that places entries into a **shared graph** (default: `public`; the user
+may name any graph — `npx tsx src/cli.ts graphs list` shows the registry):
+scan candidates, judge them against the target graph's eligibility criteria,
+and let the **user confirm every single entry**. Nothing is ever promoted
+without an explicit per-entry yes. (Standing per-tag/per-type distribution
+rules are the other door — configured on the `#/graphs` UI screen — and don't
+need this flow.)
 
 ## Locating the store
 
@@ -25,63 +28,63 @@ index files, and the entry paths that CLI output cites.
   command as `cd "$MEMORY_HOME" && npx tsx src/cli.ts …`, and resolve every
   store-relative file you read or edit under it too — entry paths printed by
   the CLI, connector files, `memory/summaries/…`, and git checks as
-  `git -C "$MEMORY_HOME/memory" …`.
+  `git -C "$MEMORY_HOME/memory" …` (or `git -C "$MEMORY_HOME/memory-graphs/<name>"`
+  for a shared graph's repo).
 - Neither? Ask the user where their personal-memory clone lives and suggest
   exporting `MEMORY_HOME` in their shell profile.
 
 ## Steps
 
-1. **Read the eligibility prompt** — `memory/routing/graph-routing.md` if it
-   exists, else `routing/graph-routing.md` (`npx tsx src/cli.ts routing`
-   shows which resolves). It defines what qualifies for the public graph;
-   the private override may add personal always-private / fine-to-share rules.
+1. **Read the target graph's eligibility criteria.** For `public`:
+   `memory/routing/graph-routing.md` if it exists, else
+   `routing/graph-routing.md` (`npx tsx src/cli.ts routing` shows which).
+   For any other graph: the body of `memory-graphs/<name>/GRAPH.md` — its
+   description and eligibility notes define what belongs there.
 
-2. **Gather candidates** (mechanical prefilter — private entries not yet
-   reviewed at their current content):
+2. **Gather candidates** (mechanical prefilter — private entries that are not
+   yet members and not previously declined at their current content):
 
    ```bash
-   npx tsx src/cli.ts promote candidates [--since YYYY-MM-DD] [--limit N]
+   npx tsx src/cli.ts promote candidates --to <graph> [--since YYYY-MM-DD] [--limit N]
    ```
 
-   Default to a sensible window (e.g. `--since` the last promotion review, or
-   the user's asked-for range). Entries marked
-   `[blocked by private refs: …]` cannot move until those references move —
-   note them, don't propose them (or propose the referenced entries first).
+   Entries marked `[blocked by non-member refs: …]` cannot join until the
+   entries they reference join too — note them, don't propose them (or
+   propose the referenced entries first).
 
-3. **Judge each candidate** against the eligibility prompt. Read the entry
-   file when the title isn't enough. Split the list into:
-   - **proposed** — meets EVERY eligibility criterion;
-   - **stays private** — fails any criterion (this should be most entries;
-     when in doubt, it stays private and you don't propose it).
+3. **Judge each candidate** against the criteria. Read the entry file when
+   the title isn't enough. Split into **proposed** (meets EVERY criterion)
+   and **stays out** (fails any — this should be most entries; doubt
+   disqualifies).
 
-4. **Review with the user — per-entry confirmation, like compact-tags.**
-   Present the proposed entries compactly (id · date · type · title · why it
-   qualifies, one line each) and collect an explicit decision per entry
-   (yes / no / skip). Batch presentation is fine; batch approval is not —
-   "yes to all" must come from the user, never assumed.
+4. **Review with the user — per-entry confirmation.** Present proposals
+   compactly (id · date · type · title · why it qualifies) and collect an
+   explicit decision per entry (yes / no / skip). Batch presentation is fine;
+   batch approval is not — "yes to all" must come from the user.
 
 5. **Execute the decisions**, one entry at a time:
-   - Approved → `npx tsx src/cli.ts move <id> --to public`
-     (validates link direction, relocates the file, re-indexes, checkpoints
-     both repos).
-   - Declined → `npx tsx src/cli.ts promote dismiss <id> [--reason "…"]`
-     so it is never proposed again unless its content changes.
+   - Approved → `npx tsx src/cli.ts copy <id> --to <graph>` (**default** —
+     the entry gains membership and stays private; copies auto-sync on later
+     updates). Only use `move <id> --to <graph>` when the user explicitly
+     wants it OUT of the private graph (move replaces the whole membership).
+   - Declined → `npx tsx src/cli.ts promote dismiss <id> --graph <graph> [--reason "…"]`
+     so it isn't proposed for that graph again unless its content changes.
    - Skipped/undecided → do nothing; it stays in the candidate pool.
 
-6. **Verify + report**: `npx tsx src/cli.ts list --graph public --since …`
-   shows the moved entries; `git -C "$MEMORY_HOME/memory-public" log --oneline`
-   (or `git -C memory-public log --oneline` in-repo) shows the commits.
-   Report moved / dismissed / skipped counts with ids.
+6. **Verify + report**: `npx tsx src/cli.ts list --graph <graph> --since …`
+   shows the new members; `git -C memory-graphs/<graph> log --oneline` shows
+   the commits. Report copied / moved / dismissed / skipped counts with ids.
 
 ## Principles
 
-- **User confirms every move.** No entry enters the public graph on your
-  judgment alone — your judgment only selects what to *propose*.
-- **Doubt disqualifies.** If you're unsure an entry qualifies, it doesn't
-  get proposed at all.
-- **Only `move` and `promote dismiss` mutate state** — never edit or relocate
-  files by hand, never rewrite an entry to make it "publishable" (if content
-  must change to qualify, tell the user; they can decide what to do).
-- The public store must stay leak-free: a moved entry may not reference any
-  private id — the CLI enforces it; blocked candidates are surfaced, not
+- **User confirms every membership change.** Your judgment only selects what
+  to *propose*.
+- **Doubt disqualifies.** If you're unsure an entry qualifies, don't propose it.
+- **Copy is the default; move is the exception.** Copying keeps the private
+  home (and the CLI keeps every copy in sync); moving removes it.
+- **Only `copy`/`move`/`promote dismiss` mutate state** — never edit or
+  relocate files by hand, never rewrite an entry to make it "shareable" (if
+  content must change to qualify, tell the user).
+- Each shared store must stay self-contained: a member may not reference
+  non-members — the CLI enforces it; blocked candidates are surfaced, not
   forced.

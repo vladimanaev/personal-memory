@@ -180,8 +180,10 @@ usually means a typo in `--to`.
 - The merge maps `from → to` inside each affected entry and dedupes, so every
   entry keeps a valid tag edge; the `from` node disappears only because zero
   entries reference it. No entry, body, id, date, person, or team is touched.
-- `memory/.git` checkpoint before + commit after each merge = a full undo
-  path per merge.
+- Checkpoint before + commit after each merge in EVERY affected store
+  (private and any shared graphs whose members carry the tag) = a full undo
+  path per merge, per store. Entries with copies in several graphs are
+  rewritten identically in each copy, so the synced-copy invariant holds.
 - The index is re-synced in the same operation, so recall never sees a stale
   tag.
 

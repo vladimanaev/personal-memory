@@ -16,12 +16,15 @@ sent to any API by default.
 - User asks a question about people / past events, or wants to plan or
   remember → **recall**, grounded in the store (see `skills/recall-memory/SKILL.md`).
   Don't answer people/history questions from chat history alone.
-- User wants ONLY shareable memories (preparing a team update, doc, or any
-  output leaving the private context) → **public-only recall**
-  (see `skills/recall-public/SKILL.md`) — never falls back to private entries.
-- User wants to review/promote memories to the shareable public graph →
-  **promotion review**, every move user-confirmed
+- User wants ONLY one shared graph's memories (preparing a team update, doc,
+  or any output leaving the private context) → **single-graph recall**
+  (see `skills/recall-public/SKILL.md`) — never falls back to other graphs.
+- User wants to review/promote memories into a shared graph →
+  **promotion review**, every copy/move user-confirmed
   (see `skills/promote-public/SKILL.md`).
+- User wants to create graphs, set up per-tag/per-type distribution rules, or
+  repair graph consistency → **graph management**
+  (see `skills/manage-graphs/SKILL.md`).
 - User wants to merge/consolidate/clean up similar tags (or person/team slugs)
   → **compact**, every merge user-confirmed (see `skills/compact-tags/SKILL.md`).
 
@@ -31,12 +34,15 @@ Run with `npx tsx src/cli.ts <cmd>` (Node ≥ 20 — `nvm use 20`).
 
 | Command | Purpose |
 |---|---|
-| `add --title … --type … --people a,b --date YYYY-MM-DD --body "…" [--source-ids …] [--follows <id,…>]` | Create/update an entry + index it (dedups on `--source-ids`; `--update <id>`, `--force-new`, `--dup-threshold N` resolve the dup guard; `--follows` chains it to earlier entries). Always lands PRIVATE; `--graph public` exists but is reserved for an explicit user request that passes the eligibility prompt |
-| `link <id> --follows <earlier-id,…>` | Add timeline links to an existing entry (validated: targets exist, not newer, no cycles, public never links to private; commits the entry's store) |
-| `move <id> --to private\|public` | Reclassify an entry between graphs: validates link direction, relocates the file verbatim, re-indexes, checkpoints both repos. The ONLY way an entry goes public — used by the promote-public review after per-entry user confirmation |
-| `promote candidates [--since\|--until\|--limit]` | Private entries awaiting public-promotion review (dismissed ones hidden until their content changes; private-ref blockers flagged) |
-| `promote dismiss <id> [--reason "…"]` | Record a "keep private" decision — hidden from candidates until the entry's content changes |
-| `routing` | Show + validate the public-eligibility prompt (template `routing/graph-routing.md` vs private override `memory/routing/graph-routing.md`) |
+| `add --title … --type … --people a,b --date YYYY-MM-DD --body "…" [--source-ids …] [--follows <id,…>]` | Create/update an entry + index it (dedups on `--source-ids`; `--update <id>`, `--force-new`, `--dup-threshold N` resolve the dup guard; `--follows` chains it to earlier entries). Always lands PRIVATE (standing rules may then auto-copy it — `→ rule:` output lines); `--graph <name>` is reserved for an explicit user request. Updates refresh EVERY synced copy |
+| `link <id> --follows <earlier-id,…>` | Add timeline links to an existing entry (validated: targets exist, not newer, no cycles, containment; commits every member store) |
+| `copy <id> --to <graph>` | Add membership: materialize a synced copy in another graph (entry stays private; containment validated; checkpoints the target repo) |
+| `move <id> --to <graph>` | Replace the entry's WHOLE membership with `<graph>` (removes every other copy; `--to private` = repatriation; containment validated both directions; checkpoints every affected repo) |
+| `graphs list` / `graphs create <slug> [--display-name\|--description]` / `graphs sync [--dry-run]` | Registry (dirs under `memory-graphs/` + `GRAPH.md` manifests) / create a graph (own nested repo) / detect+repair drifted copies (private wins) |
+| `rules list` / `rules apply [--dry-run]` | Standing per-tag/per-type distribution rules (`memory/graphs/rules.json`); apply reconciles them against existing private entries — dry-run first |
+| `promote candidates [--to <graph>] [--since\|--until\|--limit]` | Private entries awaiting promotion review for a graph (per-graph dismissals hidden until content changes; non-member-ref blockers flagged) |
+| `promote dismiss <id> [--graph <g>] [--reason "…"]` | Record a "not for that graph" decision — hidden from its candidates until the entry's content changes |
+| `routing` | Show + validate the public graph's eligibility prompt (template `routing/graph-routing.md` vs private override `memory/routing/graph-routing.md`); other graphs' criteria live in their `GRAPH.md` |
 | `index [--force]` | Re-sync index with Markdown (incremental; `--force` rebuilds) |
 | `query "<q>" ["<alt phrasing>" …] [--person|--type|--team|--tag|--since|--until|--graph|-k|--deep]` | Hybrid (semantic+lexical) search; pass 2–4 phrasings (all fused); `--deep` = recall-over-precision (k=40, wider pools); `--graph private\|public` scopes (default: both, public hits labeled) |
 | `recall "<q>" ["<agent phrasing>" …] [filters] [--complete|--complete-if-small|--require-complete|--no-expand|--format json]` | Agent-facing recall with weighted query expansion, completeness reporting, and stable JSON output |
@@ -53,22 +59,26 @@ Run with `npx tsx src/cli.ts <cmd>` (Node ≥ 20 — `nvm use 20`).
 
 ## Data model
 
-- **Two graphs, two stores:** the PRIVATE graph lives in `memory/` (secret,
-  local-only) and the PUBLIC graph in `memory-public/` (deliberately shareable
-  as a unit). Same internal layout, each its own nested git repo, both
-  gitignored in the main repo. An entry's graph is **derived from its
-  location** — no frontmatter field — so files never drift and `move` never
-  rewrites content. Ids are unique across BOTH stores. **Capture always lands
-  private**; entries go public only through the user-confirmed promotion
-  review (`promote candidates` → judge against the eligibility prompt
-  (`routing/graph-routing.md` template, fully replaced by the
-  `memory/routing/graph-routing.md` override — same two-layer pattern as
-  connectors) → per-entry user yes → `move <id> --to public`), or when the
-  user explicitly asks to log something public. Hard rule: a public entry
-  never references a private id via `follows` or `sources` (enforced at
-  `add`/`link`/`move`); private→public references are fine.
+- **One private graph + N named shared graphs:** the PRIVATE graph lives in
+  `memory/` (secret, local-only, home of every capture); each shared graph in
+  `memory-graphs/<slug>/` (deliberately shareable as a unit; `public` is the
+  built-in one; directory existence = registry; `GRAPH.md` = manifest with
+  description + eligibility notes). Same internal layout, each its own nested
+  git repo, all gitignored in the main repo. **Membership is derived from
+  file locations** — no frontmatter field: one entry may be a member of
+  several graphs as byte-identical synced copies (private-first sorted
+  `graphs` list; multi-member ⇒ private is the home). The CLI keeps copies in
+  sync on every update; drift is detected at load and repaired by
+  `graphs sync` (private wins). Ids are unique per logical entry across ALL
+  stores. **Capture always lands private**; entries enter shared graphs via
+  standing rules (auto-applied at capture + `rules apply` backfills), the
+  user-confirmed promotion review, or an explicit user request. Hard rule
+  (containment): a shared graph is self-contained — its members never
+  reference non-members via `follows` or `sources` (enforced at
+  `add`/`link`/`copy`/`move`/`rules apply`); private entries may reference
+  anything.
 - **Source of truth:** Markdown files under `memory/entries/YYYY/MM/<id>.md`
-  (and `memory-public/entries/…` for public ones).
+  (and `memory-graphs/<slug>/entries/…` for each shared-graph copy).
   One memory per file. `memory/` is **gitignored in the main repo** (personal
   data never gets pushed) and versioned in its own local-only nested git repo
   (`memory/.git`, no remote — the auto-commit hook commits there, covering
@@ -146,16 +156,17 @@ Run with `npx tsx src/cli.ts <cmd>` (Node ≥ 20 — `nvm use 20`).
    semantic matches and won't scale. Use `Read` only on the specific files a
    recall/query result cites.
 2. **Write through the CLI — never hand-create/edit files under
-   `memory/entries/`, `memory-public/entries/`, or `.index/`.** Capture and
-   update go ONLY through `cli.ts add` (same `--source-ids` updates in place;
-   `--update <id>` for manual notes); timeline links through
+   `memory/entries/`, any `memory-graphs/<name>/entries/`, or `.index/`.**
+   Capture and update go ONLY through `cli.ts add` (same `--source-ids`
+   updates in place; `--update <id>` for manual notes); timeline links through
    `cli.ts add --follows` / `cli.ts link`; deletion ONLY through
-   `cli.ts remove <id>`; graph reclassification ONLY through
-   `cli.ts move <id> --to <graph>`. A hand-written file skips index sync,
-   dedup, and auto-commit — invisible to recall and unversioned. **Read
-   `MEMORY-GUARDRAILS.md` before any write under either store** (it also lists
-   the allowed exceptions: `memory/summaries/` + `memory-public/summaries/`
-   Synthesis prose, `memory/connectors/` overrides, `memory/routing/` override).
+   `cli.ts remove <id>`; membership ONLY through
+   `cli.ts copy|move <id> --to <graph>` / `cli.ts rules apply`. A hand-written
+   file skips index sync, dedup, copy-sync, and auto-commit — invisible to
+   recall, unversioned, and a drift source. **Read `MEMORY-GUARDRAILS.md`
+   before any write under any store** (it also lists the allowed exceptions:
+   each store's `summaries/` Synthesis prose, `memory/connectors/` overrides,
+   `memory/routing/` override, `memory/graphs/rules.json`, `GRAPH.md` manifests).
 3. **One entry per source thread — a living record, not append-on-refetch.** A
    re-capture with a known `source_id` updates that entry in place (`date` =
    first-seen, `updated` = last refresh). Don't hand-rewrite history to tidy up,

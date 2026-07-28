@@ -3,13 +3,14 @@ name: recall-public
 description: Use when the user wants ONLY shareable/public memories — preparing content for teammates (team updates, docs, posts, message drafts), or explicitly asking "what can I share about X" / "public memories only". Searches the public graph exclusively and never falls back to private memories.
 ---
 
-# Recalling PUBLIC memories only
+# Recalling from ONE shared graph only
 
-You are retrieving from the **public graph only** (`memory-public/` — the
-shareable half of the user's Personal Memory). The output of this skill is
-typically destined to leave the private context, so the private graph is
-**out of bounds**: never search it, never read its files, never fill gaps
-from it or from chat history.
+You are retrieving from a **single shared graph** (default: `public` at
+`memory-graphs/public/`; the user may name any other shared graph — check
+`npx tsx src/cli.ts graphs list`). The output of this skill is typically
+destined to leave the private context, so every other graph — above all the
+private one — is **out of bounds**: never search them, never read their
+files, never fill gaps from them or from chat history.
 
 ## Locating the store
 
@@ -29,10 +30,11 @@ index files, and the entry paths that CLI output cites.
 - Neither? Ask the user where their personal-memory clone lives and suggest
   exporting `MEMORY_HOME` in their shell profile.
 
-## ⛔ Every command carries `--graph public` — no exceptions
+## ⛔ Every command carries `--graph <name>` — no exceptions
 
 Discovery is CLI-only (never Grep/Glob the store — see `recall-memory` for
-why), and in this skill every retrieval command MUST be scoped:
+why), and in this skill every retrieval command MUST be scoped to the target
+graph (default `public`):
 
 ```bash
 npx tsx src/cli.ts recall "<question>" "<alt phrasing>" --graph public --format json
@@ -46,26 +48,27 @@ check" — that is exactly the leak this skill exists to prevent.
 
 ## Guardrails — the point of this skill
 
-- **Silence is an answer.** If the public graph has nothing, say so plainly
-  ("no public memories cover this") — do NOT widen the scope, open private
-  entry files, or fill in from conversation memory.
-- **Cite only public entries.** Every claim grounds in a `memory-public/…`
-  path. Never surface a private entry's content, id, title, or path in output
-  meant for sharing.
-- **Superseded-by pointers can cross into private** (a matter can develop
-  privately after a public entry). If a public hit shows
-  `⤷ superseded by: <id>` and that id is not in the public graph, treat the
-  public entry as the latest SHAREABLE state — note only that there may be
-  newer non-shareable context, without describing or identifying it.
+- **Silence is an answer.** If the target graph has nothing, say so plainly
+  ("no <graph> memories cover this") — do NOT widen the scope, open other
+  graphs' files, or fill in from conversation memory.
+- **Cite only member entries.** Every claim grounds in a path inside that
+  graph's store (`memory-graphs/<name>/…`). Never surface any other entry's
+  content, id, title, or path in output meant for sharing.
+- **Superseded-by pointers can cross out of the graph** (a matter can develop
+  privately after being shared). If a hit shows `⤷ superseded by: <id>` and
+  that id is not a member of the target graph, treat the hit as the latest
+  SHAREABLE state — note only that there may be newer non-shareable context,
+  without describing or identifying it.
 - **Wrong tool?** If the user's question clearly needs private context
-  ("what did Jane tell me in our 1:1"), tell them this skill is public-only
+  ("what did Jane tell me in our 1:1"), tell them this skill is single-graph
   and point them at `/recall` instead.
-- Read the cited `memory-public/…` files in full before answering, as usual.
+- Read the cited member files in full before answering, as usual.
 
-## Populating the public graph
+## Populating a shared graph
 
-If recall keeps coming up empty, the public graph probably just hasn't had a
-promotion review lately — suggest running `/promote-public`
-(`skills/promote-public/SKILL.md`), the user-confirmed flow that moves
-eligible private entries public. Never move entries yourself without the
-user's explicit per-entry confirmation.
+If recall keeps coming up empty, the graph probably just hasn't had a
+promotion review lately — suggest `/promote --to <graph>`
+(`skills/promote-public/SKILL.md`), the user-confirmed flow that copies
+eligible private entries in, or standing distribution rules on the `#/graphs`
+UI screen. Never copy/move entries yourself without the user's explicit
+per-entry confirmation.
