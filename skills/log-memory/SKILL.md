@@ -46,21 +46,20 @@ index files, and the entry paths that CLI output cites.
 2. **Write a clear body**: what happened, context, decisions, and follow-ups /
    action items. Be concrete (names, numbers, dates) — future recall quality
    depends on it.
-3. **Every capture is PRIVATE.** The store is one PRIVATE graph (`memory/` —
+3. **Every capture lands in the DEFAULT graph.** The store is one DEFAULT graph (`memory/` —
    secret, local-only) plus named SHARED graphs (`memory-graphs/<slug>/` —
    separable, per-audience), but capture never routes to a shared graph on
    its own:
-   - Log to the private graph by default — no flag, no routing judgment, no
+   - Log to the default graph by default — no flag, no routing judgment, no
      asking. Entries reach shared graphs later via the user's standing
      distribution rules (which may **auto-copy the fresh capture** — the CLI
      prints `→ rule: copied … → <graph>` lines; include them in your
-     confirmation) or the user-confirmed promotion review (`/promote`).
+     confirmation) or the user-confirmed promotion review (`/promote --to <graph>`).
    - The ONLY exception: the user **explicitly says** to log something into a
      named graph ("log this as a public memory", "log this to team-x"). Then
-     check it against that graph's eligibility criteria (`GRAPH.md` body;
-     for public, the routing prompt — `npx tsx src/cli.ts routing`) and pass
-     `--graph <name>` only if it qualifies — otherwise log it private and
-     tell the user why.
+     check it against that graph's eligibility criteria (the body of
+     `memory-graphs/<name>/GRAPH.md`) and pass `--graph <name>` only if it
+     qualifies — otherwise log it to the default graph and tell the user why.
    - **Containment guard**: an entry that `--follows` a non-member can never
      enter a shared graph — the CLI rejects it.
    - A wrong placement is corrected later with

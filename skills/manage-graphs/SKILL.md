@@ -5,10 +5,10 @@ description: Use when the user wants to create/list/inspect memory graphs, set u
 
 # Managing memory graphs & distribution rules
 
-The store is one PRIVATE graph (`memory/` — home of every capture) plus any
+The store is one DEFAULT graph (`memory/` — secret, local-only, home of every capture) plus any
 number of named SHARED graphs (`memory-graphs/<slug>/` — each a separable
 nested git repo with a `GRAPH.md` manifest). One memory can be a member of
-several graphs: byte-identical synced copies, private always the home.
+several graphs: byte-identical synced copies, the default graph always the home.
 Shared graphs are **self-contained** — members only reference fellow members.
 
 ## Locating the store
@@ -32,8 +32,8 @@ directory), but every path involved.
 ```bash
 npx tsx src/cli.ts graphs list                 # registry + entry counts
 npx tsx src/cli.ts graphs create <slug> [--display-name "…"] [--description "…"]
-npx tsx src/cli.ts graphs sync [--dry-run]     # detect/repair drifted copies (private wins)
-npx tsx src/cli.ts copy <id> --to <graph>      # add membership (stays private too)
+npx tsx src/cli.ts graphs sync [--dry-run]     # detect/repair drifted copies (the default copy wins)
+npx tsx src/cli.ts copy <id> --to <graph>      # add membership (stays in default too)
 npx tsx src/cli.ts move <id> --to <graph>      # REPLACE the whole membership set
 npx tsx src/cli.ts rules list                  # standing distribution rules + match counts
 npx tsx src/cli.ts rules apply [--dry-run]     # reconcile rules against existing entries
@@ -48,13 +48,13 @@ Rules live at `memory/graphs/rules.json` (private store; editable by hand or
 via the UI): `{"version": 1, "rules": [{"match": {"tag": "…"} | {"type": "…"},
 "graph": "<slug>", "mode": "copy" | "move"}]}`. Match keys AND together.
 A saved rule is the user's **standing approval**: it auto-applies to every
-fresh private capture and can be backfilled with `rules apply`. Still:
+fresh capture and can be backfilled with `rules apply`. Still:
 
 - **Always dry-run first** when backfilling (`rules apply --dry-run`), show
   the user the plan (what would be copied/moved where), and get a go-ahead
   before the confirmed run — a rule can match more history than expected.
-- Prefer `mode: copy` (private home preserved). `move` rules relocate entries
-  out of private — make sure the user really wants that.
+- Prefer `mode: copy` (the default-graph home is preserved). `move` rules
+  relocate entries out of the default graph — make sure the user really wants that.
 - Conflicting rules (two moves to different graphs, or move+copy on the same
   entry) are skipped with a warning; the user resolves by editing the rules.
 - Entries blocked by containment (they reference non-members) are reported,
@@ -66,10 +66,10 @@ fresh private capture and can be backfilled with `rules apply`. Still:
   description, and eligibility notes agents consult before placing anything
   there. It travels with the store when shared — write it for the recipient.
 - `graphs sync --dry-run` is the consistency check (drifted copies, missing
-  private homes, containment violations); plain `graphs sync` repairs drift
-  by rewriting copies from the private version, checkpointed per store.
+  default-graph homes, containment violations); plain `graphs sync` repairs drift
+  by rewriting copies from the default graph's version, checkpointed per store.
 - Deleting a graph is manual and deliberate: move its entries out first
-  (`move <id> --to private`), then remove the `memory-graphs/<slug>/`
+  (`move <id> --to default`), then remove the `memory-graphs/<slug>/`
   directory yourself with the user's confirmation.
 
 ## Principles

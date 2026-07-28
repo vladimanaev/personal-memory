@@ -4,18 +4,18 @@ This repo is **the user's local Personal Memory** store. It is a
 RAG store, not a normal codebase. Two jobs: **capture** memories and **recall**
 them. The retrieval engine is the `memory` CLI — use it.
 
-The store is **one private graph plus N named shared graphs**: PRIVATE
+The store is **one DEFAULT graph plus N named shared graphs**: `default`
 (`memory/` — secret, local-only, home of every capture) and user-created
 shared graphs under `memory-graphs/<slug>/` (each its own nested git repo;
-`public` is the built-in one; `memory graphs list` shows the registry). One
-memory can be a **member of several graphs** — byte-identical synced copies,
-private always the home. Recall spans all graphs by default (memberships
-labeled `[<graph>,…]`; `--graph <name>` narrows). **Capture ALWAYS lands
-private** — entries reach shared graphs only via the user's standing
-distribution rules (auto-applied; configured in the UI's `#/graphs` screen),
-the user-confirmed promotion review (`/promote`), or an explicit "log this to
-<graph>" request. Shared graphs are self-contained: members only reference
-fellow members — the CLI enforces it.
+none ship built-in; `memory graphs list` shows the registry). One memory can
+be a **member of several graphs** — byte-identical synced copies, the default
+graph always the home. Recall spans all graphs by default (shared memberships
+labeled `[<graph>,…]`; `--graph <name>` narrows). **Capture ALWAYS lands in
+the default graph** — entries reach shared graphs only via the user's
+standing distribution rules (auto-applied; configured in the UI's `#/graphs`
+screen), the user-confirmed promotion review (`/promote --to <graph>`), or an
+explicit "log this to <graph>" request. Shared graphs are self-contained:
+members only reference fellow members — the CLI enforces it.
 
 > Run commands with Node ≥ 20: `nvm use 20` then `npx tsx src/cli.ts <cmd>`.
 
@@ -63,21 +63,21 @@ When the user wants to log/remember something, use the `log-memory` skill and
 `npx tsx src/cli.ts add …`. Reuse existing people/team slugs (check `memory list`
 first).
 
-**Graphs:** every capture is logged PRIVATE — never pass `--graph <name>`
-unless the user explicitly asked for that graph (and it satisfies the graph's
-eligibility criteria: its `GRAPH.md` body; for `public`, the routing prompt —
-`npx tsx src/cli.ts routing`). Entries otherwise reach shared graphs via:
+**Graphs:** every capture is logged to the DEFAULT graph — never pass
+`--graph <name>` unless the user explicitly asked for that graph (and it
+satisfies the graph's eligibility criteria: its `GRAPH.md` body). Entries
+otherwise reach shared graphs via:
 (1) **standing rules** (`memory rules list|apply`; configured per tag/type in
 the UI `#/graphs` screen; auto-applied at capture — report the CLI's
 `→ rule:` lines), or (2) the **promotion review**: `/promote --to <graph>`
-(`skills/promote-public/SKILL.md`) — `memory promote candidates --to <graph>`
+(`skills/promote-graph/SKILL.md`) — `memory promote candidates --to <graph>`
 → judge against the graph's criteria → the user confirms each entry →
 `memory copy <id> --to <graph>` (copy is the default; `move` only on explicit
 request); declines recorded with `memory promote dismiss <id> --graph <g>`.
 Graph management (create graphs, edit rules, repair drift) → the
 `manage-graphs` skill (`/manage-graphs`). Wrong placements are fixed with
 `copy`/`move`, never by moving files. For single-graph recall (preparing
-shareable content), use `recall-public` (`/recall-public [graph]`) — it never
+shareable content), use `recall-graph` (`/recall-graph <graph> …`) — it never
 falls back to other graphs.
 
 **Timeline chains:** when the new memory develops or settles an earlier matter

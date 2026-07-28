@@ -102,28 +102,28 @@ quarter?", "who's ready for promotion?", "prep for my staff meeting") →
 3. Synthesize: themes, what changed over time, open threads, risks, and what to
    watch next. Cite the entries you drew from.
 
-## Graph scope — private + named shared graphs
+## Graph scope — the default graph + named shared graphs
 
-The store holds N graphs: **private** (`memory/` — secret, local-only, the
+The store holds N graphs: **default** (`memory/` — secret, local-only, the
 home of every capture) and any number of **named shared graphs**
-(`memory-graphs/<slug>/` — separable stores for specific audiences; `public`
-is the built-in one; `npx tsx src/cli.ts graphs list` shows the registry).
-One memory can be a **member of several graphs** (synced copies; private
-stays its home). `recall` / `query` / `list` / `person` search **all graphs
-by default**, fused into one ranking; non-private memberships are labeled
+(`memory-graphs/<slug>/` — separable stores for specific audiences, all
+user-created; `npx tsx src/cli.ts graphs list` shows the registry).
+One memory can be a **member of several graphs** (synced copies; the default
+graph stays its home). `recall` / `query` / `list` / `person` search **all graphs
+by default**, fused into one ranking; shared memberships are labeled
 `[<graph>,…]` in text output (and hits carry `graphs: []` in
 `--format json`). `--graph <name>` narrows to that graph's members.
 
 - Answering the user's own questions → default (all graphs) is right.
 - Preparing anything that will be **shared or leave the private context**
   (team update, doc for others, message draft) → recall with
-  `--graph <name>` of the intended audience, or use the `recall-public`
-  skill — and never quote a private-only entry's content, id, title, or path
+  `--graph <name>` of the intended audience, or use the `recall-graph`
+  skill — and never quote a default-graph-only entry's content, id, title, or path
   into shareable output.
 - Containment: a shared graph is self-contained — its entries reference only
-  fellow members. Only PRIVATE entries may reference entries in other graphs,
-  so a shared-graph hit's `⤷ superseded by` may point at a private-only entry
-  (the matter continued privately); note only that newer non-shareable
+  fellow members. Only DEFAULT-graph entries may reference entries in other
+  graphs, so a shared-graph hit's `⤷ superseded by` may point at an unshared
+  entry (the matter continued privately); note only that newer non-shareable
   context exists, without describing it in shareable output.
 
 ## Filters available

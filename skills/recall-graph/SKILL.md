@@ -1,13 +1,13 @@
 ---
-name: recall-public
-description: Use when the user wants ONLY shareable/public memories — preparing content for teammates (team updates, docs, posts, message drafts), or explicitly asking "what can I share about X" / "public memories only". Searches the public graph exclusively and never falls back to private memories.
+name: recall-graph
+description: Use when the user wants ONLY one shared graph's memories — preparing content for a specific audience (team updates, docs, posts, drafts), or asking "what can I share with <audience> about X". Requires a graph name; searches that graph exclusively and never falls back to other graphs.
 ---
 
 # Recalling from ONE shared graph only
 
-You are retrieving from a **single shared graph** (default: `public` at
-`memory-graphs/public/`; the user may name any other shared graph — check
-`npx tsx src/cli.ts graphs list`). The output of this skill is typically
+You are retrieving from a **single shared graph**. There is no default —
+the user names the graph (check `npx tsx src/cli.ts graphs list`; ask if
+the target is ambiguous). The output of this skill is typically
 destined to leave the private context, so every other graph — above all the
 private one — is **out of bounds**: never search them, never read their
 files, never fill gaps from them or from chat history.
@@ -34,13 +34,13 @@ index files, and the entry paths that CLI output cites.
 
 Discovery is CLI-only (never Grep/Glob the store — see `recall-memory` for
 why), and in this skill every retrieval command MUST be scoped to the target
-graph (default `public`):
+graph:
 
 ```bash
-npx tsx src/cli.ts recall "<question>" "<alt phrasing>" --graph public --format json
-npx tsx src/cli.ts list --graph public [--type …] [--tag …] [--since …]
-npx tsx src/cli.ts person <slug> --graph public
-npx tsx src/cli.ts query "<question>" --graph public
+npx tsx src/cli.ts recall "<question>" "<alt phrasing>" --graph <name> --format json
+npx tsx src/cli.ts list --graph <name> [--type …] [--tag …] [--since …]
+npx tsx src/cli.ts person <slug> --graph <name>
+npx tsx src/cli.ts query "<question>" --graph <name>
 ```
 
 Never omit the flag, and never re-run a silent query without it "just to
@@ -68,7 +68,7 @@ check" — that is exactly the leak this skill exists to prevent.
 
 If recall keeps coming up empty, the graph probably just hasn't had a
 promotion review lately — suggest `/promote --to <graph>`
-(`skills/promote-public/SKILL.md`), the user-confirmed flow that copies
+(`skills/promote-graph/SKILL.md`), the user-confirmed flow that copies
 eligible private entries in, or standing distribution rules on the `#/graphs`
 UI screen. Never copy/move entries yourself without the user's explicit
 per-entry confirmation.

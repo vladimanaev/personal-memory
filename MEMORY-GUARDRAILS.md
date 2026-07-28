@@ -7,19 +7,19 @@ hard contract, not a style preference.**
 
 **Never create, edit, move, or delete files under `memory/entries/` or any
 `memory-graphs/<name>/entries/` yourself** — not with Write/Edit tools, not
-with shell redirection, not "just this once". The store is one private graph
-(`memory/`) plus N named shared graphs (`memory-graphs/<slug>/`), each its
+with shell redirection, not "just this once". The store is one DEFAULT graph
+(`memory/` — secret, local-only) plus N named shared graphs (`memory-graphs/<slug>/`), each its
 own nested git repo — and the contract covers every store equally. One entry
 can be a member of several graphs (byte-identical synced copies); ONLY the
 CLI keeps them in sync.
 
-- **Capture** goes ONLY through the CLI and ALWAYS lands in the private graph:
+- **Capture** goes ONLY through the CLI and ALWAYS lands in the default graph:
   `npx tsx src/cli.ts add --title … --type … [--people …] [--source-ids …] --body "…"`
   (via the `log-memory` / `pull-memories` skills, or `/remember` / `/pull-memories`).
   `--graph <name>` is reserved for an explicit user request that satisfies
   that graph's eligibility criteria — never an agent's own judgment.
 - **Membership** changes ONLY through
-  `cli.ts copy <id> --to <graph>` (add a synced copy; entry stays private) and
+  `cli.ts copy <id> --to <graph>` (add a synced copy; the entry stays in the default graph too) and
   `cli.ts move <id> --to <graph>` (replace the WHOLE membership) — never by
   relocating files. Both validate containment, re-index, and checkpoint every
   affected repo. A shared graph is self-contained: its members never reference
@@ -34,7 +34,7 @@ CLI keeps them in sync.
   Never place an entry in a shared graph the user hasn't approved (a saved
   rule IS standing approval).
 - **Consistency**: drifted copies are repaired ONLY by `cli.ts graphs sync`
-  (private wins, checkpointed) — never by hand-editing a copy.
+  (the default copy wins, checkpointed) — never by hand-editing a copy.
 - **Update** an existing entry the same way: re-run `add` with the same
   `--source-ids` (updates in place), or `add --update <id>` for manual notes.
 - **Timeline links** ONLY through `add --follows <id,…>` at capture time,
@@ -72,7 +72,6 @@ four things a manual write skips:
 | `memory-graphs/*/entries/**` | ❌ never by hand | same CLI paths |
 | `memory/summaries/**`, `memory-graphs/*/summaries/**` | ✏️ only the `## Synthesis` section of a scaffold `digest` created — then run `cli.ts index` | Edit tool |
 | `memory/connectors/**` | ✅ private connector overrides | Edit tool or web UI |
-| `memory/routing/**` | ✅ the private eligibility-prompt override | Edit tool or web UI (`#/routing`) |
 | `memory/graphs/rules.json` | ✅ distribution-rules config | Edit tool or web UI (`#/graphs`) |
 | `memory-graphs/*/GRAPH.md` | ✅ graph manifests | Edit tool or web UI |
 | `.index/**` | ❌ never | rebuildable derivative; `cli.ts index` regenerates |

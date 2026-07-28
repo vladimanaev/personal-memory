@@ -18,10 +18,10 @@ sent to any API by default.
   Don't answer people/history questions from chat history alone.
 - User wants ONLY one shared graph's memories (preparing a team update, doc,
   or any output leaving the private context) → **single-graph recall**
-  (see `skills/recall-public/SKILL.md`) — never falls back to other graphs.
+  (see `skills/recall-graph/SKILL.md`) — never falls back to other graphs.
 - User wants to review/promote memories into a shared graph →
   **promotion review**, every copy/move user-confirmed
-  (see `skills/promote-public/SKILL.md`).
+  (see `skills/promote-graph/SKILL.md`).
 - User wants to create graphs, set up per-tag/per-type distribution rules, or
   repair graph consistency → **graph management**
   (see `skills/manage-graphs/SKILL.md`).
@@ -34,21 +34,20 @@ Run with `npx tsx src/cli.ts <cmd>` (Node ≥ 20 — `nvm use 20`).
 
 | Command | Purpose |
 |---|---|
-| `add --title … --type … --people a,b --date YYYY-MM-DD --body "…" [--source-ids …] [--follows <id,…>]` | Create/update an entry + index it (dedups on `--source-ids`; `--update <id>`, `--force-new`, `--dup-threshold N` resolve the dup guard; `--follows` chains it to earlier entries). Always lands PRIVATE (standing rules may then auto-copy it — `→ rule:` output lines); `--graph <name>` is reserved for an explicit user request. Updates refresh EVERY synced copy |
+| `add --title … --type … --people a,b --date YYYY-MM-DD --body "…" [--source-ids …] [--follows <id,…>]` | Create/update an entry + index it (dedups on `--source-ids`; `--update <id>`, `--force-new`, `--dup-threshold N` resolve the dup guard; `--follows` chains it to earlier entries). Always lands in the DEFAULT graph (standing rules may then auto-copy it — `→ rule:` output lines); `--graph <name>` is reserved for an explicit user request. Updates refresh EVERY synced copy |
 | `link <id> --follows <earlier-id,…>` | Add timeline links to an existing entry (validated: targets exist, not newer, no cycles, containment; commits every member store) |
-| `copy <id> --to <graph>` | Add membership: materialize a synced copy in another graph (entry stays private; containment validated; checkpoints the target repo) |
-| `move <id> --to <graph>` | Replace the entry's WHOLE membership with `<graph>` (removes every other copy; `--to private` = repatriation; containment validated both directions; checkpoints every affected repo) |
-| `graphs list` / `graphs create <slug> [--display-name\|--description]` / `graphs sync [--dry-run]` | Registry (dirs under `memory-graphs/` + `GRAPH.md` manifests) / create a graph (own nested repo) / detect+repair drifted copies (private wins) |
-| `rules list` / `rules apply [--dry-run]` | Standing per-tag/per-type distribution rules (`memory/graphs/rules.json`); apply reconciles them against existing private entries — dry-run first |
-| `promote candidates [--to <graph>] [--since\|--until\|--limit]` | Private entries awaiting promotion review for a graph (per-graph dismissals hidden until content changes; non-member-ref blockers flagged) |
-| `promote dismiss <id> [--graph <g>] [--reason "…"]` | Record a "not for that graph" decision — hidden from its candidates until the entry's content changes |
-| `routing` | Show + validate the public graph's eligibility prompt (template `routing/graph-routing.md` vs private override `memory/routing/graph-routing.md`); other graphs' criteria live in their `GRAPH.md` |
+| `copy <id> --to <graph>` | Add membership: materialize a synced copy in another graph (entry stays in the default graph too; containment validated; checkpoints the target repo) |
+| `move <id> --to <graph>` | Replace the entry's WHOLE membership with `<graph>` (removes every other copy; `--to default` = repatriation; containment validated both directions; checkpoints every affected repo) |
+| `graphs list` / `graphs create <slug> [--display-name\|--description]` / `graphs sync [--dry-run]` | Registry (dirs under `memory-graphs/` + `GRAPH.md` manifests) / create a graph (own nested repo) / detect+repair drifted copies (the default copy wins) |
+| `rules list` / `rules apply [--dry-run]` | Standing per-tag/per-type distribution rules (`memory/graphs/rules.json`); apply reconciles them against existing default-graph entries — dry-run first |
+| `promote candidates --to <graph> [--since\|--until\|--limit]` | Default-graph entries awaiting promotion review for a graph (target REQUIRED; per-graph dismissals hidden until content changes; non-member-ref blockers flagged) |
+| `promote dismiss <id> --graph <g> [--reason "…"]` | Record a "not for that graph" decision — hidden from its candidates until the entry's content changes |
 | `index [--force]` | Re-sync index with Markdown (incremental; `--force` rebuilds) |
-| `query "<q>" ["<alt phrasing>" …] [--person|--type|--team|--tag|--since|--until|--graph|-k|--deep]` | Hybrid (semantic+lexical) search; pass 2–4 phrasings (all fused); `--deep` = recall-over-precision (k=40, wider pools); `--graph private\|public` scopes (default: both, public hits labeled) |
+| `query "<q>" ["<alt phrasing>" …] [--person|--type|--team|--tag|--since|--until|--graph|-k|--deep]` | Hybrid (semantic+lexical) search; pass 2–4 phrasings (all fused); `--deep` = recall-over-precision (k=40, wider pools); `--graph <name>` scopes to one graph's members (default: all, shared memberships labeled) |
 | `recall "<q>" ["<agent phrasing>" …] [filters] [--complete|--complete-if-small|--require-complete|--no-expand|--format json]` | Agent-facing recall with weighted query expansion, completeness reporting, and stable JSON output |
 | `list [filters] [--limit n]` | Structured browse, newest first |
 | `person <slug>` | Everything about a person |
-| `digest --person <slug> \| --quarter <YYYY-Qn> \| --tag <slug> [--graph private\|public]` | Build/refresh a rolling summary (a public digest draws only on public entries and lands in the public store) |
+| `digest --person <slug> \| --quarter <YYYY-Qn> \| --tag <slug> [--graph <name>]` | Build/refresh a rolling summary (a shared-graph digest draws only on that graph's members and lands in its store) |
 | `maintenance [--threshold N]` | Hygiene report: digest debt (suggested `digest` commands), index health, connector validity, possible unlinked chains (suggested `link` commands) + dangling links, similar-slug warnings |
 | `slugs list --kind person\|team\|tag [--min-count N]` | Slug vocabulary with usage counts (for tag compaction / slug reuse) |
 | `slugs merge --kind person\|team\|tag --from <slug> --to <slug> [--dry-run] [--create-target]` | Sanctioned slug merge: rewrites the affected frontmatter arrays, syncs the index, checkpoints `memory/.git` before/after |
@@ -59,30 +58,29 @@ Run with `npx tsx src/cli.ts <cmd>` (Node ≥ 20 — `nvm use 20`).
 
 ## Data model
 
-- **One private graph + N named shared graphs:** the PRIVATE graph lives in
-  `memory/` (secret, local-only, home of every capture); each shared graph in
-  `memory-graphs/<slug>/` (deliberately shareable as a unit; `public` is the
-  built-in one; directory existence = registry; `GRAPH.md` = manifest with
-  description + eligibility notes). Same internal layout, each its own nested
-  git repo, all gitignored in the main repo. **Membership is derived from
-  file locations** — no frontmatter field: one entry may be a member of
-  several graphs as byte-identical synced copies (private-first sorted
-  `graphs` list; multi-member ⇒ private is the home). The CLI keeps copies in
-  sync on every update; drift is detected at load and repaired by
-  `graphs sync` (private wins). Ids are unique per logical entry across ALL
-  stores. **Capture always lands private**; entries enter shared graphs via
-  standing rules (auto-applied at capture + `rules apply` backfills), the
-  user-confirmed promotion review, or an explicit user request. Hard rule
-  (containment): a shared graph is self-contained — its members never
-  reference non-members via `follows` or `sources` (enforced at
-  `add`/`link`/`copy`/`move`/`rules apply`); private entries may reference
-  anything.
+- **One DEFAULT graph + N named shared graphs:** the `default` graph lives
+  in `memory/` (secret, local-only, home of every capture); each shared graph
+  in `memory-graphs/<slug>/` (deliberately shareable as a unit; all
+  user-created; directory existence = registry; `GRAPH.md` = manifest with
+  description + eligibility notes, seeded from a template at creation). Same
+  internal layout, each its own nested git repo, all gitignored in the main
+  repo. **Membership is derived from file locations** — no frontmatter field:
+  one entry may be a member of several graphs as byte-identical synced copies
+  (default-first sorted `graphs` list; multi-member ⇒ the default graph is
+  the home). The CLI keeps copies in sync on every update; drift is detected
+  at load and repaired by `graphs sync` (the default copy wins). Ids are
+  unique per logical entry across ALL stores. **Capture always lands in the
+  default graph**; entries enter shared graphs via standing rules
+  (auto-applied at capture + `rules apply` backfills), the user-confirmed
+  promotion review, or an explicit user request. Hard rule (containment): a
+  shared graph is self-contained — its members never reference non-members
+  via `follows` or `sources` (enforced at `add`/`link`/`copy`/`move`/`rules
+  apply`); default-graph entries may reference anything.
 - **Source of truth:** Markdown files under `memory/entries/YYYY/MM/<id>.md`
   (and `memory-graphs/<slug>/entries/…` for each shared-graph copy).
   One memory per file. `memory/` is **gitignored in the main repo** (personal
   data never gets pushed) and versioned in its own local-only nested git repo
-  (`memory/.git`, no remote — the auto-commit hook commits there, covering
-  both stores). Frontmatter:
+  (`memory/.git`, no remote — the auto-commit hook covers every store). Frontmatter:
 
   ```yaml
   id: 2026-06-28-acme-codev-kickoff   # date-prefixed kebab slug
@@ -166,7 +164,7 @@ Run with `npx tsx src/cli.ts <cmd>` (Node ≥ 20 — `nvm use 20`).
    recall, unversioned, and a drift source. **Read `MEMORY-GUARDRAILS.md`
    before any write under any store** (it also lists the allowed exceptions:
    each store's `summaries/` Synthesis prose, `memory/connectors/` overrides,
-   `memory/routing/` override, `memory/graphs/rules.json`, `GRAPH.md` manifests).
+   `memory/graphs/rules.json`, `GRAPH.md` manifests).
 3. **One entry per source thread — a living record, not append-on-refetch.** A
    re-capture with a known `source_id` updates that entry in place (`date` =
    first-seen, `updated` = last refresh). Don't hand-rewrite history to tidy up,

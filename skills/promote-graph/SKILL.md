@@ -1,13 +1,13 @@
 ---
-name: promote-public
+name: promote-graph
 description: Use when the user wants to review private memories and promote shareable ones into a named graph — "review what can go public", "promote memories", "share entries with team-x", "publish recent memories". Proposes candidates one by one; every copy/move is user-confirmed.
 ---
 
 # Promoting memories into a shared graph
 
 Capture always lands in the PRIVATE graph. This skill is the ad-hoc sanctioned
-flow that places entries into a **shared graph** (default: `public`; the user
-may name any graph — `npx tsx src/cli.ts graphs list` shows the registry):
+flow that places entries into a **shared graph** (no default — the user names
+the target; `npx tsx src/cli.ts graphs list` shows the registry):
 scan candidates, judge them against the target graph's eligibility criteria,
 and let the **user confirm every single entry**. Nothing is ever promoted
 without an explicit per-entry yes. (Standing per-tag/per-type distribution
@@ -35,11 +35,10 @@ index files, and the entry paths that CLI output cites.
 
 ## Steps
 
-1. **Read the target graph's eligibility criteria.** For `public`:
-   `memory/routing/graph-routing.md` if it exists, else
-   `routing/graph-routing.md` (`npx tsx src/cli.ts routing` shows which).
-   For any other graph: the body of `memory-graphs/<name>/GRAPH.md` — its
-   description and eligibility notes define what belongs there.
+1. **Read the target graph's eligibility criteria**: the body of
+   `memory-graphs/<name>/GRAPH.md` — its description and eligibility notes
+   define what belongs there (every graph gets a seeded template at creation;
+   the user may have personalized it).
 
 2. **Gather candidates** (mechanical prefilter — private entries that are not
    yet members and not previously declined at their current content):

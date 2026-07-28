@@ -174,9 +174,14 @@ memory recall "<question>" ["<agent phrasing>" ...]
 memory list [--person slug] [--type type] [--team slug] [--tag slug]
             [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--limit n]
 
-memory person <slug>
-memory digest --person <slug> | --quarter <YYYY-Qn> | --tag <slug>
+memory person <slug> [--graph <name>]
+memory digest --person <slug> | --quarter <YYYY-Qn> | --tag <slug> [--graph <name>]
 memory remove <id>
+memory copy <id> --to <graph>
+memory move <id> --to <graph>
+memory graphs [list] | graphs create <slug> | graphs sync [--dry-run]
+memory rules [list] | rules apply [--dry-run]
+memory promote candidates --to <graph> | promote dismiss <id> --graph <g>
 memory maintenance [--threshold n]
 memory connectors
 memory connectors mark-pulled <name> [--at ISO_TIMESTAMP]
@@ -196,23 +201,25 @@ achievement, feedback, meeting, note, summary
 ## How It Works
 
 Personal Memory separates durable content from derived search state, and
-splits the durable content into two graphs:
+organizes the durable content into graphs:
 
-- `memory/entries/YYYY/MM/<id>.md` stores PRIVATE raw memory entries
-  (secret, local-only — the default graph).
+- `memory/entries/YYYY/MM/<id>.md` is the **default graph** — secret,
+  local-only, and the home of every capture. If you never create another
+  graph, everything simply lives here.
 - `memory-graphs/<slug>/entries/YYYY/MM/<id>.md` stores each named SHARED
   graph — physically separate stores (each its own nested git repo)
-  deliberately safe to hand to a specific audience; `public` is the built-in
-  one, and new graphs are created with `memory graphs create` or the UI's
-  Graphs screen (each carries a `GRAPH.md` manifest with its description and
-  eligibility notes). One memory can be a member of several graphs — the CLI
-  materializes byte-identical synced copies, with private always the home.
-  Capture always lands private; entries enter shared graphs through
-  per-tag/per-type distribution rules (configured in the UI, dry-run
-  preview, auto-applied to future captures), a user-confirmed promotion
-  review (`/promote --to <graph>`), or an explicit request. Recall spans all
-  graphs by default (`--graph <name>` narrows); every shared store is
-  self-contained — its entries never reference non-members.
+  deliberately safe to hand to a specific audience. None ship built-in: you
+  create them with `memory graphs create <slug>` or the UI's Graphs screen,
+  and each carries a `GRAPH.md` manifest (description + eligibility notes,
+  seeded from a template). One memory can be a member of several graphs —
+  the CLI materializes byte-identical synced copies, with the default graph
+  always the home. Capture always lands in the default graph; entries enter
+  shared graphs through per-tag/per-type distribution rules (configured in
+  the UI, dry-run preview, auto-applied to future captures), a
+  user-confirmed promotion review (`/promote --to <graph>`), or an explicit
+  request. Recall spans all graphs by default (`--graph <name>` narrows);
+  every shared store is self-contained — its entries never reference
+  non-members.
 - `memory/summaries/<id>.md` stores additive summaries created by `digest`.
 - `.index/` stores rebuildable local search artifacts (both graphs, with a
   `graph` column).
@@ -269,30 +276,48 @@ rm -rf .index
 npm run index -- --force
 ```
 
-## Upgrading an existing clone to the multi-graph layout
+## Upgrading an existing memory store to the new code
 
-Pulling the multi-graph changes onto a machine with an existing store is safe
-by construction: every store is gitignored and versioned in its own nested
-repo, so `git pull` cannot touch a single entry file, and **every existing
-private memory stays private** — membership is derived from file locations,
-so nothing inside `memory/` needs migrating or reclassifying.
+Pulling the multi-graph code onto a machine with an existing store is safe by
+construction: every store is gitignored and versioned in its own nested repo,
+so `git pull` cannot touch a single entry file, and **every existing memory
+stays exactly where it is** — membership is derived from file locations, so
+nothing inside `memory/` needs migrating or reclassifying. Take a backup
+first anyway (good practice before any migration):
 
-Run the (idempotent) migration right after pulling — the engine refuses to
-run on the old layout until it does:
+```bash
+tar -czf ~/memory-backup-$(date +%Y%m%d).tgz memory memory-public memory-graphs 2>/dev/null \
+  || tar -czf ~/memory-backup-$(date +%Y%m%d).tgz memory
+```
+
+Then run the (idempotent) migration — the engine refuses to run on an old
+layout until it has:
 
 ```bash
 git pull
 npx tsx scripts/migrate-graphs.ts
 ```
 
-It checkpoints every nested repo, relocates `memory-public/` to
-`memory-graphs/public/` (a plain directory rename — its git history moves
-with it), writes the public graph's `GRAPH.md` manifest, rebuilds the search
-index (the new format has a membership column; the rebuild takes a few
-minutes once), and finishes with a consistency check
-(`memory graphs sync --dry-run`). Re-running it is a no-op.
-(Marketplace/plugin users: update the clone `MEMORY_HOME` points at before
-using the new `graphs`/`copy`/`rules` commands.)
+What it does depends on where you're coming from:
+
+- **From the original single-graph layout** (just `memory/`): nothing
+  relocates — all your memories are in the `default` graph by construction.
+  The script checkpoints `memory/.git` and rebuilds the search index (the
+  new format has a membership column; a few minutes, once).
+- **From the two-graph layout** (`memory-public/` exists): the script
+  additionally relocates `memory-public/` to `memory-graphs/public/` — a
+  plain directory rename, its git history moves with it — and writes it a
+  `GRAPH.md` manifest. Afterwards `public` is an ordinary named graph like
+  any you create yourself: keep it, or delete the directory if it's empty.
+- Re-running the script is always a no-op; it finishes with a consistency
+  check (`memory graphs sync --dry-run`).
+
+Vocabulary changes to be aware of: the home graph is now named `default`
+(`--graph private` is now `--graph default`); `promote` and `recall-graph`
+take an explicit graph name; the routing prompt is gone — per-graph
+eligibility criteria live in each graph's `GRAPH.md`. Marketplace/plugin
+users: update the clone `MEMORY_HOME` points at before using the new
+`graphs`/`copy`/`rules` commands.
 
 ## Privacy
 
@@ -331,10 +356,10 @@ folder. The important conventions live in:
   updating memories
 - [skills/recall-memory/SKILL.md](skills/recall-memory/SKILL.md) - retrieving
   grounded context (both graphs)
-- [skills/recall-public/SKILL.md](skills/recall-public/SKILL.md) - single-graph
+- [skills/recall-graph/SKILL.md](skills/recall-graph/SKILL.md) - single-graph
   recall for shareable output
-- [skills/promote-public/SKILL.md](skills/promote-public/SKILL.md) - user-confirmed
-  promotion of private memories into named shared graphs
+- [skills/promote-graph/SKILL.md](skills/promote-graph/SKILL.md) - user-confirmed
+  promotion of memories into named shared graphs
 - [skills/manage-graphs/SKILL.md](skills/manage-graphs/SKILL.md) - graph
   creation, distribution rules, and consistency repair
 - [skills/compact-tags/SKILL.md](skills/compact-tags/SKILL.md) - merging
@@ -363,8 +388,7 @@ src/                      TypeScript CLI, indexing, schema, server, and UI APIs
 src/ui/                   Local browser UI
 skills/                   Agent skills for capture, recall, and pull workflows
 connectors/               Public connector templates
-routing/                  Default graph-routing prompt template
-memory/                   PRIVATE memory graph + connector/routing/rules config (gitignored, own nested repo)
+memory/                   The DEFAULT memory graph + connector/rules config (gitignored, own nested repo)
 memory-graphs/            Named SHARED graphs, one dir per graph (gitignored, each its own nested repo)
 .index/                   Rebuildable local index (gitignored)
 .claude/                  Claude Code commands, hooks, and settings
