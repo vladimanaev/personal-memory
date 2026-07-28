@@ -35,7 +35,7 @@ function entry(
 }
 
 test("sortGraphs: private first, then lexicographic, deduped", () => {
-  assert.deepEqual(sortGraphs(["zeta", "private", "acme", "acme"]), ["private", "acme", "zeta"]);
+  assert.deepEqual(sortGraphs(["zeta", "default", "acme", "acme"]), ["default", "acme", "zeta"]);
   assert.deepEqual(sortGraphs(["beta", "alpha"]), ["alpha", "beta"]);
 });
 
@@ -43,9 +43,9 @@ test("storesUnder: private + slug-shaped dirs under memory-graphs/", () => {
   const root = tempRoot(["public", "team-x"]);
   try {
     const stores = storesUnder(root);
-    assert.deepEqual(sortGraphs(stores.keys()), ["private", "public", "team-x"]);
+    assert.deepEqual(sortGraphs(stores.keys()), ["default", "public", "team-x"]);
     assert.equal(stores.get("team-x")!.dir, join(root, "memory-graphs", "team-x"));
-    assert.equal(stores.get("private")!.dir, join(root, "memory"));
+    assert.equal(stores.get("default")!.dir, join(root, "memory"));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -65,20 +65,20 @@ test("graphOfPath: store prefixes resolve; outside paths and lookalikes are priv
   const root = tempRoot(["team-x"]);
   try {
     const stores = storesUnder(root);
-    assert.equal(graphOfPath(join(root, "memory", "entries", "a.md"), stores), "private");
+    assert.equal(graphOfPath(join(root, "memory", "entries", "a.md"), stores), "default");
     assert.equal(graphOfPath(join(root, "memory-graphs", "team-x", "entries", "a.md"), stores), "team-x");
-    assert.equal(graphOfPath(join(root, "memory-graphs-old", "a.md"), stores), "private");
-    assert.equal(graphOfPath("/somewhere/else.md", stores), "private");
+    assert.equal(graphOfPath(join(root, "memory-graphs-old", "a.md"), stores), "default");
+    assert.equal(graphOfPath("/somewhere/else.md", stores), "default");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
 test("hash stability: membership never participates in the content hash", () => {
-  const a = entry({ id: "2026-01-01-x", graphs: ["private"] });
+  const a = entry({ id: "2026-01-01-x", graphs: ["default"] });
   const b = entry({
     id: "2026-01-01-x",
-    graphs: ["private", "team-x"],
+    graphs: ["default", "team-x"],
     paths: { private: "/p", "team-x": "/t" },
   });
   assert.equal(hashEntry(a), hashEntry(b));
@@ -89,30 +89,30 @@ function byIdOf(...entries: MemoryEntry[]): Map<string, MemoryEntry> {
 }
 
 test("containment: private-only sources may reference anything", () => {
-  const byId = byIdOf(entry({ id: "t1", graphs: ["private"] }), entry({ id: "t2", graphs: ["team-x"] }));
+  const byId = byIdOf(entry({ id: "t1", graphs: ["default"] }), entry({ id: "t2", graphs: ["team-x"] }));
   assert.doesNotThrow(() =>
-    validateContainment(byId, { id: "src", graphs: ["private"] }, ["t1", "t2"]),
+    validateContainment(byId, { id: "src", graphs: ["default"] }, ["t1", "t2"]),
   );
 });
 
 test("containment: shared member may only reference fellow members", () => {
-  const member = entry({ id: "t-in", graphs: ["private", "team-x"] });
-  const outsider = entry({ id: "t-out", graphs: ["private"] });
+  const member = entry({ id: "t-in", graphs: ["default", "team-x"] });
+  const outsider = entry({ id: "t-out", graphs: ["default"] });
   const byId = byIdOf(member, outsider);
   assert.doesNotThrow(() =>
-    validateContainment(byId, { id: "src", graphs: ["private", "team-x"] }, ["t-in"]),
+    validateContainment(byId, { id: "src", graphs: ["default", "team-x"] }, ["t-in"]),
   );
   assert.throws(
-    () => validateContainment(byId, { id: "src", graphs: ["private", "team-x"] }, ["t-in", "t-out"]),
+    () => validateContainment(byId, { id: "src", graphs: ["default", "team-x"] }, ["t-in", "t-out"]),
     /member of graph 'team-x' but references entries that are not: t-out/,
   );
 });
 
 test("containment: every shared membership is checked", () => {
-  const inX = entry({ id: "t", graphs: ["private", "team-x"] });
+  const inX = entry({ id: "t", graphs: ["default", "team-x"] });
   const byId = byIdOf(inX);
   assert.throws(
-    () => validateContainment(byId, { id: "src", graphs: ["private", "team-x", "team-y"] }, ["t"]),
+    () => validateContainment(byId, { id: "src", graphs: ["default", "team-x", "team-y"] }, ["t"]),
     /member of graph 'team-y'/,
   );
 });

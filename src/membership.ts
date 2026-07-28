@@ -1,6 +1,6 @@
 import { readFile, rm, writeFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
-import { PRIVATE_GRAPH, sortGraphs, type MemoryEntry } from "./schema.js";
+import { DEFAULT_GRAPH, sortGraphs, type MemoryEntry } from "./schema.js";
 import { entryPath, loadAllEntries, loadEntryFiles, groupEntries, type CopyDrift } from "./ingest.js";
 import { ensureStore, requireGraph, storeFor, validateContainment } from "./graphs.js";
 import { syncIndex } from "./store.js";
@@ -31,13 +31,13 @@ export interface CopyResult {
 /** Add membership in `to` by materializing the home copy there. */
 export async function copyEntry(opts: { id: string; to: string }): Promise<CopyResult> {
   const to = requireGraph(opts.to);
-  if (to === PRIVATE_GRAPH) {
+  if (to === DEFAULT_GRAPH) {
     throw new Error("copy --to private is meaningless — use 'move <id> --to private' to repatriate");
   }
   const entries = await loadAllEntries();
   const entry = entries.find((e) => e.id === opts.id);
   if (!entry) throw new Error(`no entry with id '${opts.id}'`);
-  if (!entry.graphs.includes(PRIVATE_GRAPH)) {
+  if (!entry.graphs.includes(DEFAULT_GRAPH)) {
     throw new Error(
       `'${opts.id}' is not a private member (graphs: ${entry.graphs.join(", ")}) — ` +
         `copies originate from private; move it back first`,
@@ -92,7 +92,7 @@ export async function moveEntry(opts: { id: string; to: string }): Promise<MoveR
   }
 
   const byId = new Map(entries.map((e) => [e.id, e]));
-  if (to !== PRIVATE_GRAPH) {
+  if (to !== DEFAULT_GRAPH) {
     const refs = [...(entry.follows ?? []), ...(entry.sources ?? [])];
     const violators = refs.filter((r) => {
       const t = byId.get(r);
@@ -108,7 +108,7 @@ export async function moveEntry(opts: { id: string; to: string }): Promise<MoveR
     const refsEntry = (e.follows?.includes(entry.id) ?? false) || (e.sources?.includes(entry.id) ?? false);
     if (!refsEntry) return false;
     // A referrer blocks when it sits in a non-private graph the entry is leaving.
-    return e.graphs.some((g) => g !== PRIVATE_GRAPH && leaving.includes(g));
+    return e.graphs.some((g) => g !== DEFAULT_GRAPH && leaving.includes(g));
   });
   if (blockingReferrers.length > 0) {
     return {
@@ -143,7 +143,7 @@ export async function moveEntry(opts: { id: string; to: string }): Promise<MoveR
   // where the entry went.
   for (const g of affected) {
     const msg =
-      g === PRIVATE_GRAPH
+      g === DEFAULT_GRAPH
         ? `Move memory: ${entry.id} → ${to}`
         : g === to
           ? `Add memory: ${entry.id}`
@@ -206,14 +206,14 @@ export async function syncGraphs(opts: { dryRun?: boolean } = {}): Promise<SyncG
   const { entries, drift } = groupEntries(files, "collect");
 
   const homeViolations = entries
-    .filter((e) => e.graphs.length > 1 && !e.graphs.includes(PRIVATE_GRAPH))
+    .filter((e) => e.graphs.length > 1 && !e.graphs.includes(DEFAULT_GRAPH))
     .map((e) => ({ id: e.id, graphs: e.graphs }));
 
   const byId = new Map(entries.map((e) => [e.id, e]));
   const containmentViolations: SyncGraphsReport["containmentViolations"] = [];
   for (const e of entries) {
     for (const g of e.graphs) {
-      if (g === PRIVATE_GRAPH) continue;
+      if (g === DEFAULT_GRAPH) continue;
       const refs = [...(e.follows ?? []), ...(e.sources ?? [])];
       const bad = refs.filter((r) => {
         const t = byId.get(r);
@@ -226,10 +226,10 @@ export async function syncGraphs(opts: { dryRun?: boolean } = {}): Promise<SyncG
   const repaired: string[] = [];
   if (!opts.dryRun) {
     for (const d of drift) {
-      const home = d.copies.find((c) => c.graph === PRIVATE_GRAPH);
+      const home = d.copies.find((c) => c.graph === DEFAULT_GRAPH);
       if (!home) continue; // no private copy to win — report-only (shows as drift)
       const raw = await readFile(home.path, "utf8");
-      const others = d.copies.filter((c) => c.graph !== PRIVATE_GRAPH);
+      const others = d.copies.filter((c) => c.graph !== DEFAULT_GRAPH);
       for (const c of others) {
         await commitMemoryRepo(`Checkpoint before graph sync: ${d.id}`, storeFor(c.graph).dir);
       }

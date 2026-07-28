@@ -15,7 +15,7 @@ import {
   ROOT,
 } from "./ingest.js";
 import { search, findSimilar, syncIndex, applyFilters, type SearchCompleteness, type SearchFilters } from "./store.js";
-import { PRIVATE_GRAPH, sharedGraphs, type GraphId, type MemoryEntry } from "./schema.js";
+import { DEFAULT_GRAPH, sharedGraphs, type GraphId, type MemoryEntry } from "./schema.js";
 import {
   createGraph,
   ensureStore,
@@ -162,7 +162,7 @@ async function cmdAdd(argv: string[]) {
   const sourceIds = list(values["source-ids"] as string).map(normalizeSourceId);
   const capturedConnectors = await resolveCapturedConnectors(sourceIds, list(values.connector as string));
   const uniq = (xs: string[]) => [...new Set(xs)];
-  const requestedGraph: GraphId = values.graph ? requireGraph(values.graph) : PRIVATE_GRAPH;
+  const requestedGraph: GraphId = values.graph ? requireGraph(values.graph) : DEFAULT_GRAPH;
   const entries = await loadAllEntries();
 
   // --- resolve the target: an existing entry to update in place, or a new one ---
@@ -284,9 +284,9 @@ async function cmdAdd(argv: string[]) {
   if (target) {
     // Refresh EVERY materialization so the copy-sync invariant holds.
     const written = await writeEntryAll(fm, body, graphs);
-    path = written[PRIVATE_GRAPH] ?? Object.values(written)[0]!;
+    path = written[DEFAULT_GRAPH] ?? Object.values(written)[0]!;
   } else {
-    if (requestedGraph !== PRIVATE_GRAPH) await ensureStore(requestedGraph);
+    if (requestedGraph !== DEFAULT_GRAPH) await ensureStore(requestedGraph);
     path = await writeEntry(fm, body, requestedGraph);
   }
   const stats = await syncIndex();
@@ -299,7 +299,7 @@ async function cmdAdd(argv: string[]) {
 
   // Standing distribution rules auto-apply to fresh private captures; a rule
   // failure must never fail the capture itself.
-  if (!target && requestedGraph === PRIVATE_GRAPH) {
+  if (!target && requestedGraph === DEFAULT_GRAPH) {
     try {
       const { applyRules } = await import("./graph-rules.js");
       const report = await applyRules({ ids: [fm.id] });
@@ -462,9 +462,9 @@ async function cmdGraphs(argv: string[]) {
     const entries = await loadAllEntries();
     for (const store of listGraphStores()) {
       const count = entries.filter((e) => e.graphs.includes(store.graph)).length;
-      const manifest = store.graph === PRIVATE_GRAPH ? null : await loadGraphManifest(store);
+      const manifest = store.graph === DEFAULT_GRAPH ? null : await loadGraphManifest(store);
       const label =
-        store.graph === PRIVATE_GRAPH
+        store.graph === DEFAULT_GRAPH
           ? "(built-in — the default home of every capture)"
           : manifest?.error
             ? `⚠ invalid manifest: ${manifest.error}`
@@ -697,7 +697,7 @@ async function cmdDigest(argv: string[]) {
   // A digest lives in ONE graph. A private digest may cite sources anywhere
   // (private may reference everything); a shared-graph digest must restrict
   // its candidates to that graph's members so `sources` back-links can't leak.
-  const digestGraph: GraphId = values.graph ? requireGraph(values.graph) : PRIVATE_GRAPH;
+  const digestGraph: GraphId = values.graph ? requireGraph(values.graph) : DEFAULT_GRAPH;
 
   let scope: SearchFilters = {};
   let id: string;
@@ -760,7 +760,7 @@ async function cmdDigest(argv: string[]) {
     sources: raw.map((e) => e.id),
   });
 
-  if (digestGraph !== PRIVATE_GRAPH) await ensureStore(digestGraph);
+  if (digestGraph !== DEFAULT_GRAPH) await ensureStore(digestGraph);
   const path = await writeEntry(fm, body, digestGraph);
   await syncIndex();
   console.log(`✓ digest written: ${rel(path)}`);
@@ -781,7 +781,8 @@ async function cmdPromote(argv: string[]) {
     if (!id || positionals.length !== 1) {
       throw new Error('usage: memory promote dismiss <id> [--graph <name>] [--reason "…"]');
     }
-    const graph = requireGraph((values.graph as string | undefined) ?? "public");
+    if (!values.graph) throw new Error("--graph <name> is required (which graph was this declined for?)");
+    const graph = requireGraph(values.graph as string);
     const d = await dismissPromotion(id, graph, values.reason as string | undefined);
     console.log(`✓ ${d.id} won't be proposed for '${graph}' again unless its content changes`);
     return;
@@ -797,8 +798,9 @@ async function cmdPromote(argv: string[]) {
         limit: { type: "string" },
       },
     });
-    const graph = requireGraph((values.to as string | undefined) ?? "public");
-    if (graph === PRIVATE_GRAPH) throw new Error("promotion targets a shared graph — private is the source");
+    if (!values.to) throw new Error("--to <graph> is required — memory graphs list shows the registry");
+    const graph = requireGraph(values.to as string);
+    if (graph === DEFAULT_GRAPH) throw new Error("promotion targets a shared graph — the default graph is the source");
     const entries = await loadAllEntries();
     const candidates = promotionCandidates(entries, await readPromotionDismissals(), {
       graph,
@@ -857,37 +859,13 @@ async function cmdRules(argv: string[]) {
       const match = [r.match.tag ? `tag #${r.match.tag}` : "", r.match.type ? `type ${r.match.type}` : ""]
         .filter(Boolean)
         .join(" + ");
-      const n = entries.filter((e) => e.graphs.includes(PRIVATE_GRAPH) && matchRule(e, r)).length;
+      const n = entries.filter((e) => e.graphs.includes(DEFAULT_GRAPH) && matchRule(e, r)).length;
       console.log(`● ${match}  →  ${r.graph}  (${r.mode})   matches ${n} private entr${n === 1 ? "y" : "ies"}`);
     }
     return;
   }
 
   throw new Error("usage: memory rules [list] | rules apply [--dry-run]");
-}
-
-async function cmdRouting() {
-  const { loadRouting } = await import("./routing.js");
-  const routing = await loadRouting();
-  if (!routing) {
-    console.error("✗ no routing prompt found (expected routing/graph-routing.md or memory/routing/graph-routing.md)");
-    process.exitCode = 1;
-    return;
-  }
-  if (routing.error) {
-    console.error(`✗ ${routing.name}  [${routing.origin}]  ${rel(routing.path)}`);
-    console.error(`  ${routing.error.split("\n").join("\n  ")}`);
-    process.exitCode = 1;
-    return;
-  }
-  const fm = routing.fm!;
-  console.log(`✓ ${routing.name}  [${routing.origin}]  ${rel(routing.path)}`);
-  console.log(`  enabled: ${fm.enabled}   default_graph: ${fm.default_graph}`);
-  console.log(
-    routing.origin === "template"
-      ? "  (generic template — personal rules go in the override: memory/routing/graph-routing.md)"
-      : "  (private override — fully replaces the template)",
-  );
 }
 
 async function cmdMaintenance(argv: string[]) {
@@ -1168,7 +1146,6 @@ Usage:
             # defer a merge decision: shows as a suggestion in maintenance + web UI until merged/ignored
   memory slugs dismiss --kind person|team|tag --from <slug> --to <slug>
             # permanently hide a wrong merge suggestion from maintenance
-  memory routing                     # show + validate the public-eligibility prompt (template vs private override)
   memory promote candidates [--to <graph>] [--since DATE] [--until DATE] [--limit N]
             # private entries awaiting promotion review for <graph> (default public)
   memory promote dismiss <id> [--graph <name>] [--reason "…"]   # record "not for that graph" — hidden until content changes
@@ -1200,7 +1177,6 @@ async function main() {
     case "maintenance": return cmdMaintenance(rest);
     case "slugs": return cmdSlugs(rest);
     case "connectors": return cmdConnectors(rest);
-    case "routing": return cmdRouting();
     case "promote": return cmdPromote(rest);
     case "ui": return cmdUi(rest);
     case undefined:

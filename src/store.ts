@@ -17,9 +17,10 @@ const TABLE = "memory";
  * the table from the Markdown source of truth. v2: people/teams/tags columns.
  * v3: semantic chunks include compact metadata headers. v4: graph column
  * (private/public store split). v5: pipe-delimited `graphs` membership column
- * (N named graphs, synced-copy model).
+ * (N named graphs, synced-copy model). v6: the home graph renamed
+ * `private` → `default` (persisted membership strings must rewrite).
  */
-const INDEX_VERSION = 5;
+const INDEX_VERSION = 6;
 
 interface IndexMeta {
   embedderId: string;

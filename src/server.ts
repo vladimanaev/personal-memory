@@ -7,9 +7,8 @@ import { spawn } from "node:child_process";
 import { loadAllEntries, ROOT } from "./ingest.js";
 import { search, indexStatus, type SearchFilters } from "./store.js";
 import { loadConnectors, loadConnectorState, writeConnector, relConnector } from "./connectors.js";
-import { loadRouting, writeRouting } from "./routing.js";
 import {
-  PRIVATE_GRAPH,
+  DEFAULT_GRAPH,
   createGraph,
   invalidateStoreCache,
   listGraphStores,
@@ -188,47 +187,6 @@ async function apiPutConnector(
   sendJson(res, 200, { ok: true, name });
 }
 
-async function apiRouting(res: ServerResponse): Promise<void> {
-  const routing = await loadRouting();
-  if (!routing) {
-    sendJson(res, 404, { error: "no routing prompt found" });
-    return;
-  }
-  sendJson(res, 200, {
-    name: routing.name,
-    origin: routing.origin,
-    path: relConnector(routing.path),
-    enabled: routing.fm?.enabled ?? false,
-    default_graph: routing.fm?.default_graph,
-    body: routing.body,
-    raw: routing.raw,
-    ...(routing.error ? { error: routing.error } : {}),
-  });
-}
-
-async function apiPutRouting(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  let raw: string;
-  try {
-    raw = await readBody(req);
-  } catch (err) {
-    sendJson(res, (err as { status?: number }).status ?? 500, {
-      error: err instanceof Error ? err.message : String(err),
-    });
-    return;
-  }
-  if (!raw.trim()) {
-    sendJson(res, 400, { error: "empty body — send the full routing file text" });
-    return;
-  }
-  try {
-    await writeRouting(raw); // always lands in the private override layer
-  } catch (err) {
-    sendJson(res, 400, { error: err instanceof Error ? err.message : String(err) });
-    return;
-  }
-  sendJson(res, 200, { ok: true, name: "graph-routing" });
-}
-
 const GRAPH_SLUG = /^[a-z0-9][a-z0-9-]*$/;
 /** Route segments under /api/graphs/ that are NOT graph slugs. */
 const RESERVED_GRAPH_ROUTES = new Set(["rules"]);
@@ -237,14 +195,14 @@ async function apiGraphs(res: ServerResponse): Promise<void> {
   const entries = await loadAllEntries();
   const graphs = [];
   for (const store of listGraphStores()) {
-    const manifest = store.graph === PRIVATE_GRAPH ? null : await loadGraphManifest(store);
+    const manifest = store.graph === DEFAULT_GRAPH ? null : await loadGraphManifest(store);
     graphs.push({
       slug: store.graph,
       name: manifest?.fm?.display_name ?? store.graph,
       description: manifest?.body?.split("\n")[0] ?? "",
       entryCount: entries.filter((e) => e.graphs.includes(store.graph)).length,
       dir: relative(ROOT, store.dir),
-      builtin: store.graph === PRIVATE_GRAPH,
+      builtin: store.graph === DEFAULT_GRAPH,
       ...(manifest?.error ? { error: manifest.error } : {}),
     });
   }
@@ -568,10 +526,6 @@ export function startServer(opts: { port: number; open: boolean }): Promise<neve
         await apiSearch(res, url.searchParams);
       } else if (url.pathname === "/api/connectors") {
         if (req.method === "GET") await apiConnectors(res);
-        else sendJson(res, 405, { error: "method not allowed" });
-      } else if (url.pathname === "/api/routing") {
-        if (req.method === "GET") await apiRouting(res);
-        else if (req.method === "PUT") await apiPutRouting(req, res);
         else sendJson(res, 405, { error: "method not allowed" });
       } else if (url.pathname === "/api/graphs") {
         if (req.method === "GET") await apiGraphs(res);

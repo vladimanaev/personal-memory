@@ -58,11 +58,12 @@ name: public
 created: '${new Date().toISOString().slice(0, 10)}'
 ---
 
-The built-in shareable graph. Eligibility criteria live in the
-graph-routing prompt (\`routing/graph-routing.md\`, overridden by
-\`memory/routing/graph-routing.md\`): only content every teammate could see —
+A shareable graph (carried over from the earlier two-graph layout — now an
+ordinary named graph). Eligibility: only content every teammate could see —
 work artifacts, announced decisions, technical learnings — never anything
 about identifiable people's performance, hiring, comp, health, or feelings.
+Doubt disqualifies; wrong placements are corrected with
+\`memory copy|move <id> --to <graph>\`, never by editing files.
 `,
     "utf8",
   );
@@ -88,4 +89,7 @@ if (existsSync(dismissalsPath)) {
 // 5. Rebuild the index (INDEX_VERSION bump forces it) + consistency check.
 execFileSync("npx", ["tsx", "src/cli.ts", "index"], { stdio: "inherit" });
 execFileSync("npx", ["tsx", "src/cli.ts", "graphs", "sync", "--dry-run"], { stdio: "inherit" });
-console.log("Done. Layout: memory/ (private) + memory-graphs/<name>/ (shared graphs).");
+if (existsSync(join(ROOT, "memory", "routing"))) {
+  console.log("ℹ memory/routing/ is a leftover from the removed routing-prompt feature — safe to delete.");
+}
+console.log("Done. Layout: memory/ (the default graph) + memory-graphs/<name>/ (shared graphs).");

@@ -98,39 +98,19 @@ export const ConnectorSchema = z
 export type Connector = z.infer<typeof ConnectorSchema>;
 
 /**
- * Public-eligibility prompt frontmatter — `routing/graph-routing.md`
- * (git-tracked default template) or `memory/routing/graph-routing.md`
- * (private override that fully replaces it). The body is the
- * natural-language criteria for what may enter the PUBLIC graph — applied
- * during the user-confirmed promotion review (and the rare explicit
- * "log as public" capture); capture itself always lands private.
- */
-export const RoutingSchema = z
-  .object({
-    /** Must equal the filename stem (`graph-routing`). */
-    name: slug,
-    /** false = skip routing entirely; every capture goes to `default_graph`. */
-    enabled: z.boolean().default(true),
-    /** Machine-readable fallback verdict — applied on any doubt. */
-    default_graph: slug.default("private"),
-  })
-  .strict();
-
-export type Routing = z.infer<typeof RoutingSchema>;
-
-/**
- * A graph name. `private` is the local-only `memory/` repo; every other graph
- * is a user-created shareable store under `memory-graphs/<slug>/`. Membership
- * is derived from where an entry's file(s) sit on disk — never stored in
- * frontmatter, so location and metadata can't drift.
+ * A graph name. `default` is the built-in home graph at `memory/` — secret,
+ * local-only, where every capture lands; every other graph is a user-created
+ * shareable store under `memory-graphs/<slug>/`. Membership is derived from
+ * where an entry's file(s) sit on disk — never stored in frontmatter, so
+ * location and metadata can't drift.
  */
 export type GraphId = string;
-export const PRIVATE_GRAPH = "private";
+export const DEFAULT_GRAPH = "default";
 
-/** Canonical membership order: private first, then lexicographic. */
+/** Canonical membership order: the default graph first, then lexicographic. */
 export function sortGraphs(gs: Iterable<string>): string[] {
   return [...new Set(gs)].sort((a, b) =>
-    a === PRIVATE_GRAPH ? -1 : b === PRIVATE_GRAPH ? 1 : a.localeCompare(b),
+    a === DEFAULT_GRAPH ? -1 : b === DEFAULT_GRAPH ? 1 : a.localeCompare(b),
   );
 }
 
@@ -169,7 +149,7 @@ export interface MemoryEntry extends Frontmatter {
 
 /** Memberships other than private (the labels shown in listings). */
 export function sharedGraphs(e: Pick<MemoryEntry, "graphs">): string[] {
-  return e.graphs.filter((g) => g !== PRIVATE_GRAPH);
+  return e.graphs.filter((g) => g !== DEFAULT_GRAPH);
 }
 
 /**

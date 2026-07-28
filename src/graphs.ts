@@ -6,14 +6,14 @@ import { promisify } from "node:util";
 import matter from "gray-matter";
 import {
   GraphManifestSchema,
-  PRIVATE_GRAPH,
+  DEFAULT_GRAPH,
   sortGraphs,
   type GraphId,
   type GraphManifest,
   type MemoryEntry,
 } from "./schema.js";
 
-export { PRIVATE_GRAPH, sortGraphs, type GraphId };
+export { DEFAULT_GRAPH, sortGraphs, type GraphId };
 
 const execFileP = promisify(execFile);
 
@@ -24,7 +24,7 @@ export const GRAPHS_PARENT = "memory-graphs";
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]*$/;
 /** Names that can never be graph slugs (route/CLI collisions). */
-const RESERVED_SLUGS = new Set([PRIVATE_GRAPH, "rules", "memory"]);
+const RESERVED_SLUGS = new Set([DEFAULT_GRAPH, "private", "rules", "memory"]);
 
 /** One physical memory store (a nested git repo of Markdown entries). */
 export interface Store {
@@ -61,7 +61,7 @@ export function storesUnder(root: string): Map<GraphId, Store> {
     );
   }
   const stores = new Map<GraphId, Store>();
-  stores.set(PRIVATE_GRAPH, storeAt(PRIVATE_GRAPH, join(root, "memory")));
+  stores.set(DEFAULT_GRAPH, storeAt(DEFAULT_GRAPH, join(root, "memory")));
   const parent = join(root, GRAPHS_PARENT);
   if (existsSync(parent)) {
     for (const ent of readdirSync(parent, { withFileTypes: true })) {
@@ -74,12 +74,12 @@ export function storesUnder(root: string): Map<GraphId, Store> {
 }
 
 /**
- * The private store is layout-independent (always `<root>/memory`) and must
- * be resolvable WITHOUT scanning the registry — module-level constants
- * (ingest paths, git dirs) depend on it at import time, before the legacy
- * layout guard is relevant.
+ * The default (home) store is layout-independent (always `<root>/memory`)
+ * and must be resolvable WITHOUT scanning the registry — module-level
+ * constants (ingest paths, git dirs) depend on it at import time, before the
+ * legacy layout guard is relevant.
  */
-const PRIVATE_STORE = storeAt(PRIVATE_GRAPH, join(ROOT, "memory"));
+const DEFAULT_STORE = storeAt(DEFAULT_GRAPH, join(ROOT, "memory"));
 
 // The registry is cheap to build but read constantly; cache per process and
 // invalidate on any operation that changes the set of graphs. The long-lived
@@ -102,7 +102,7 @@ export function listGraphStores(): Store[] {
 }
 
 export function storeFor(graph: GraphId): Store {
-  if (graph === PRIVATE_GRAPH) return PRIVATE_STORE; // registry-free fast path
+  if (graph === DEFAULT_GRAPH) return DEFAULT_STORE; // registry-free fast path
   const store = stores().get(graph);
   if (!store) {
     throw new Error(
@@ -125,7 +125,7 @@ export function graphOfPath(absPath: string, s: Map<GraphId, Store> = stores()):
       if (!best || store.dir.length > best.len) best = { graph: store.graph, len: store.dir.length };
     }
   }
-  return best?.graph ?? PRIVATE_GRAPH;
+  return best?.graph ?? DEFAULT_GRAPH;
 }
 
 /** Validate a CLI/API-supplied graph name against the registry. */
@@ -165,6 +165,31 @@ function manifestFile(fm: GraphManifest, body: string): string {
 }
 
 /**
+ * Seed body for a new graph's GRAPH.md: the user's description followed by a
+ * generic eligibility template agents consult before placing anything here.
+ * Fully editable afterwards (by hand or the web UI).
+ */
+function seedManifestBody(slug: string, description?: string): string {
+  return `${description?.trim() || `Shared memory graph '${slug}'.`}
+
+## Eligibility — what belongs in this graph
+
+An entry qualifies ONLY when ALL of these hold (edit to fit this audience):
+
+- The user could hand this graph's whole store to its audience unedited.
+- It is about work artifacts, not people's behavior or performance: announced
+  decisions and their rationale, technical learnings, project facts,
+  processes — never feelings, 1:1s, hiring, compensation, health, or
+  anything shared in confidence.
+- Every named person appears only in a neutral factual role and is never
+  evaluated.
+
+Doubt disqualifies: when unsure, the entry stays in the default graph.
+Wrong placements are corrected with \`memory copy|move <id> --to <graph>\`,
+never by editing files.`;
+}
+
+/**
  * Make sure a store exists on disk. For non-private graphs this also
  * initializes the nested git repo, README, and GRAPH.md the first time, so
  * write paths self-heal on a fresh checkout. The private store is expected
@@ -174,11 +199,11 @@ export async function ensureStore(graph: GraphId): Promise<Store> {
   const store = storeFor(graph);
   await mkdir(store.entriesDir, { recursive: true });
   await mkdir(store.summariesDir, { recursive: true });
-  if (graph !== PRIVATE_GRAPH && !existsSync(join(store.dir, ".git"))) {
+  if (graph !== DEFAULT_GRAPH && !existsSync(join(store.dir, ".git"))) {
     if (!existsSync(store.manifestPath)) {
       await writeFile(
         store.manifestPath,
-        manifestFile(GraphManifestSchema.parse({ name: graph }), `Shared memory graph '${graph}'.`),
+        manifestFile(GraphManifestSchema.parse({ name: graph }), seedManifestBody(graph)),
         "utf8",
       );
     }
@@ -209,7 +234,7 @@ export async function createGraph(opts: {
   });
   await writeFile(
     store.manifestPath,
-    manifestFile(fm, opts.description?.trim() || `Shared memory graph '${slug}'.`),
+    manifestFile(fm, seedManifestBody(slug, opts.description)),
     "utf8",
   );
   await writeFile(join(dir, "README.md"), storeReadme(slug), "utf8");
@@ -246,7 +271,7 @@ export async function loadGraphManifest(
 /** Validated write of a graph's GRAPH.md (atomic tmp+rename semantics not needed — single small file). */
 export async function writeGraphManifest(graph: GraphId, raw: string): Promise<string> {
   const store = storeFor(graph);
-  if (graph === PRIVATE_GRAPH) throw new Error("the private graph has no manifest");
+  if (graph === DEFAULT_GRAPH) throw new Error("the private graph has no manifest");
   const { data } = matter(raw);
   const parsed = GraphManifestSchema.safeParse(data);
   if (!parsed.success) {
@@ -276,7 +301,7 @@ export function validateContainment(
   targets: string[],
 ): void {
   for (const g of source.graphs) {
-    if (g === PRIVATE_GRAPH) continue;
+    if (g === DEFAULT_GRAPH) continue;
     const violations = targets.filter((id) => {
       const t = byId.get(id);
       return t !== undefined && !t.graphs.includes(g);

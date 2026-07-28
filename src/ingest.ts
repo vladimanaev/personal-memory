@@ -5,7 +5,7 @@ import { join, relative } from "node:path";
 import matter from "gray-matter";
 import {
   FrontmatterSchema,
-  PRIVATE_GRAPH,
+  DEFAULT_GRAPH,
   sortGraphs,
   type Frontmatter,
   type MemoryEntry,
@@ -13,9 +13,9 @@ import {
 import { graphOfPath, listGraphStores, storeFor, type GraphId } from "./graphs.js";
 
 export const ROOT = process.cwd();
-export const MEMORY_DIR = storeFor("private").dir;
-export const ENTRIES_DIR = storeFor("private").entriesDir;
-export const SUMMARIES_DIR = storeFor("private").summariesDir;
+export const MEMORY_DIR = storeFor(DEFAULT_GRAPH).dir;
+export const ENTRIES_DIR = storeFor(DEFAULT_GRAPH).entriesDir;
+export const SUMMARIES_DIR = storeFor(DEFAULT_GRAPH).summariesDir;
 export const INDEX_DIR = join(ROOT, ".index");
 
 // Hashes memoized by the entry-cache loader so sync never recomputes them.
@@ -231,7 +231,7 @@ export function groupEntries(
     const graphs = sortGraphs(group.map((f) => f.graph));
     const paths: Record<string, string> = {};
     for (const f of group) paths[f.graph] = f.path;
-    const home = group.find((f) => f.graph === PRIVATE_GRAPH) ?? group[0]!;
+    const home = group.find((f) => f.graph === DEFAULT_GRAPH) ?? group[0]!;
     const { graph: _g, hash, ...rest } = home;
     const entry: MemoryEntry = { ...rest, path: home.path, graphs, paths };
     hashMemo.set(entry, hash);
@@ -330,7 +330,7 @@ export function makeId(date: string, title: string): string {
 }
 
 /** Target path for an entry, partitioned by year/month (summaries are flat). */
-export function entryPath(fm: Frontmatter, graph: GraphId = "private"): string {
+export function entryPath(fm: Frontmatter, graph: GraphId = DEFAULT_GRAPH): string {
   const store = storeFor(graph);
   if (fm.type === "summary") return join(store.summariesDir, `${fm.id}.md`);
   const [year, month] = fm.date.split("-");
@@ -363,7 +363,7 @@ export async function writeEntryAll(
 export async function writeEntry(
   fm: Frontmatter,
   body: string,
-  graph: GraphId = "private",
+  graph: GraphId = DEFAULT_GRAPH,
 ): Promise<string> {
   const path = entryPath(fm, graph);
   await mkdir(join(path, ".."), { recursive: true });

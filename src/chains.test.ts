@@ -11,7 +11,7 @@ function entry(partial: Partial<MemoryEntry> & Pick<MemoryEntry, "id" | "date" |
     tags: [],
     body: "",
     path: `/entries/${partial.id}.md`,
-    graph: "private",
+    graph: "default",
     ...partial,
   } as MemoryEntry;
 }

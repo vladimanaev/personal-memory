@@ -75,7 +75,7 @@ export interface RecallHit {
   id: string;
   title: string;
   type: MemoryEntry["type"];
-  /** Sorted graph membership (private first), e.g. `["private","team-x"]`. */
+  /** Sorted graph membership (default graph first), e.g. `["default","team-x"]`. */
   graphs: string[];
   date: string;
   updated?: string;

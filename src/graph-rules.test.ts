@@ -16,7 +16,7 @@ function entry(
     body: "body",
     path: `/repo/memory/entries/2026/01/${partial.id}.md`,
     paths: {},
-    graphs: ["private"],
+    graphs: ["default"],
     ...partial,
   } as MemoryEntry;
 }
@@ -44,7 +44,7 @@ test("planRules: copy rules union memberships, idempotently", () => {
     ],
   );
   // already a member → no action
-  const member = entry({ id: "b", tags: ["arch"], graphs: ["private", "team-x"] });
+  const member = entry({ id: "b", tags: ["arch"], graphs: ["default", "team-x"] });
   assert.deepEqual(planRules([member], [copyTag("arch", "team-x")]).actions, []);
 });
 

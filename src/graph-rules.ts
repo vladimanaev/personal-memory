@@ -1,7 +1,7 @@
 import { readFile, mkdir, writeFile, rename } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
-import { MEMORY_TYPES, PRIVATE_GRAPH, type MemoryEntry } from "./schema.js";
+import { MEMORY_TYPES, DEFAULT_GRAPH, type MemoryEntry } from "./schema.js";
 import { MEMORY_DIR, loadAllEntries } from "./ingest.js";
 import { requireGraph } from "./graphs.js";
 import { copyEntry, moveEntry } from "./membership.js";
@@ -51,7 +51,7 @@ export async function readRules(): Promise<GraphRule[]> {
     );
   }
   for (const r of parsed.data.rules) {
-    if (r.graph === PRIVATE_GRAPH) throw new Error("rules cannot target the private graph");
+    if (r.graph === DEFAULT_GRAPH) throw new Error("rules cannot target the default graph (it is the home of every entry)");
     requireGraph(r.graph); // throws when a rule references a deleted/unknown graph
   }
   return parsed.data.rules;
@@ -60,7 +60,7 @@ export async function readRules(): Promise<GraphRule[]> {
 export async function writeRules(rules: GraphRule[]): Promise<string> {
   const file = RulesFileSchema.parse({ version: 1, rules });
   for (const r of file.rules) {
-    if (r.graph === PRIVATE_GRAPH) throw new Error("rules cannot target the private graph");
+    if (r.graph === DEFAULT_GRAPH) throw new Error("rules cannot target the default graph (it is the home of every entry)");
     requireGraph(r.graph);
   }
   await mkdir(join(MEMORY_DIR, "graphs"), { recursive: true });
@@ -102,7 +102,7 @@ export function planRules(entries: MemoryEntry[], rules: GraphRule[]): RulesPlan
   const actions: PlannedAction[] = [];
   const conflicts: RulesPlan["conflicts"] = [];
   for (const e of entries) {
-    if (!e.graphs.includes(PRIVATE_GRAPH)) continue;
+    if (!e.graphs.includes(DEFAULT_GRAPH)) continue;
     const matching = rules.filter((r) => matchRule(e, r));
     if (matching.length === 0) continue;
     const moves = [...new Set(matching.filter((r) => r.mode === "move").map((r) => r.graph))];

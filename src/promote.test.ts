@@ -17,7 +17,7 @@ function entry(
     body: "body",
     path: `/repo/memory/entries/2026/01/${partial.id}.md`,
     paths: {},
-    graphs: ["private"],
+    graphs: ["default"],
     ...partial,
   } as MemoryEntry;
 }
@@ -31,7 +31,7 @@ test("candidates: private-home non-members only, newest first", () => {
     [
       entry({ id: "a", date: "2026-01-01" }),
       entry({ id: "b", date: "2026-02-01" }),
-      entry({ id: "already", graphs: ["private", "public"] }),
+      entry({ id: "already", graphs: ["default", "public"] }),
       entry({ id: "moved-out", graphs: ["team-x"] }),
     ],
     [],
@@ -76,7 +76,7 @@ test("candidates: date window filters apply", () => {
 
 test("candidates: non-member follows/sources are reported as blockers", () => {
   const target = entry({ id: "t-private" });
-  const member = entry({ id: "t-member", graphs: ["private", "public"] });
+  const member = entry({ id: "t-member", graphs: ["default", "public"] });
   const c = entry({ id: "c", follows: ["t-private", "t-member"] });
   const out = promotionCandidates([c, target, member], [], { graph: "public" });
   assert.deepEqual(out.find((x) => x.id === "c")?.blockedBy, ["t-private"]);

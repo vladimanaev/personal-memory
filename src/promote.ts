@@ -1,14 +1,14 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { MemoryEntry } from "./schema.js";
+import { DEFAULT_GRAPH, type MemoryEntry } from "./schema.js";
 import { INDEX_DIR, hashEntry, loadAllEntries } from "./ingest.js";
 
 /**
- * Public-graph promotion review state. Capture always lands in the PRIVATE
- * graph; entries reach the public graph only through a user-confirmed
- * promotion review (`cli.ts move <id> --to public`, driven by the
- * promote-public skill). This module provides the mechanical half of that
- * review: the candidate list and the "user said no" memory.
+ * Promotion review state. Capture always lands in the DEFAULT graph; entries
+ * reach a shared graph only through a user-confirmed promotion review
+ * (`cli.ts copy|move <id> --to <graph>`, driven by the promote-graph skill)
+ * or standing rules. This module provides the mechanical half of the review:
+ * the per-graph candidate list and the "user said no" memory.
  *
  * Dismissals are keyed by (id, content hash): declining an entry hides it
  * from future candidate lists AS LONG AS its content is unchanged — a
@@ -99,7 +99,7 @@ export function promotionCandidates(
   );
   const byId = new Map(entries.map((e) => [e.id, e]));
   return entries
-    .filter((e) => e.graphs.includes("private") && !e.graphs.includes(opts.graph))
+    .filter((e) => e.graphs.includes(DEFAULT_GRAPH) && !e.graphs.includes(opts.graph))
     .filter((e) => (opts.since ? e.date >= opts.since : true))
     .filter((e) => (opts.until ? e.date <= opts.until : true))
     .filter((e) => dismissedHash.get(e.id) !== hashEntry(e))

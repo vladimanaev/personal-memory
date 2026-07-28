@@ -2,9 +2,9 @@ import { execFile } from "node:child_process";
 import { existsSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { storeFor, type GraphId } from "./graphs.js";
+import { DEFAULT_GRAPH, storeFor, type GraphId } from "./graphs.js";
 
-const MEMORY_DIR = storeFor("private").dir;
+const MEMORY_DIR = storeFor(DEFAULT_GRAPH).dir;
 
 const execFileP = promisify(execFile);
 
