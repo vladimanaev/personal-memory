@@ -264,6 +264,31 @@ rm -rf .index
 npm run index -- --force
 ```
 
+## Upgrading an existing clone to the two-graph layout
+
+Pulling the private/public split onto a machine with an existing store is
+safe by construction: `memory/` is gitignored and versioned in its own nested
+repo, so `git pull` cannot touch a single entry file, and **every existing
+memory is automatically private** — an entry's graph is derived from its
+location, so nothing needs migrating or reclassifying. The empty public store
+and the new index format also heal lazily on first use.
+
+Still, run the (idempotent) init script right after pulling:
+
+```bash
+git pull
+./scripts/init-public-graph.sh
+```
+
+It checkpoints `memory/.git`, creates `memory-public/` with its own git repo,
+and rebuilds the index eagerly. The rebuild matters: the pre-split index has
+no `graph` column, so until it runs — it happens automatically on the next
+`memory add` or `memory index`, taking a few minutes once — graph-scoped
+queries like `recall --graph public` fail with a schema error. Running the
+script makes that one-time cost happen when you expect it instead of
+mid-question. (Marketplace/plugin users: update the clone `MEMORY_HOME`
+points at before using the new `promote`/`move`/`routing` commands.)
+
 ## Privacy
 
 The default setup is intentionally local:
