@@ -184,6 +184,93 @@ input {
   box-shadow: inset 0 0 0 1px var(--border);
 }
 
+/* graph picker — a <details> dropdown styled to match the nav links */
+.nav-menu {
+  position: relative;
+}
+
+.nav-menu > summary {
+  list-style: none;
+  cursor: pointer;
+  color: var(--ink-2);
+  padding: 4px 22px 4px 10px;
+  border-radius: 6px;
+  font-size: 14px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%238f8d85' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+}
+
+.nav-menu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.nav-menu > summary:hover {
+  color: var(--ink);
+}
+
+.nav-menu > summary[aria-current="page"] {
+  color: var(--ink);
+  font-weight: 600;
+  background-color: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+.nav-menu-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 40;
+  min-width: 200px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 5px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.nav-menu-panel a {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 13.5px;
+  color: var(--ink-2);
+  text-decoration: none;
+}
+
+.nav-menu-panel a:hover {
+  background: var(--surface-2);
+  color: var(--ink);
+}
+
+.nav-menu-panel a[aria-current="page"] {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.nav-menu-panel a .n {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.nav-menu-div {
+  height: 1px;
+  background: var(--grid);
+  margin: 4px 2px;
+}
+
+.nav-menu-empty {
+  padding: 6px 10px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
 .header-spacer {
   flex: 1;
 }
@@ -822,14 +909,15 @@ h2 {
   color: var(--accent-text);
 }
 
-/* public-graph marker — a subtle outlined pill so shareable entries read
-   at a glance without shouting; private (the default) stays unmarked */
-.badge.gpub {
+/* shared-graph marker — a subtle outlined pill, one per non-private membership,
+   so shareable entries read at a glance without shouting; private stays unmarked */
+.badge.gshare {
   color: var(--accent-text);
   border: 1px solid var(--accent-soft);
   border-radius: 999px;
   padding: 1px 7px;
   letter-spacing: 0.05em;
+  text-transform: none;
 }
 
 /* colored type dot on a badge — text stays muted, only the dot wears --tc */
@@ -2212,4 +2300,269 @@ dialog.modal.entry-modal .fm {
 .chip.chip-primary:hover {
   filter: brightness(1.1);
   color: #fff;
+}
+
+.modal-textarea {
+  height: auto;
+  min-height: 64px;
+  padding: 8px 10px;
+  font: 13px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  resize: vertical;
+}
+
+/* ---------- graphs management ---------- */
+
+.graphs-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.graphs-head h2 {
+  margin-bottom: 14px;
+}
+
+.rules-head {
+  margin-top: 8px;
+}
+
+.grow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 70px 96px;
+  gap: 14px;
+  align-items: baseline;
+  padding: 13px 4px;
+  border-bottom: 1px solid var(--grid);
+}
+
+.gcol-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.gtop {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.gslug {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.gdesc {
+  font-size: 13px;
+  color: var(--ink-2);
+  max-width: 72ch;
+}
+
+.gcol-n {
+  text-align: right;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  font-size: 13.5px;
+}
+
+.gcol-act {
+  display: inline-flex;
+  gap: 12px;
+  justify-content: flex-end;
+}
+
+.glink {
+  font-size: 13px;
+  color: var(--ink-2);
+  text-decoration: none;
+}
+
+.glink:hover {
+  color: var(--accent-text);
+}
+
+@media (max-width: 560px) {
+  .grow {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .gcol-act {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+}
+
+/* ---------- distribution rules table ---------- */
+
+.rules-table {
+  border-top: 1px solid var(--grid);
+  margin-top: 4px;
+}
+
+.rule-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 10px 4px;
+  border-bottom: 1px solid var(--grid);
+}
+
+.rule-input {
+  height: 30px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink-2);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0 8px;
+}
+
+.rule-input:hover {
+  color: var(--ink);
+  border-color: var(--baseline);
+}
+
+.rule-input:focus,
+.rule-input:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* the tag combobox occupies the value slot at the same height as the selects */
+.rule-value {
+  display: inline-flex;
+}
+
+.rule-value .combo-input {
+  width: 160px;
+  height: 30px;
+}
+
+.rule-arrow {
+  color: var(--baseline);
+}
+
+.rule-x {
+  margin-left: auto;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--muted);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.rule-x:hover {
+  color: var(--ink);
+  border-color: var(--baseline);
+}
+
+.rules-empty {
+  padding: 16px 4px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.rules-foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.rules-dirty {
+  font-size: 12.5px;
+  color: var(--warn-text);
+}
+
+.rules-foot-actions {
+  display: inline-flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.rules-err {
+  margin-top: 10px;
+  font-size: 12.5px;
+  color: var(--warn-text);
+  background: var(--warn-bg);
+  border-radius: 6px;
+  padding: 6px 9px;
+}
+
+/* ---------- entry detail: per-graph paths ---------- */
+
+.gpath {
+  margin-bottom: 8px;
+}
+
+.gpath-name {
+  display: block;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--accent-text);
+  margin-bottom: 4px;
+}
+
+/* ---------- backfill preview modal ---------- */
+
+dialog.modal.backfill-modal {
+  width: min(560px, calc(100vw - 48px));
+}
+
+.bf-section {
+  margin-bottom: 14px;
+}
+
+.bf-group {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--grid);
+  font-size: 13.5px;
+}
+
+.bf-label {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+
+.bf-n {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.bf-conflict {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  padding: 4px 0;
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+
+.bf-conflict code {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--warn-text);
+  word-break: break-all;
+}
+
+.bf-empty {
+  color: var(--muted);
+  font-size: 13px;
+  padding: 4px 0 8px;
 }

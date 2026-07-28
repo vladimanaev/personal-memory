@@ -20,8 +20,10 @@ import { comboboxHtml, wireCombobox } from "./combobox.js";
  * @property {string} [updated]
  * @property {string} body
  * @property {string} path
- * @property {"private"|"public"} [graph]
- * @property {boolean} [ghost] public entry pulled into the private graph for a cross-graph chain edge
+ * @property {string[]} [graphs] sorted graph memberships (private first); the server ships this now
+ * @property {Record<string, string>} [paths] per-graph relative path of this entry's synced copy
+ * @property {"private"|"public"} [graph] legacy single-graph field — read only through entryGraphs()
+ * @property {boolean} [ghost] an entry from another graph pulled into the private view for a cross-graph chain edge
  * @property {ChainInfo} [chain]
  *
  * @typedef {Object} ChainInfo
@@ -47,6 +49,29 @@ import { comboboxHtml, wireCombobox } from "./combobox.js";
  * @property {string} bestChunk
  *
  * @typedef {{ type: string, person: string, team: string, tag: string, since: string, until: string, graph: string }} Facets
+ *
+ * @typedef {Object} Graph
+ * @property {string} slug
+ * @property {string} name
+ * @property {string} description
+ * @property {number} entryCount
+ * @property {string} dir
+ * @property {boolean} builtin
+ * @property {string} [error]
+ *
+ * @typedef {Object} GraphManifest
+ * @property {string} slug
+ * @property {string} path
+ * @property {number} entryCount
+ * @property {string} raw
+ * @property {string} [body]
+ * @property {string} [display_name]
+ * @property {string} [error]
+ *
+ * @typedef {Object} GraphRule
+ * @property {{ tag?: string, type?: string }} match
+ * @property {string} graph
+ * @property {"copy"|"move"} mode
  *
  * @typedef {Object} Connector
  * @property {string} name
@@ -155,6 +180,15 @@ const state = {
   hits: null,
   /** @type {Facets} */
   facets: { type: "", person: "", team: "", tag: "", since: "", until: "", graph: "" },
+  /** @type {Graph[]|null} the graph registry; null until boot() fetches /api/graphs */
+  graphs: null,
+  /** @type {GraphManifest|null} lazy-loaded per graphmanifest view */
+  graphManifest: null,
+  /** @type {GraphRule[]|null} saved rules, lazy-loaded on first graphs-screen visit */
+  rules: null,
+  /** @type {GraphRule[]|null} working copy edited in the rules table; null = not editing */
+  rulesDraft: null,
+  rulesError: "",
   /** @type {Connector[]|null} lazy-loaded on first visit; null = not fetched */
   connectors: null,
   /** @type {RoutingDoc|null} lazy-loaded on first visit; null = not fetched */
@@ -172,6 +206,27 @@ const state = {
 };
 
 // ---------- helpers ----------
+
+/** An entry's graph memberships, tolerating the pre-multigraph shape.
+ * @param {Entry} e @returns {string[]} */
+function entryGraphs(e) {
+  return e.graphs ?? [e.graph ?? "private"];
+}
+
+/** Registry ordered for display: private first, then the rest by name.
+ * @returns {Graph[]} */
+function orderedGraphs() {
+  const gs = state.graphs ?? [];
+  return [...gs].sort((a, b) =>
+    a.slug === "private" ? -1 : b.slug === "private" ? 1 : a.name.localeCompare(b.name),
+  );
+}
+
+/** Named (non-private) graphs — the eligible targets for rules and promotion.
+ * @returns {Graph[]} */
+function namedGraphs() {
+  return orderedGraphs().filter((g) => g.slug !== "private");
+}
 
 /** @param {unknown} s */
 function esc(s) {
@@ -327,13 +382,16 @@ function splitFrontmatter(text) {
 
 // ---------- routing ----------
 
-/** @returns {{ view: "record" } | { view: "entry", id: string } | { view: "graph", graph: "private"|"public" } | { view: "connectors" } | { view: "connector", name: string } | { view: "maintenance" } | { view: "routing" }} */
+/** @returns {{ view: "record" } | { view: "entry", id: string } | { view: "graph", graph: string } | { view: "graphs" } | { view: "graphmanifest", slug: string } | { view: "connectors" } | { view: "connector", name: string } | { view: "maintenance" } | { view: "routing" }} */
 function route() {
   const h = location.hash;
   if (h.startsWith("#/entry/")) return { view: "entry", id: decodeURIComponent(h.slice(8)) };
   if (h.startsWith("#/entries")) return { view: "record" }; // legacy alias — old links keep working
-  if (h.startsWith("#/graph/public")) return { view: "graph", graph: "public" };
-  if (h.startsWith("#/graph")) return { view: "graph", graph: "private" }; // #/graph/private + legacy #/graph
+  // #/graphs* is checked before #/graph* — the management screen shares the prefix
+  if (h.startsWith("#/graphs/")) return { view: "graphmanifest", slug: decodeURIComponent(h.slice(9)) };
+  if (h.startsWith("#/graphs")) return { view: "graphs" };
+  if (h.startsWith("#/graph/")) return { view: "graph", graph: decodeURIComponent(h.slice(8)) };
+  if (h.startsWith("#/graph")) return { view: "graph", graph: "private" }; // legacy #/graph → home graph
   if (h.startsWith("#/maintenance")) return { view: "maintenance" };
   if (h.startsWith("#/routing")) return { view: "routing" };
   if (h.startsWith("#/connector/")) return { view: "connector", name: decodeURIComponent(h.slice(12)) };
@@ -357,12 +415,29 @@ function renderHeader() {
       status = `<span class="status ok" title="all ${idx.totalEntries} entries indexed · ${esc(model)} · ${idx.dim}d">indexed ${idx.indexedEntries}/${idx.totalEntries}</span>`;
     }
   }
+  const onGraph = r.view === "graph";
+  const curGraph = onGraph ? r.graph : "";
+  const pickerItems = orderedGraphs()
+    .map(
+      (g) =>
+        `<a href="#/graph/${encodeURIComponent(g.slug)}"${
+          onGraph && curGraph === g.slug ? ' aria-current="page"' : ""
+        }>${esc(g.name)}<span class="n">${g.entryCount}</span></a>`,
+    )
+    .join("");
   $("#header").innerHTML = `
     <a class="wordmark" href="#/">Personal Memory</a>
     <nav>
       <a href="#/" ${r.view === "record" || r.view === "entry" ? 'aria-current="page"' : ""}>Record</a>
-      <a href="#/graph/private" ${r.view === "graph" && r.graph === "private" ? 'aria-current="page"' : ""}>Private Graph</a>
-      <a href="#/graph/public" ${r.view === "graph" && r.graph === "public" ? 'aria-current="page"' : ""}>Public Graph</a>
+      <details class="nav-menu" id="gnav">
+        <summary${onGraph ? ' aria-current="page"' : ""}>${onGraph ? `Graph: ${esc(curGraph)}` : "Graph"}</summary>
+        <div class="nav-menu-panel">
+          ${pickerItems || `<span class="nav-menu-empty">loading…</span>`}
+          <div class="nav-menu-div"></div>
+          <a href="#/graphs">manage graphs…</a>
+        </div>
+      </details>
+      <a href="#/graphs" ${r.view === "graphs" || r.view === "graphmanifest" ? 'aria-current="page"' : ""}>Graphs</a>
       <a href="#/maintenance" ${r.view === "maintenance" ? 'aria-current="page"' : ""}>Maintenance</a>
       <a href="#/connectors" ${r.view === "connectors" || r.view === "connector" || r.view === "routing" ? 'aria-current="page"' : ""}>Connectors</a>
     </nav>
@@ -510,10 +585,13 @@ function monthName(key) {
   return MONTH_FMT.format(new Date(`${key}-01T00:00:00`));
 }
 
-/** public-graph badge for an entry; private entries (the default) stay unlabeled
+/** one pill per non-private membership; a private-only entry (the default) stays unlabeled
  * @param {Entry} e */
 function graphBadge(e) {
-  return (e.graph ?? "private") === "public" ? `<span class="badge gpub">public</span>` : "";
+  return entryGraphs(e)
+    .filter((g) => g !== "private")
+    .map((g) => `<span class="badge gshare">${esc(g)}</span>`)
+    .join("");
 }
 
 /** same, but resolved from an entry id against the loaded record (no badge if absent)
@@ -618,10 +696,10 @@ function railHtml() {
     }
   }
 
-  const publicCount = es.filter((e) => (e.graph ?? "private") === "public").length;
+  const sharedCount = es.filter((e) => entryGraphs(e).some((g) => g !== "private")).length;
   const colophon = [
     `<b>${es.length}</b> entries`,
-    publicCount > 0 ? `<b>${publicCount}</b> public` : null,
+    sharedCount > 0 ? `<b>${sharedCount}</b> shared` : null,
     `<b>${people.length}</b> people`,
     teams.length ? `<b>${teams.length}</b> teams` : null,
     `<b>${tags.length}</b> tags`,
@@ -696,7 +774,7 @@ function applyFacets(entries) {
     if (f.team && !e.teams.includes(f.team)) return false;
     if (f.tag && !e.tags.includes(f.tag)) return false;
     if (f.type && e.type !== f.type) return false;
-    if (f.graph && (e.graph ?? "private") !== f.graph) return false;
+    if (f.graph && !entryGraphs(e).includes(f.graph)) return false;
     if (f.since && e.date < f.since) return false;
     if (f.until && e.date > f.until) return false;
     return true;
@@ -826,8 +904,13 @@ function renderSearchPanel(opts = {}) {
   const typeCounts = TYPE_ORDER.map((t) => ({ t, n: state.entries.filter((e) => e.type === t).length })).filter(
     (x) => x.n > 0,
   );
-  const publicCount = state.entries.filter((e) => (e.graph ?? "private") === "public").length;
-  const privateCount = state.entries.length - publicCount;
+  // one scope chip per registry graph, counted by membership; multi-membership
+  // means these can sum past the total, so we never subtract to derive a count
+  const graphChips = orderedGraphs().map((g) => ({
+    slug: g.slug,
+    name: g.name,
+    n: state.entries.filter((e) => entryGraphs(e).includes(g.slug)).length,
+  }));
 
   $("#search-panel").innerHTML = `
     <div class="searchbar">
@@ -846,8 +929,12 @@ function renderSearchPanel(opts = {}) {
     </div>
     <div class="scope-chips" role="group" aria-label="filter by graph">
       <button class="chip" data-fgraph="" aria-pressed="${f.graph === ""}">all</button>
-      <button class="chip" data-fgraph="private" aria-pressed="${f.graph === "private"}">private<span class="n">${privateCount}</span></button>
-      <button class="chip" data-fgraph="public" aria-pressed="${f.graph === "public"}">public<span class="n">${publicCount}</span></button>
+      ${graphChips
+        .map(
+          (g) =>
+            `<button class="chip" data-fgraph="${esc(g.slug)}" aria-pressed="${f.graph === g.slug}">${esc(g.name)}<span class="n">${g.n}</span></button>`,
+        )
+        .join("")}
     </div>
     <div class="facets">
       ${comboboxHtml("person", f.person)}
@@ -973,6 +1060,21 @@ function entryDetailHtml(e) {
   const chipList = (xs, fk) =>
     xs.length ? `<div class="chips">${xs.map((x) => chip(fk, x)).join("")}</div>` : `<span class="none">—</span>`;
 
+  // a synced entry lives at one path per graph — list them all; otherwise the single box
+  const paths = e.paths ?? {};
+  const pathSection =
+    Object.keys(paths).length > 1
+      ? section(
+          "graphs",
+          Object.entries(paths)
+            .map(
+              ([g, p]) =>
+                `<div class="gpath"><span class="gpath-name">${esc(g)}</span><div class="pathbox">${pathWithCopy(p)}</div></div>`,
+            )
+            .join(""),
+        )
+      : section("path", `<div class="pathbox">${pathWithCopy(e.path)}</div>`);
+
   return `
     <div class="detail">
       <h1>${esc(e.title)}</h1>
@@ -986,7 +1088,7 @@ function entryDetailHtml(e) {
       <div class="detail-grid">
         <article class="prose">${renderMarkdown(e.body)}</article>
         <aside class="fm">
-          ${section("path", `<div class="pathbox">${pathWithCopy(e.path)}</div>`)}
+          ${pathSection}
           ${e.chain ? section("timeline", chainTimelineHtml(e)) : ""}
           ${section("people", chipList(e.people, "person"))}
           ${section("teams", chipList(e.teams, "team"))}
@@ -1652,18 +1754,454 @@ function renderRouting() {
   });
 }
 
+// ---------- graphs management ----------
+
+/** @param {GraphRule} r normalize to a single-key match + fixed key order (stable for dirty compare) */
+function cloneRule(r) {
+  const match = r.match.type !== undefined ? { type: r.match.type } : { tag: r.match.tag ?? "" };
+  return { match, graph: r.graph, mode: r.mode };
+}
+
+/** draft differs from what's persisted */
+function rulesDirty() {
+  const norm = (/** @type {GraphRule[]|null} */ rs) => JSON.stringify((rs ?? []).map(cloneRule));
+  return norm(state.rules) !== norm(state.rulesDraft);
+}
+
+/** @param {GraphRule[]} draft @returns {string} "" when every rule is complete */
+function rulesValidation(draft) {
+  for (const r of draft) {
+    if (!(r.match.type ?? r.match.tag ?? "")) return "every rule needs a tag or type value";
+    if (!r.graph) return "every rule needs a target graph";
+  }
+  return "";
+}
+
+async function loadRules() {
+  const res = await fetch("/api/graphs/rules");
+  if (!res.ok) throw new Error(`failed to load /api/graphs/rules (${res.status})`);
+  state.rules = /** @type {{ rules: GraphRule[] }} */ (await res.json()).rules;
+}
+
+/** @param {Graph} g one ledger row on the graphs screen */
+function graphLedgerRow(g) {
+  const builtin = g.slug === "private";
+  return `
+    <div class="grow">
+      <span class="gcol-main">
+        <span class="gtop">
+          <span class="gname">${esc(g.name)}</span>
+          <code class="gslug">${esc(g.slug)}</code>
+          ${builtin ? `<span class="badge">builtin</span>` : ""}
+          ${g.error ? `<span class="cerr">${esc(g.error)}</span>` : ""}
+        </span>
+        ${g.description ? `<span class="gdesc">${esc(g.description)}</span>` : ""}
+      </span>
+      <span class="gcol-n">${g.entryCount}</span>
+      <span class="gcol-act">
+        <a class="glink" href="#/graph/${encodeURIComponent(g.slug)}">view</a>
+        ${builtin ? "" : `<a class="glink" href="#/graphs/${encodeURIComponent(g.slug)}">edit</a>`}
+      </span>
+    </div>`;
+}
+
+/** Re-render only the rules table + footer into #rules-host (delegated handlers live on the host). */
+function renderRulesTable() {
+  const host = document.getElementById("rules-host");
+  if (!host) return;
+  const draft = state.rulesDraft ?? [];
+  const tagVocab = countBy(state.entries, (e) => e.tags);
+  const targets = namedGraphs();
+  const dirty = rulesDirty();
+
+  const rows = draft
+    .map((rule, i) => {
+      const kind = rule.match.type !== undefined ? "type" : "tag";
+      const value = kind === "type" ? (rule.match.type ?? "") : (rule.match.tag ?? "");
+      const valueCell =
+        kind === "tag"
+          ? `<div class="rule-value" data-rule-idx="${i}">${comboboxHtml("tag", value)}</div>`
+          : `<select class="rule-input" data-rfield="value" data-rule-idx="${i}" aria-label="type">
+               <option value="" ${value === "" ? "selected" : ""}>type…</option>
+               ${TYPE_ORDER.map((t) => `<option value="${esc(t)}" ${value === t ? "selected" : ""}>${esc(t)}</option>`).join("")}
+             </select>`;
+      return `
+        <div class="rule-row">
+          <select class="rule-input" data-rfield="kind" data-rule-idx="${i}" aria-label="match kind">
+            <option value="tag" ${kind === "tag" ? "selected" : ""}>tag</option>
+            <option value="type" ${kind === "type" ? "selected" : ""}>type</option>
+          </select>
+          ${valueCell}
+          <span class="rule-arrow">→</span>
+          <select class="rule-input" data-rfield="graph" data-rule-idx="${i}" aria-label="target graph">
+            <option value="" ${rule.graph === "" ? "selected" : ""}>graph…</option>
+            ${targets.map((g) => `<option value="${esc(g.slug)}" ${rule.graph === g.slug ? "selected" : ""}>${esc(g.name)}</option>`).join("")}
+          </select>
+          <select class="rule-input" data-rfield="mode" data-rule-idx="${i}" aria-label="mode">
+            <option value="copy" ${rule.mode === "copy" ? "selected" : ""}>copy</option>
+            <option value="move" ${rule.mode === "move" ? "selected" : ""}>move</option>
+          </select>
+          <button class="rule-x" data-rremove="${i}" aria-label="remove rule">×</button>
+        </div>`;
+    })
+    .join("");
+
+  host.innerHTML = `
+    <div class="rules-table">
+      ${draft.length ? rows : `<div class="rules-empty">no rules yet — captures land wherever the agent routes them</div>`}
+    </div>
+    <div class="rules-foot">
+      <button class="chip" id="rule-add">+ add rule</button>
+      ${dirty ? `<span class="rules-dirty">unsaved changes</span>` : ""}
+      <span class="rules-foot-actions">
+        <button class="chip chip-primary" id="rules-save" ${dirty ? "" : "disabled"}>preview &amp; save</button>
+        <button class="chip" id="rules-discard" ${dirty ? "" : "disabled"}>discard changes</button>
+      </span>
+    </div>
+    ${state.rulesError ? `<div class="rules-err">${esc(state.rulesError)}</div>` : ""}`;
+
+  for (const cell of host.querySelectorAll(".rule-value[data-rule-idx]")) {
+    const idx = Number(cell.getAttribute("data-rule-idx"));
+    const combo = cell.querySelector(".combo");
+    if (combo instanceof HTMLElement) {
+      wireCombobox(combo, tagVocab, (val) => {
+        const r = state.rulesDraft?.[idx];
+        if (!r) return;
+        r.match = { tag: val };
+        state.rulesError = "";
+        renderRulesTable();
+      });
+    }
+  }
+}
+
+/**
+ * Preview (and then persist) a rules run. `draftRules` = the working rules to
+ * validate/backfill/save; `null` = run the already-saved rules against the
+ * record (the "run rules now" path — no rules travel in the body).
+ * @param {GraphRule[]|null} draftRules
+ */
+async function openBackfillModal(draftRules) {
+  /** @param {boolean} dryRun @param {boolean} confirm */
+  const applyBody = (dryRun, confirm) => {
+    /** @type {{ dryRun: boolean, rules?: GraphRule[], confirm?: boolean }} */
+    const b = { dryRun };
+    if (draftRules) b.rules = draftRules;
+    if (confirm) b.confirm = true;
+    return b;
+  };
+
+  /** @type {{ plan?: { actions?: { id: string, action: string, graph: string }[], conflicts?: { id: string, reason: string }[] } }} */
+  let preview;
+  try {
+    const res = await fetch("/api/graphs/rules/apply", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(applyBody(true, false)),
+    });
+    preview = await res.json();
+    if (!res.ok) throw new Error(/** @type {{ error?: string }} */ (preview).error ?? `preview failed (${res.status})`);
+  } catch (err) {
+    state.rulesError = err instanceof Error ? err.message : String(err);
+    renderRulesTable();
+    return;
+  }
+
+  const actions = preview.plan?.actions ?? [];
+  const conflicts = preview.plan?.conflicts ?? [];
+  /** @type {Map<string, number>} */
+  const groups = new Map();
+  for (const a of actions) {
+    const key = `${a.action} → ${a.graph}`;
+    groups.set(key, (groups.get(key) ?? 0) + 1);
+  }
+  const groupHtml = [...groups.entries()]
+    .map(([k, n]) => `<div class="bf-group"><span class="bf-label">${esc(k)}</span><span class="bf-n">${n} entr${n === 1 ? "y" : "ies"}</span></div>`)
+    .join("");
+  const conflictHtml = conflicts.length
+    ? `<div class="bf-section"><div class="mk">conflicts (${conflicts.length})</div>${conflicts
+        .map((c) => `<div class="bf-conflict"><code>${esc(c.id)}</code><span>${esc(c.reason)}</span></div>`)
+        .join("")}</div>`
+    : "";
+  const effect = actions.length
+    ? `<div class="bf-section">${groupHtml}</div>`
+    : `<div class="bf-empty">no existing entries match — these rules apply to future captures only</div>`;
+
+  openModal("backfill preview", (body, close) => {
+    body.innerHTML = `
+      ${effect}
+      ${conflictHtml}
+      <div class="modal-err" id="bf-err" hidden></div>
+      <div class="modal-actions">
+        <button type="button" class="chip" id="bf-cancel">cancel</button>
+        ${draftRules ? `<button type="button" class="chip" id="bf-saveonly">save rules only</button>` : ""}
+        <button type="button" class="chip chip-primary" id="bf-apply">${actions.length ? "apply backfill" : "apply"}${draftRules ? " &amp; save" : ""}</button>
+      </div>`;
+    const err = $("#bf-err");
+    const fail = (/** @type {unknown} */ e) => {
+      err.textContent = e instanceof Error ? e.message : String(e);
+      err.hidden = false;
+    };
+    $("#bf-cancel").addEventListener("click", close);
+    const saveOnly = document.getElementById("bf-saveonly");
+    if (saveOnly && draftRules) {
+      saveOnly.addEventListener("click", async () => {
+        err.hidden = true;
+        try {
+          const res = await fetch("/api/graphs/rules", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ rules: draftRules }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data.error ?? `save failed (${res.status})`);
+          state.rules = draftRules.map(cloneRule);
+          close();
+          render();
+        } catch (e) {
+          fail(e);
+        }
+      });
+    }
+    $("#bf-apply").addEventListener("click", async () => {
+      err.hidden = true;
+      try {
+        const res = await fetch("/api/graphs/rules/apply", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(applyBody(false, true)),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error ?? `apply failed (${res.status})`);
+        if (draftRules) state.rules = draftRules.map(cloneRule);
+        await Promise.all([reloadRecordData(), loadGraphs()]);
+        close();
+        render();
+      } catch (e) {
+        fail(e);
+      }
+    });
+  }, { className: "backfill-modal" });
+}
+
+function openNewGraphModal() {
+  openModal("new graph", (body, close) => {
+    body.innerHTML = `
+      <form class="modal-form" id="ng-form">
+        <label class="modal-label" for="ng-name">name</label>
+        <input class="modal-input" id="ng-name" type="text" placeholder="e.g. Team X" autocomplete="off" />
+        <label class="modal-label" for="ng-slug">slug</label>
+        <input class="modal-input" id="ng-slug" type="text" placeholder="team-x" autocomplete="off" spellcheck="false" />
+        <div class="modal-hint">created at <code id="ng-path">memory-graphs/&lt;slug&gt;/GRAPH.md</code></div>
+        <label class="modal-label" for="ng-desc">description</label>
+        <textarea class="modal-input modal-textarea" id="ng-desc" rows="3" placeholder="what belongs in this graph"></textarea>
+        <div class="modal-err" id="ng-err" hidden></div>
+        <div class="modal-actions">
+          <button type="button" class="chip" id="ng-cancel">cancel</button>
+          <button type="submit" class="chip chip-primary">create</button>
+        </div>
+      </form>`;
+    const nameEl = /** @type {HTMLInputElement} */ ($("#ng-name"));
+    const slugEl = /** @type {HTMLInputElement} */ ($("#ng-slug"));
+    const descEl = /** @type {HTMLTextAreaElement} */ ($("#ng-desc"));
+    const err = $("#ng-err");
+    const pathEl = $("#ng-path");
+    let slugEdited = false;
+    const kebab = (/** @type {string} */ s) =>
+      s.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+    const syncPath = () => {
+      pathEl.textContent = `memory-graphs/${slugEl.value.trim() || "<slug>"}/GRAPH.md`;
+    };
+    nameEl.addEventListener("input", () => {
+      err.hidden = true;
+      if (!slugEdited) slugEl.value = kebab(nameEl.value);
+      syncPath();
+    });
+    slugEl.addEventListener("input", () => {
+      slugEdited = true;
+      err.hidden = true;
+      syncPath();
+    });
+    $("#ng-cancel").addEventListener("click", close);
+    $("#ng-form").addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const name = nameEl.value.trim();
+      const slug = slugEl.value.trim();
+      const description = descEl.value.trim();
+      const fail = (/** @type {string} */ msg) => {
+        err.textContent = msg;
+        err.hidden = false;
+      };
+      if (!name) return fail("name is required");
+      if (!/^[a-z0-9][a-z0-9-]*$/.test(slug)) return fail("slug must be a lower-kebab slug, e.g. team-x");
+      if (["private", "rules", "memory"].includes(slug)) return fail(`"${slug}" is reserved`);
+      if ((state.graphs ?? []).some((g) => g.slug === slug)) return fail(`a graph "${slug}" already exists`);
+      try {
+        const res = await fetch("/api/graphs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ slug, name, description, confirm: true }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error ?? `create failed (${res.status})`);
+        await loadGraphs();
+        close();
+        render();
+      } catch (e) {
+        fail(e instanceof Error ? e.message : String(e));
+      }
+    });
+    nameEl.focus();
+  });
+}
+
+function renderGraphs() {
+  const main = $("#main");
+  if (state.graphs === null || state.rules === null) {
+    main.innerHTML = `<div class="loading">loading…</div>`;
+    Promise.all([
+      state.graphs === null ? loadGraphs() : Promise.resolve(),
+      state.rules === null ? loadRules() : Promise.resolve(),
+    ]).then(render, (err) => {
+      main.innerHTML = `<div class="error-banner">${esc(err instanceof Error ? err.message : String(err))}</div>`;
+    });
+    return;
+  }
+  if (state.rulesDraft === null) state.rulesDraft = (state.rules ?? []).map(cloneRule);
+
+  main.innerHTML = `
+    <div class="colophon">graphs partition the store into shareable views — capture lands in <b>private</b>, and an entry reaches a named graph by promotion or a distribution rule<span class="sep">·</span>named graphs are self-contained; only private can reference entries that left it</div>
+    <div class="graphs-head">
+      <h2>Graphs</h2>
+      <button class="chip" id="new-graph">+ new graph</button>
+    </div>
+    <div class="ledger l-top glist">${orderedGraphs().map(graphLedgerRow).join("")}</div>
+    <div class="graphs-head rules-head">
+      <h2>Distribution rules</h2>
+      <button class="chip" id="rules-run">run rules now</button>
+    </div>
+    <div class="colophon">a rule copies or moves every entry matching a tag or type into a target graph — applied on capture, and on demand to the existing record</div>
+    <div id="rules-host"></div>
+  `;
+  $("#new-graph").addEventListener("click", openNewGraphModal);
+  $("#rules-run").addEventListener("click", () => openBackfillModal(null));
+
+  const host = $("#rules-host");
+  host.addEventListener("change", (ev) => {
+    const el = ev.target;
+    if (!(el instanceof HTMLSelectElement)) return;
+    const idx = Number(el.getAttribute("data-rule-idx"));
+    const r = state.rulesDraft?.[idx];
+    if (!r || Number.isNaN(idx)) return;
+    const field = el.getAttribute("data-rfield");
+    if (field === "kind") r.match = el.value === "type" ? { type: "" } : { tag: "" };
+    else if (field === "value") r.match = { type: el.value };
+    else if (field === "graph") r.graph = el.value;
+    else if (field === "mode") r.mode = /** @type {"copy"|"move"} */ (el.value);
+    state.rulesError = "";
+    renderRulesTable();
+  });
+  host.addEventListener("click", (ev) => {
+    const t = ev.target;
+    if (!(t instanceof HTMLElement)) return;
+    const rm = t.closest("[data-rremove]");
+    if (rm) {
+      state.rulesDraft?.splice(Number(rm.getAttribute("data-rremove")), 1);
+      state.rulesError = "";
+      renderRulesTable();
+      return;
+    }
+    if (t.closest("#rule-add")) {
+      state.rulesDraft?.push({ match: { tag: "" }, graph: "", mode: "copy" });
+      renderRulesTable();
+      return;
+    }
+    if (t.closest("#rules-discard")) {
+      state.rulesDraft = (state.rules ?? []).map(cloneRule);
+      state.rulesError = "";
+      renderRulesTable();
+      return;
+    }
+    if (t.closest("#rules-save")) {
+      const draft = state.rulesDraft ?? [];
+      const verr = rulesValidation(draft);
+      if (verr) {
+        state.rulesError = verr;
+        renderRulesTable();
+        return;
+      }
+      state.rulesError = "";
+      openBackfillModal(draft);
+    }
+  });
+  renderRulesTable();
+}
+
+// ---------- GRAPH.md manifest editor ----------
+
+/** @param {string} slug */
+async function loadGraphManifest(slug) {
+  const res = await fetch(`/api/graphs/${encodeURIComponent(slug)}`);
+  if (!res.ok) throw new Error(`failed to load graph ${slug} (${res.status})`);
+  state.graphManifest = /** @type {GraphManifest} */ (await res.json());
+}
+
+/** @param {string} slug */
+function renderGraphManifest(slug) {
+  const main = $("#main");
+  if (state.graphManifest === null || state.graphManifest.slug !== slug) {
+    main.innerHTML = `<div class="loading">loading…</div>`;
+    loadGraphManifest(slug).then(render, (err) => {
+      main.innerHTML = `<div class="error-banner">${esc(err instanceof Error ? err.message : String(err))}</div>`;
+    });
+    return;
+  }
+  const gm = state.graphManifest;
+  main.innerHTML = `
+    <a class="back" href="#/graphs">← graphs</a>
+    <div class="detail">
+      <h1>${esc(gm.display_name || gm.slug)}</h1>
+      <div class="byline">
+        <span><code>${esc(gm.path)}</code></span>
+        <span>${gm.entryCount} entr${gm.entryCount === 1 ? "y" : "ies"}</span>
+      </div>
+      <div class="routing-explainer">The graph's description plus any eligibility notes agents consult before placing anything here — it travels with the store.</div>
+      <div class="connector-editor" id="gm-editor-host"></div>
+    </div>
+  `;
+  mountFileEditor($("#gm-editor-host"), {
+    raw: gm.raw,
+    error: gm.error,
+    ariaLabel: "graph manifest file",
+    onSave: async (raw) => {
+      const res = await fetch(`/api/graphs/${encodeURIComponent(slug)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "text/markdown; charset=utf-8" },
+        body: raw,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? `save failed (${res.status})`);
+      state.graphManifest = null; // refetch — the file on disk is authoritative
+      state.graphs = null; // name/description may have changed; refresh the registry + header
+      await loadGraphs();
+      render();
+    },
+  });
+}
+
 // ---------- top-level render + events ----------
 
 /**
- * Entries scoped to one graph. The public view is a straight filter. The
- * private view additionally pulls in the public entries referenced by a private
- * entry's `follows`/`sources` as `ghost:true` — so a cross-graph chain still
- * draws an edge — without dragging the rest of the public subgraph in.
- * @param {"private"|"public"} g @returns {Entry[]}
+ * Entries scoped to one graph, by membership. Named graphs are self-contained,
+ * so their view is a straight membership filter. Only the private (home) view
+ * pulls in cross-graph chain targets: entries referenced by a private member's
+ * `follows`/`sources` whose membership excludes private are surfaced as
+ * `ghost:true` — so the edge still draws — without dragging their subgraph in.
+ * @param {string} g @returns {Entry[]}
  */
 function graphScopedEntries(g) {
-  const scoped = state.entries.filter((e) => (e.graph ?? "private") === g);
-  if (g === "public") return scoped;
+  const scoped = state.entries.filter((e) => entryGraphs(e).includes(g));
+  if (g !== "private") return scoped;
   /** @type {Set<string>} */
   const referenced = new Set();
   for (const e of scoped) {
@@ -1671,7 +2209,7 @@ function graphScopedEntries(g) {
     for (const id of e.sources ?? []) referenced.add(id);
   }
   const ghosts = state.entries
-    .filter((e) => (e.graph ?? "private") === "public" && referenced.has(e.id))
+    .filter((e) => !entryGraphs(e).includes("private") && referenced.has(e.id))
     .map((e) => ({ ...e, ghost: true }));
   return [...scoped, ...ghosts];
 }
@@ -1689,12 +2227,20 @@ function render() {
   const r = route();
   document.body.classList.toggle("view-graph", r.view === "graph");
   if (r.view === "record") renderRecord();
-  else if (r.view === "graph")
-    renderGraphView($("#main"), graphScopedEntries(r.graph), {
-      typeOrder: TYPE_ORDER,
-      openEntry: openEntryModal,
-      graph: r.graph,
-    });
+  else if (r.view === "graph") {
+    // a slug the registry doesn't know (loaded and absent) → point at management
+    if (state.graphs !== null && !state.graphs.some((g) => g.slug === r.graph)) {
+      $("#main").innerHTML = `<div class="empty">no graph named <code>${esc(r.graph)}</code> — <a href="#/graphs">manage graphs</a></div>`;
+    } else {
+      localStorage.setItem("memory-graph", r.graph);
+      renderGraphView($("#main"), graphScopedEntries(r.graph), {
+        typeOrder: TYPE_ORDER,
+        openEntry: openEntryModal,
+        graph: r.graph,
+      });
+    }
+  } else if (r.view === "graphs") renderGraphs();
+  else if (r.view === "graphmanifest") renderGraphManifest(r.slug);
   else if (r.view === "maintenance") renderMaintenance();
   else if (r.view === "routing") renderRouting();
   else if (r.view === "connectors") renderConnectors();
@@ -1855,12 +2401,31 @@ document.addEventListener("focusout", () => {
   if (tooltip) tooltip.hidden = true;
 });
 
+// close the graph picker when a click lands outside it (native <details> won't)
+document.addEventListener("click", (ev) => {
+  const menu = document.getElementById("gnav");
+  if (menu instanceof HTMLDetailsElement && menu.open && !menu.contains(/** @type {Node} */ (ev.target))) {
+    menu.open = false;
+  }
+});
+
 window.addEventListener("hashchange", render);
 
 // ---------- boot ----------
 
+/** Fetch (or refresh) the graph registry into state.graphs. */
+async function loadGraphs() {
+  const res = await fetch("/api/graphs");
+  if (!res.ok) throw new Error(`failed to load /api/graphs (${res.status})`);
+  state.graphs = /** @type {{ graphs: Graph[] }} */ (await res.json()).graphs;
+}
+
 async function boot() {
   render();
+  // registry loads alongside the record; the header degrades gracefully until it lands
+  const graphsP = loadGraphs().catch((err) => {
+    console.error(err);
+  });
   try {
     const res = await fetch("/api/data");
     if (!res.ok) throw new Error(`failed to load /api/data (${res.status})`);
@@ -1871,6 +2436,7 @@ async function boot() {
   } catch (err) {
     state.error = err instanceof Error ? err.message : String(err);
   }
+  await graphsP;
   render();
 }
 

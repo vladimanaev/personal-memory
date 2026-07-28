@@ -9,7 +9,7 @@
  * @typedef {{ id: string, date: string, type: string, title: string,
  *             people: string[], teams: string[], tags: string[],
  *             sources?: string[], follows?: string[],
- *             graph?: "private"|"public", ghost?: boolean,
+ *             graphs?: string[], graph?: "private"|"public", ghost?: boolean,
  *             chain?: { prev: string[], next: string[],
  *                       latest: { id: string, type: string, date: string },
  *                       resolvedBy?: string, status?: "open"|"resolved",
@@ -23,7 +23,8 @@
  * @property {NodeKind} kind
  * @property {string} label
  * @property {string} etype entry type (entry nodes only; "" for entities)
- * @property {boolean} ghost public entry shown in the private graph for a cross-graph edge
+ * @property {boolean} ghost entry from another graph shown in the private view for a cross-graph edge
+ * @property {string} gmemb ghost's non-private memberships, comma-joined (ghost nodes only)
  * @property {number} deg
  * @property {number} r
  * @property {number} links edge count in the current projection (spring normalizer)
@@ -54,8 +55,8 @@ const KINDS = [
 
 // view state survives route switches so the graph doesn't rearrange on return
 const gstate = {
-  /** which graph is on screen; a change clears cached layout + selection */
-  /** @type {"private"|"public"} */
+  /** which graph slug is on screen; a change clears cached layout + selection */
+  /** @type {string} */
   graph: "private",
   /** @type {GraphMode} */
   mode: "people",
@@ -89,6 +90,12 @@ function esc(s) {
 /** @param {string} s @param {number} [n] */
 function trunc(s, n = 18) {
   return s.length > n ? `${s.slice(0, n - 1)}…` : s;
+}
+
+/** An entry's graph memberships, tolerating the pre-multigraph shape.
+ * @param {GraphEntry} e @returns {string[]} */
+function entryGraphs(e) {
+  return e.graphs ?? [e.graph ?? "private"];
 }
 
 /** @param {string} str 32-bit FNV-1a — stable per-node seed */
@@ -149,7 +156,7 @@ function buildGraph(entries) {
   const ensure = (id, kind, label) => {
     let n = nodes.get(id);
     if (!n) {
-      n = { id, kind, label, etype: "", ghost: false, deg: 0, r: 4, links: 0, entryIds: [], x: 0, y: 0, vx: 0, vy: 0, fx: null, fy: null };
+      n = { id, kind, label, etype: "", ghost: false, gmemb: "", deg: 0, r: 4, links: 0, entryIds: [], x: 0, y: 0, vx: 0, vy: 0, fx: null, fy: null };
       nodes.set(id, n);
     }
     return n;
@@ -158,10 +165,11 @@ function buildGraph(entries) {
   for (const e of entries) {
     const en = ensure(`e:${e.id}`, "entry", e.title);
     en.etype = e.type;
-    // ghost = a public entry surfaced only so a private chain edge has a target;
-    // it contributes its entry node alone, no entity memberships/co-occurrence
+    // ghost = an entry from another graph surfaced only so a private chain edge
+    // has a target; it contributes its entry node alone, no memberships/co-occurrence
     if (e.ghost) {
       en.ghost = true;
+      en.gmemb = entryGraphs(e).filter((g) => g !== "private").join(", ") || "other";
       continue;
     }
     /** @type {string[]} */
@@ -388,7 +396,7 @@ function glyph(kind) {
 function nodeMarkup(n, labeled) {
   const tip =
     n.kind === "entry"
-      ? `${n.label} — ${n.etype}${n.ghost ? " · public graph" : ""}`
+      ? `${n.label} — ${n.etype}${n.ghost ? ` · ${n.gmemb} graph` : ""}`
       : `${n.label} — ${n.kind} — ${n.deg} entr${n.deg === 1 ? "y" : "ies"}`;
   const shape =
     n.kind === "team"
@@ -406,9 +414,9 @@ function nodeMarkup(n, labeled) {
 /**
  * @param {HTMLElement} mainEl
  * @param {GraphEntry[]} entries
- * @param {{ typeOrder?: string[], openEntry?: (id: string) => void, graph?: "private"|"public" }} [opts]
+ * @param {{ typeOrder?: string[], openEntry?: (id: string) => void, graph?: string }} [opts]
  *   typeOrder: canonical entry-type display order (app.js TYPE_ORDER)
- *   graph: which graph is on screen — switching clears cached layout + selection
+ *   graph: which graph slug is on screen — switching clears cached layout + selection
  */
 export function renderGraphView(mainEl, entries, opts = {}) {
   const typeOrder = opts.typeOrder ?? [];
@@ -765,7 +773,7 @@ export function renderGraphView(mainEl, entries, opts = {}) {
     emptyEl.hidden = nodes.length > 0;
     const scope = gstate.tagFilter ? ` · #${gstate.tagFilter}` : "";
     const ghostCount = nodes.filter((n) => n.ghost).length;
-    const ghostNote = ghostCount ? ` · ${ghostCount} public ghost${ghostCount === 1 ? "" : "s"}` : "";
+    const ghostNote = ghostCount ? ` · ${ghostCount} ghost${ghostCount === 1 ? "" : "s"} from other graphs` : "";
     sumEl.textContent = `${gstate.graph} graph · ${modeLabel(gstate.mode)}${scope} · ${scopedEntries.length} entries · ${nodes.length} nodes · ${edges.length} links${
       hasCo ? " · shared entries" : ""
     }${ghostNote}`;
