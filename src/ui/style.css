@@ -2004,8 +2004,7 @@ button:disabled {
   color: var(--accent-text);
 }
 
-/* pinned entry point to the routing prompt — sits above the connector list,
-   visually lifted off the plain rows */
+/* pinned rows sit above the regular ledger rows */
 .crow-pinned {
   background: var(--surface-2);
   border: 1px solid var(--border);
@@ -2019,7 +2018,7 @@ button:disabled {
   color: var(--muted);
 }
 
-.routing-explainer {
+.graph-explainer {
   margin-top: 14px;
   font-size: 13px;
   color: var(--muted);

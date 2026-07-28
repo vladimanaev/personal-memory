@@ -9,7 +9,7 @@
  * @typedef {{ id: string, date: string, type: string, title: string,
  *             people: string[], teams: string[], tags: string[],
  *             sources?: string[], follows?: string[],
- *             graphs?: string[], graph?: "private"|"public", ghost?: boolean,
+ *             graphs?: string[], graph?: string, ghost?: boolean,
  *             chain?: { prev: string[], next: string[],
  *                       latest: { id: string, type: string, date: string },
  *                       resolvedBy?: string, status?: "open"|"resolved",
@@ -57,7 +57,7 @@ const KINDS = [
 const gstate = {
   /** which graph slug is on screen; a change clears cached layout + selection */
   /** @type {string} */
-  graph: "private",
+  graph: "default",
   /** @type {GraphMode} */
   mode: "people",
   /** @type {Record<NodeKind, boolean>} */
@@ -95,7 +95,7 @@ function trunc(s, n = 18) {
 /** An entry's graph memberships, tolerating the pre-multigraph shape.
  * @param {GraphEntry} e @returns {string[]} */
 function entryGraphs(e) {
-  return e.graphs ?? [e.graph ?? "private"];
+  return e.graphs ?? [e.graph === "private" ? "default" : (e.graph ?? "default")];
 }
 
 /** @param {string} str 32-bit FNV-1a — stable per-node seed */
@@ -169,7 +169,7 @@ function buildGraph(entries) {
     // has a target; it contributes its entry node alone, no memberships/co-occurrence
     if (e.ghost) {
       en.ghost = true;
-      en.gmemb = entryGraphs(e).filter((g) => g !== "private").join(", ") || "other";
+      en.gmemb = entryGraphs(e).filter((g) => g !== "default").join(", ") || "other";
       continue;
     }
     /** @type {string[]} */
@@ -423,7 +423,7 @@ export function renderGraphView(mainEl, entries, opts = {}) {
   const openEntry = opts.openEntry ?? ((id) => {
     location.hash = `#/entry/${encodeURIComponent(id)}`;
   });
-  const graph = opts.graph ?? "private";
+  const graph = opts.graph ?? "default";
   // switching graphs: positions and selection from the other graph are meaningless
   if (gstate.graph !== graph) {
     gstate.graph = graph;

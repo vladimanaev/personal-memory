@@ -22,7 +22,7 @@ import { comboboxHtml, wireCombobox } from "./combobox.js";
  * @property {string} path
  * @property {string[]} [graphs] sorted graph memberships (private first); the server ships this now
  * @property {Record<string, string>} [paths] per-graph relative path of this entry's synced copy
- * @property {"private"|"public"} [graph] legacy single-graph field — read only through entryGraphs()
+ * @property {string} [graph] legacy single-graph field — read only through entryGraphs()
  * @property {boolean} [ghost] an entry from another graph pulled into the private view for a cross-graph chain edge
  * @property {ChainInfo} [chain]
  *
@@ -85,16 +85,7 @@ import { comboboxHtml, wireCombobox } from "./combobox.js";
  * @property {string} [body]
  * @property {string} raw
  * @property {string} [error]
- *
- * @typedef {Object} RoutingDoc
- * @property {string} name
- * @property {"template"|"override"} origin
- * @property {string} path
- * @property {boolean} enabled
- * @property {"private"|"public"} default_graph
- * @property {string} body
- * @property {string} raw
- * @property {string} [error]
+
  *
  * @typedef {Object} SlugSuggestion
  * @property {"person"|"team"|"tag"} kind
@@ -191,8 +182,6 @@ const state = {
   rulesError: "",
   /** @type {Connector[]|null} lazy-loaded on first visit; null = not fetched */
   connectors: null,
-  /** @type {RoutingDoc|null} lazy-loaded on first visit; null = not fetched */
-  routing: null,
   /** @type {MaintenanceSnapshot|null} lazy-loaded on first visit */
   maintenance: null,
   maintenanceLoading: false,
@@ -210,7 +199,7 @@ const state = {
 /** An entry's graph memberships, tolerating the pre-multigraph shape.
  * @param {Entry} e @returns {string[]} */
 function entryGraphs(e) {
-  return e.graphs ?? [e.graph ?? "private"];
+  return e.graphs ?? [e.graph === "private" ? "default" : (e.graph ?? "default")];
 }
 
 /** Registry ordered for display: private first, then the rest by name.
@@ -218,14 +207,14 @@ function entryGraphs(e) {
 function orderedGraphs() {
   const gs = state.graphs ?? [];
   return [...gs].sort((a, b) =>
-    a.slug === "private" ? -1 : b.slug === "private" ? 1 : a.name.localeCompare(b.name),
+    a.slug === "default" ? -1 : b.slug === "default" ? 1 : a.name.localeCompare(b.name),
   );
 }
 
 /** Named (non-private) graphs — the eligible targets for rules and promotion.
  * @returns {Graph[]} */
 function namedGraphs() {
-  return orderedGraphs().filter((g) => g.slug !== "private");
+  return orderedGraphs().filter((g) => g.slug !== "default");
 }
 
 /** @param {unknown} s */
@@ -382,7 +371,7 @@ function splitFrontmatter(text) {
 
 // ---------- routing ----------
 
-/** @returns {{ view: "record" } | { view: "entry", id: string } | { view: "graph", graph: string } | { view: "graphs" } | { view: "graphmanifest", slug: string } | { view: "connectors" } | { view: "connector", name: string } | { view: "maintenance" } | { view: "routing" }} */
+/** @returns {{ view: "record" } | { view: "entry", id: string } | { view: "graph", graph: string } | { view: "graphs" } | { view: "graphmanifest", slug: string } | { view: "connectors" } | { view: "connector", name: string } | { view: "maintenance" }} */
 function route() {
   const h = location.hash;
   if (h.startsWith("#/entry/")) return { view: "entry", id: decodeURIComponent(h.slice(8)) };
@@ -390,10 +379,13 @@ function route() {
   // #/graphs* is checked before #/graph* — the management screen shares the prefix
   if (h.startsWith("#/graphs/")) return { view: "graphmanifest", slug: decodeURIComponent(h.slice(9)) };
   if (h.startsWith("#/graphs")) return { view: "graphs" };
-  if (h.startsWith("#/graph/")) return { view: "graph", graph: decodeURIComponent(h.slice(8)) };
-  if (h.startsWith("#/graph")) return { view: "graph", graph: "private" }; // legacy #/graph → home graph
+  if (h.startsWith("#/graph/")) {
+    const slug = decodeURIComponent(h.slice(8));
+    // legacy: the home graph was once named "private"
+    return { view: "graph", graph: slug === "private" ? "default" : slug };
+  }
+  if (h.startsWith("#/graph")) return { view: "graph", graph: "default" }; // legacy #/graph → home graph
   if (h.startsWith("#/maintenance")) return { view: "maintenance" };
-  if (h.startsWith("#/routing")) return { view: "routing" };
   if (h.startsWith("#/connector/")) return { view: "connector", name: decodeURIComponent(h.slice(12)) };
   if (h.startsWith("#/connectors")) return { view: "connectors" };
   return { view: "record" };
@@ -439,7 +431,7 @@ function renderHeader() {
       </details>
       <a href="#/graphs" ${r.view === "graphs" || r.view === "graphmanifest" ? 'aria-current="page"' : ""}>Graphs</a>
       <a href="#/maintenance" ${r.view === "maintenance" ? 'aria-current="page"' : ""}>Maintenance</a>
-      <a href="#/connectors" ${r.view === "connectors" || r.view === "connector" || r.view === "routing" ? 'aria-current="page"' : ""}>Connectors</a>
+      <a href="#/connectors" ${r.view === "connectors" || r.view === "connector" ? 'aria-current="page"' : ""}>Connectors</a>
     </nav>
     <span class="header-spacer"></span>
     ${
@@ -589,7 +581,7 @@ function monthName(key) {
  * @param {Entry} e */
 function graphBadge(e) {
   return entryGraphs(e)
-    .filter((g) => g !== "private")
+    .filter((g) => g !== "default")
     .map((g) => `<span class="badge gshare">${esc(g)}</span>`)
     .join("");
 }
@@ -696,7 +688,7 @@ function railHtml() {
     }
   }
 
-  const sharedCount = es.filter((e) => entryGraphs(e).some((g) => g !== "private")).length;
+  const sharedCount = es.filter((e) => entryGraphs(e).some((g) => g !== "default")).length;
   const colophon = [
     `<b>${es.length}</b> entries`,
     sharedCount > 0 ? `<b>${sharedCount}</b> shared` : null,
@@ -1202,11 +1194,6 @@ const connectorPath = (/** @type {Connector} */ c) =>
   c.path ?? `memory/connectors/${c.name}.md`;
 
 
-/** Routing prompt origin: committed default vs private override. */
-const routingOriginBadge = (/** @type {RoutingDoc} */ r) =>
-  r.origin === "override"
-    ? `<span class="badge origin-custom" title="private override in memory/routing/ — never committed to the main repo">custom</span>`
-    : `<span class="badge" title="committed default in routing/graph-routing.md — edits via this UI are saved as a private override">default</span>`;
 
 /** @param {string} ts */
 const shortTimestamp = (ts) => ts.slice(0, 16).replace("T", " ");
@@ -1538,20 +1525,9 @@ function renderConnectors() {
         </a>`;
     })
     .join("");
-  const routingRow = `
-    <a class="crow crow-pinned" href="#/routing">
-      <span class="cdot ok"></span>
-      <span class="cmain">
-        <span class="ctop">
-          <span class="cname">graph-routing</span>
-          <span class="badge">routing</span>
-          <span class="csub">public-graph eligibility criteria</span>
-        </span>
-      </span>
-    </a>`;
   main.innerHTML = `
     <div class="colophon">per-source ingestion config — frontmatter = fetch settings, body = the extraction prompt agents apply when capturing from that source<span class="sep">·</span>defaults live in <code>connectors/</code>, custom versions in <code>memory/connectors/</code> (private, never committed)</div>
-    <div class="ledger l-top">${routingRow}${rows || `<div class="empty">no connector files yet</div>`}</div>
+    <div class="ledger l-top">${rows || `<div class="empty">no connector files yet</div>`}</div>
     <div class="see-all"><button class="chip" id="new-connector">+ new connector</button></div>
   `;
   $("#new-connector").addEventListener("click", () => {
@@ -1602,7 +1578,7 @@ function renderConnectors() {
 
 /**
  * Shared preview/edit chrome for the markdown-file editors (connectors + the
- * routing prompt). Renders the mode chips, textarea, split preview, and save
+ * GRAPH.md manifests). Renders the mode chips, textarea, split preview, and save
  * row into `host`, and wires save through `onSave(rawText)` — which performs
  * the PUT plus any view-specific side effects, or throws to surface an error.
  * @param {HTMLElement} host
@@ -1705,55 +1681,6 @@ function renderConnector(name) {
   });
 }
 
-// ---------- routing prompt ----------
-
-async function loadRouting() {
-  const res = await fetch("/api/routing");
-  if (!res.ok) throw new Error(`failed to load /api/routing (${res.status})`);
-  state.routing = /** @type {RoutingDoc} */ (await res.json());
-}
-
-function renderRouting() {
-  const main = $("#main");
-  if (state.routing === null) {
-    main.innerHTML = `<div class="loading">loading…</div>`;
-    loadRouting().then(render, (err) => {
-      main.innerHTML = `<div class="error-banner">${esc(err instanceof Error ? err.message : String(err))}</div>`;
-    });
-    return;
-  }
-  const r = state.routing;
-  main.innerHTML = `
-    <a class="back" href="#/connectors">← connectors</a>
-    <div class="detail">
-      <h1>graph-routing</h1>
-      <div class="byline">
-        ${routingOriginBadge(r)}
-        <span><code>${esc(r.path)}</code></span>
-        <span>default graph: <code>${esc(r.default_graph)}</code></span>
-      </div>
-      <div class="routing-explainer">Eligibility criteria for the public graph — capture always lands private; entries move public only through a confirmed promotion review (or an explicit "log as public"). Edits are saved as your private override.</div>
-      <div class="connector-editor" id="reditor-host"></div>
-    </div>
-  `;
-  mountFileEditor($("#reditor-host"), {
-    raw: r.raw,
-    error: r.error,
-    ariaLabel: "routing prompt file",
-    onSave: async (raw) => {
-      const res = await fetch("/api/routing", {
-        method: "PUT",
-        headers: { "Content-Type": "text/markdown; charset=utf-8" },
-        body: raw,
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error ?? `save failed (${res.status})`);
-      state.routing = null; // refetch — the override is now authoritative; badge flips to custom
-      render();
-    },
-  });
-}
-
 // ---------- graphs management ----------
 
 /** @param {GraphRule} r normalize to a single-key match + fixed key order (stable for dirty compare) */
@@ -1785,7 +1712,7 @@ async function loadRules() {
 
 /** @param {Graph} g one ledger row on the graphs screen */
 function graphLedgerRow(g) {
-  const builtin = g.slug === "private";
+  const builtin = g.slug === "default";
   return `
     <div class="grow">
       <span class="gcol-main">
@@ -2034,7 +1961,7 @@ function openNewGraphModal() {
       };
       if (!name) return fail("name is required");
       if (!/^[a-z0-9][a-z0-9-]*$/.test(slug)) return fail("slug must be a lower-kebab slug, e.g. team-x");
-      if (["private", "rules", "memory"].includes(slug)) return fail(`"${slug}" is reserved`);
+      if (["default", "private", "rules", "memory"].includes(slug)) return fail(`"${slug}" is reserved`);
       if ((state.graphs ?? []).some((g) => g.slug === slug)) return fail(`a graph "${slug}" already exists`);
       try {
         const res = await fetch("/api/graphs", {
@@ -2165,7 +2092,7 @@ function renderGraphManifest(slug) {
         <span><code>${esc(gm.path)}</code></span>
         <span>${gm.entryCount} entr${gm.entryCount === 1 ? "y" : "ies"}</span>
       </div>
-      <div class="routing-explainer">The graph's description plus any eligibility notes agents consult before placing anything here — it travels with the store.</div>
+      <div class="graph-explainer">The graph's description plus any eligibility notes agents consult before placing anything here — it travels with the store.</div>
       <div class="connector-editor" id="gm-editor-host"></div>
     </div>
   `;
@@ -2201,7 +2128,7 @@ function renderGraphManifest(slug) {
  */
 function graphScopedEntries(g) {
   const scoped = state.entries.filter((e) => entryGraphs(e).includes(g));
-  if (g !== "private") return scoped;
+  if (g !== "default") return scoped;
   /** @type {Set<string>} */
   const referenced = new Set();
   for (const e of scoped) {
@@ -2209,7 +2136,7 @@ function graphScopedEntries(g) {
     for (const id of e.sources ?? []) referenced.add(id);
   }
   const ghosts = state.entries
-    .filter((e) => !entryGraphs(e).includes("private") && referenced.has(e.id))
+    .filter((e) => !entryGraphs(e).includes("default") && referenced.has(e.id))
     .map((e) => ({ ...e, ghost: true }));
   return [...scoped, ...ghosts];
 }
@@ -2242,7 +2169,6 @@ function render() {
   } else if (r.view === "graphs") renderGraphs();
   else if (r.view === "graphmanifest") renderGraphManifest(r.slug);
   else if (r.view === "maintenance") renderMaintenance();
-  else if (r.view === "routing") renderRouting();
   else if (r.view === "connectors") renderConnectors();
   else if (r.view === "connector") renderConnector(r.name);
   else renderEntry(r.id);
