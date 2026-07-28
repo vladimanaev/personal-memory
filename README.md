@@ -43,7 +43,7 @@ Or open this folder as the workspace in Codex.
 
 ### Use it from any project (plugin marketplace)
 
-The four memory skills also ship as a plugin, so capture-worthy moments in
+The memory skills also ship as a plugin, so capture-worthy moments in
 *other* repos ("remember that we decided X" mid-review) don't require
 switching sessions. The repo itself is the marketplace — one manifest serves
 both CLIs:
