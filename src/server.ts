@@ -8,6 +8,16 @@ import { loadAllEntries, ROOT } from "./ingest.js";
 import { search, indexStatus, type SearchFilters } from "./store.js";
 import { loadConnectors, loadConnectorState, writeConnector, relConnector } from "./connectors.js";
 import { loadRouting, writeRouting } from "./routing.js";
+import {
+  PRIVATE_GRAPH,
+  createGraph,
+  invalidateStoreCache,
+  listGraphStores,
+  loadGraphManifest,
+  storeFor,
+  writeGraphManifest,
+} from "./graphs.js";
+import { applyRules, readRules, writeRules, type GraphRule } from "./graph-rules.js";
 import { getMaintenanceSnapshot, launchMaintenanceRun, startMaintenanceScheduler } from "./scheduled-maintenance.js";
 import { applyChainLink, dismissChainSuggestion, dismissSlugSuggestion, mergeSlugs, type SlugKind } from "./graph-maintenance.js";
 import { buildChainIndex } from "./chains.js";
@@ -72,7 +82,10 @@ async function apiData(res: ServerResponse): Promise<void> {
     .sort((a, b) => b.date.localeCompare(a.date))
     .map((e) => {
       const chain = chainIndex.get(e.id);
-      return { ...e, path: relative(ROOT, e.path), ...(chain ? { chain } : {}) };
+      const paths = Object.fromEntries(
+        Object.entries(e.paths).map(([g, p]) => [g, relative(ROOT, p)]),
+      );
+      return { ...e, path: relative(ROOT, e.path), paths, ...(chain ? { chain } : {}) };
     });
   sendJson(res, 200, { generatedAt: new Date().toISOString(), index, entries: payload });
 }
@@ -85,6 +98,14 @@ async function apiSearch(res: ServerResponse, params: URLSearchParams): Promise<
     return;
   }
   const graphParam = params.get("graph");
+  if (graphParam) {
+    try {
+      storeFor(graphParam); // registry validation — unknown graph is a client error
+    } catch {
+      sendJson(res, 400, { error: `unknown graph '${graphParam}'` });
+      return;
+    }
+  }
   const filters: SearchFilters = {
     person: params.get("person") || undefined,
     type: params.get("type") || undefined,
@@ -92,7 +113,7 @@ async function apiSearch(res: ServerResponse, params: URLSearchParams): Promise<
     tag: params.get("tag") || undefined,
     since: params.get("since") || undefined,
     until: params.get("until") || undefined,
-    graph: graphParam === "private" || graphParam === "public" ? graphParam : undefined,
+    graph: graphParam || undefined,
   };
   const deep = params.get("deep") === "1" || params.get("deep") === "true";
   const k = Number(params.get("k")) || (deep ? 40 : 8);
@@ -206,6 +227,164 @@ async function apiPutRouting(req: IncomingMessage, res: ServerResponse): Promise
     return;
   }
   sendJson(res, 200, { ok: true, name: "graph-routing" });
+}
+
+const GRAPH_SLUG = /^[a-z0-9][a-z0-9-]*$/;
+/** Route segments under /api/graphs/ that are NOT graph slugs. */
+const RESERVED_GRAPH_ROUTES = new Set(["rules"]);
+
+async function apiGraphs(res: ServerResponse): Promise<void> {
+  const entries = await loadAllEntries();
+  const graphs = [];
+  for (const store of listGraphStores()) {
+    const manifest = store.graph === PRIVATE_GRAPH ? null : await loadGraphManifest(store);
+    graphs.push({
+      slug: store.graph,
+      name: manifest?.fm?.display_name ?? store.graph,
+      description: manifest?.body?.split("\n")[0] ?? "",
+      entryCount: entries.filter((e) => e.graphs.includes(store.graph)).length,
+      dir: relative(ROOT, store.dir),
+      builtin: store.graph === PRIVATE_GRAPH,
+      ...(manifest?.error ? { error: manifest.error } : {}),
+    });
+  }
+  sendJson(res, 200, { graphs });
+}
+
+async function apiCreateGraph(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  let data: Record<string, unknown>;
+  try {
+    data = (JSON.parse((await readBody(req, 32 * 1024)) || "{}") ?? {}) as Record<string, unknown>;
+  } catch (err) {
+    sendJson(res, (err as { status?: number }).status ?? 400, {
+      error: err instanceof Error ? err.message : "invalid JSON body",
+    });
+    return;
+  }
+  const slug = typeof data.slug === "string" ? data.slug : "";
+  if (!slug) {
+    sendJson(res, 400, { error: "slug is required" });
+    return;
+  }
+  if (data.confirm !== true) {
+    sendJson(res, 400, { error: "graph creation requires confirm: true" });
+    return;
+  }
+  try {
+    const store = await createGraph({
+      slug,
+      displayName: typeof data.name === "string" ? data.name : undefined,
+      description: typeof data.description === "string" ? data.description : undefined,
+    });
+    invalidateStoreCache();
+    sendJson(res, 200, { ok: true, slug: store.graph, path: relative(ROOT, store.manifestPath) });
+  } catch (err) {
+    sendJson(res, 400, { error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+async function apiGraphManifest(res: ServerResponse, slug: string): Promise<void> {
+  let store;
+  try {
+    store = storeFor(slug);
+  } catch {
+    sendJson(res, 404, { error: `unknown graph '${slug}'` });
+    return;
+  }
+  const entries = await loadAllEntries();
+  const manifest = await loadGraphManifest(store);
+  sendJson(res, 200, {
+    slug,
+    path: relative(ROOT, store.manifestPath),
+    entryCount: entries.filter((e) => e.graphs.includes(slug)).length,
+    raw: manifest?.raw ?? "",
+    body: manifest?.body,
+    display_name: manifest?.fm?.display_name,
+    ...(manifest?.error ? { error: manifest.error } : {}),
+  });
+}
+
+async function apiPutGraphManifest(req: IncomingMessage, res: ServerResponse, slug: string): Promise<void> {
+  let raw: string;
+  try {
+    raw = await readBody(req);
+  } catch (err) {
+    sendJson(res, (err as { status?: number }).status ?? 500, {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return;
+  }
+  if (!raw.trim()) {
+    sendJson(res, 400, { error: "empty body — send the full GRAPH.md text" });
+    return;
+  }
+  try {
+    await writeGraphManifest(slug, raw);
+  } catch (err) {
+    sendJson(res, 400, { error: err instanceof Error ? err.message : String(err) });
+    return;
+  }
+  sendJson(res, 200, { ok: true, slug });
+}
+
+async function apiGetRules(res: ServerResponse): Promise<void> {
+  try {
+    sendJson(res, 200, { rules: await readRules() });
+  } catch (err) {
+    sendJson(res, 400, { error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+function parseRulesBody(data: Record<string, unknown>): GraphRule[] | undefined {
+  return Array.isArray(data.rules) ? (data.rules as GraphRule[]) : undefined;
+}
+
+async function apiPutRules(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  let data: Record<string, unknown>;
+  try {
+    data = (JSON.parse((await readBody(req, 64 * 1024)) || "{}") ?? {}) as Record<string, unknown>;
+  } catch (err) {
+    sendJson(res, (err as { status?: number }).status ?? 400, {
+      error: err instanceof Error ? err.message : "invalid JSON body",
+    });
+    return;
+  }
+  const rules = parseRulesBody(data);
+  if (!rules) {
+    sendJson(res, 400, { error: "rules[] is required" });
+    return;
+  }
+  try {
+    await writeRules(rules);
+    sendJson(res, 200, { ok: true, count: rules.length });
+  } catch (err) {
+    sendJson(res, 400, { error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+async function apiApplyRules(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  let data: Record<string, unknown>;
+  try {
+    data = (JSON.parse((await readBody(req, 64 * 1024)) || "{}") ?? {}) as Record<string, unknown>;
+  } catch (err) {
+    sendJson(res, (err as { status?: number }).status ?? 400, {
+      error: err instanceof Error ? err.message : "invalid JSON body",
+    });
+    return;
+  }
+  const dryRun = data.dryRun !== false;
+  if (!dryRun && data.confirm !== true) {
+    sendJson(res, 400, { error: "confirmed rule application requires confirm: true" });
+    return;
+  }
+  const rules = parseRulesBody(data);
+  try {
+    if (rules && !dryRun) await writeRules(rules); // persist alongside a confirmed apply
+    const report = await applyRules({ dryRun, ...(rules ? { rules } : {}) });
+    sendJson(res, 200, { dryRun, ...report });
+  } catch (err) {
+    sendJson(res, 400, { error: err instanceof Error ? err.message : String(err) });
+  }
 }
 
 function slugKind(value: unknown): SlugKind | null {
@@ -393,6 +572,23 @@ export function startServer(opts: { port: number; open: boolean }): Promise<neve
       } else if (url.pathname === "/api/routing") {
         if (req.method === "GET") await apiRouting(res);
         else if (req.method === "PUT") await apiPutRouting(req, res);
+        else sendJson(res, 405, { error: "method not allowed" });
+      } else if (url.pathname === "/api/graphs") {
+        if (req.method === "GET") await apiGraphs(res);
+        else if (req.method === "POST") await apiCreateGraph(req, res);
+        else sendJson(res, 405, { error: "method not allowed" });
+      } else if (url.pathname === "/api/graphs/rules/apply") {
+        if (req.method === "POST") await apiApplyRules(req, res);
+        else sendJson(res, 405, { error: "method not allowed" });
+      } else if (url.pathname === "/api/graphs/rules") {
+        if (req.method === "GET") await apiGetRules(res);
+        else if (req.method === "PUT") await apiPutRules(req, res);
+        else sendJson(res, 405, { error: "method not allowed" });
+      } else if (url.pathname.startsWith("/api/graphs/")) {
+        const slug = url.pathname.slice("/api/graphs/".length);
+        if (!GRAPH_SLUG.test(slug) || RESERVED_GRAPH_ROUTES.has(slug)) sendJson(res, 404, { error: "not found" });
+        else if (req.method === "GET") await apiGraphManifest(res, slug);
+        else if (req.method === "PUT") await apiPutGraphManifest(req, res, slug);
         else sendJson(res, 405, { error: "method not allowed" });
       } else if (url.pathname === "/api/maintenance") {
         if (req.method === "GET") await apiMaintenance(res);
