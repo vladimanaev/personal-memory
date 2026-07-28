@@ -2,7 +2,7 @@ import { readFile, rm, writeFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { DEFAULT_GRAPH, sortGraphs, type MemoryEntry } from "./schema.js";
 import { entryPath, loadAllEntries, loadEntryFiles, groupEntries, type CopyDrift } from "./ingest.js";
-import { ensureStore, requireGraph, storeFor, validateContainment } from "./graphs.js";
+import { ensureStore, invalidateStoreCache, requireGraph, storeFor, validateContainment } from "./graphs.js";
 import { syncIndex } from "./store.js";
 import { commitMemoryRepo } from "./memory-git.js";
 
@@ -32,15 +32,15 @@ export interface CopyResult {
 export async function copyEntry(opts: { id: string; to: string }): Promise<CopyResult> {
   const to = requireGraph(opts.to);
   if (to === DEFAULT_GRAPH) {
-    throw new Error("copy --to private is meaningless — use 'move <id> --to private' to repatriate");
+    throw new Error("copy --to default is meaningless — use 'move <id> --to default' to repatriate");
   }
   const entries = await loadAllEntries();
   const entry = entries.find((e) => e.id === opts.id);
   if (!entry) throw new Error(`no entry with id '${opts.id}'`);
   if (!entry.graphs.includes(DEFAULT_GRAPH)) {
     throw new Error(
-      `'${opts.id}' is not a private member (graphs: ${entry.graphs.join(", ")}) — ` +
-        `copies originate from private; move it back first`,
+      `'${opts.id}' is not a default-graph member (graphs: ${entry.graphs.join(", ")}) — ` +
+        `copies originate from the default graph; move it back first`,
     );
   }
   if (entry.graphs.includes(to)) return { id: entry.id, to, changed: false };
@@ -78,8 +78,8 @@ export interface MoveResult {
 /**
  * Move = replace the ENTIRE membership set with `{to}`. Every other copy is
  * removed (multi-member moves list the removals). Preconditions:
- * - outbound (to ≠ private): all referenced entries must be members of `to`;
- * - inbound: no referrer may hold a non-private membership the entry is
+ * - outbound (to ≠ default): all referenced entries must be members of `to`;
+ * - inbound: no referrer may hold a shared-graph membership the entry is
  *   leaving (that store would dangle/leak).
  */
 export async function moveEntry(opts: { id: string; to: string }): Promise<MoveResult> {
@@ -107,7 +107,7 @@ export async function moveEntry(opts: { id: string; to: string }): Promise<MoveR
     if (e.id === entry.id) return false;
     const refsEntry = (e.follows?.includes(entry.id) ?? false) || (e.sources?.includes(entry.id) ?? false);
     if (!refsEntry) return false;
-    // A referrer blocks when it sits in a non-private graph the entry is leaving.
+    // A referrer blocks when it sits in a shared graph the entry is leaving.
     return e.graphs.some((g) => g !== DEFAULT_GRAPH && leaving.includes(g));
   });
   if (blockingReferrers.length > 0) {
@@ -139,7 +139,7 @@ export async function moveEntry(opts: { id: string; to: string }): Promise<MoveR
   }
 
   const index = await syncIndex();
-  // Shared repos get context-free messages; only the private repo records
+  // Shared repos get context-free messages; only the default repo records
   // where the entry went.
   for (const g of affected) {
     const msg =
@@ -184,6 +184,57 @@ export async function removeEntry(id: string): Promise<RemoveResult> {
     await commitMemoryRepo(`Remove memory: ${id}`, storeFor(g).dir);
   }
   return { id, paths, graphs: target.graphs, followers, index };
+}
+
+export interface DeleteGraphResult {
+  slug: string;
+  deleted: boolean;
+  /** Entries whose ONLY membership is this graph — deletion would destroy them. */
+  soleMembers?: string[];
+  /** Synced copies removed (the entries live on in their other graphs). */
+  copiesRemoved: number;
+  /** Distribution rules that targeted this graph and were removed with it. */
+  rulesRemoved: number;
+  index?: SyncStats;
+}
+
+/**
+ * Delete a whole shared graph: its directory (nested repo included) is
+ * removed permanently. Refused for the default graph, and BLOCKED while any
+ * entry's only membership is this graph (move those out first) — synced
+ * copies are safe to drop because their home lives in the default graph.
+ * Rules targeting the graph are removed alongside it (they would otherwise
+ * make the rules config invalid). The caller is responsible for user
+ * confirmation — this is irreversible (the store's git history goes with it).
+ */
+export async function deleteGraph(slug: string): Promise<DeleteGraphResult> {
+  const graph = requireGraph(slug);
+  if (graph === DEFAULT_GRAPH) throw new Error("the default graph cannot be deleted");
+  const entries = await loadAllEntries();
+  const members = entries.filter((e) => e.graphs.includes(graph));
+  const soleMembers = members.filter((e) => e.graphs.length === 1).map((e) => e.id);
+  if (soleMembers.length > 0) {
+    return { slug: graph, deleted: false, soleMembers, copiesRemoved: 0, rulesRemoved: 0 };
+  }
+
+  // Drop rules that target this graph BEFORE the registry loses it, so the
+  // rules config never points at a nonexistent graph.
+  let rulesRemoved = 0;
+  const { readRules, writeRules } = await import("./graph-rules.js");
+  try {
+    const rules = await readRules();
+    const keep = rules.filter((r) => r.graph !== graph);
+    rulesRemoved = rules.length - keep.length;
+    if (rulesRemoved > 0) await writeRules(keep);
+  } catch {
+    // unreadable rules config — leave it for the user; deletion proceeds
+  }
+
+  const store = storeFor(graph);
+  await rm(store.dir, { recursive: true, force: true });
+  invalidateStoreCache();
+  const index = await syncIndex(); // former copies lose a membership; rows rewrite
+  return { slug: graph, deleted: true, copiesRemoved: members.length, rulesRemoved, index };
 }
 
 export interface SyncGraphsReport {

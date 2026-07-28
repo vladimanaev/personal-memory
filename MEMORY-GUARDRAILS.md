@@ -35,6 +35,10 @@ CLI keeps them in sync.
   rule IS standing approval).
 - **Consistency**: drifted copies are repaired ONLY by `cli.ts graphs sync`
   (the default copy wins, checkpointed) — never by hand-editing a copy.
+- **Graph deletion** ONLY through `cli.ts graphs delete <slug> --confirm` (or
+  the UI's confirm modal) and ONLY after the user explicitly approves — it is
+  permanent (store + git history). Blocked while any entry exists only in
+  that graph. Never `rm -rf` a store by hand.
 - **Update** an existing entry the same way: re-run `add` with the same
   `--source-ids` (updates in place), or `add --update <id>` for manual notes.
 - **Timeline links** ONLY through `add --follows <id,…>` at capture time,

@@ -24,7 +24,7 @@ import {
   requireGraph,
   validateContainment,
 } from "./graphs.js";
-import { copyEntry, moveEntry, removeEntry, syncGraphs } from "./membership.js";
+import { copyEntry, deleteGraph, moveEntry, removeEntry, syncGraphs } from "./membership.js";
 import { commitMemoryRepo } from "./memory-git.js";
 import { buildChainIndex, entryStatus, validateFollowsTargets, type ChainAnnotation } from "./chains.js";
 import { applyChainLink, dismissSlugSuggestion, mergeSlugs, proposeSlugMerge, slugUsage, type SlugKind } from "./graph-maintenance.js";
@@ -458,6 +458,31 @@ async function cmdGraphs(argv: string[]) {
     if (issues > report.repaired.length) process.exitCode = 2;
     return;
   }
+  if (sub === "delete") {
+    const { values, positionals } = parseArgs({
+      args: argv.slice(1),
+      options: { confirm: { type: "boolean" } },
+      allowPositionals: true,
+    });
+    const slug = positionals[0];
+    if (!slug || positionals.length !== 1) throw new Error("usage: memory graphs delete <slug> --confirm");
+    if (!values.confirm) {
+      throw new Error(
+        `deleting a graph is PERMANENT (its git history goes with it) — re-run with --confirm after the user explicitly approves`,
+      );
+    }
+    const result = await deleteGraph(slug);
+    if (!result.deleted) {
+      console.error(`✗ '${slug}' has entries that exist NOWHERE else: ${result.soleMembers!.join(", ")}`);
+      console.error(`  move them out first (cli.ts move <id> --to default), then delete`);
+      process.exitCode = 2;
+      return;
+    }
+    console.log(`✓ deleted graph '${result.slug}'`);
+    if (result.copiesRemoved) console.log(`  ${result.copiesRemoved} synced copies removed (each still lives in its other graphs)`);
+    if (result.rulesRemoved) console.log(`  ${result.rulesRemoved} rule(s) targeting it removed`);
+    return;
+  }
   if (sub === "list" || sub === undefined) {
     const entries = await loadAllEntries();
     for (const store of listGraphStores()) {
@@ -473,7 +498,7 @@ async function cmdGraphs(argv: string[]) {
     }
     return;
   }
-  throw new Error("usage: memory graphs [list] | graphs create <slug> [--display-name …] [--description …] | graphs sync [--dry-run]");
+  throw new Error("usage: memory graphs [list] | graphs create <slug> [--display-name …] [--description …] | graphs sync [--dry-run] | graphs delete <slug> --confirm");
 }
 
 async function cmdIndex(argv: string[]) {
@@ -1121,7 +1146,8 @@ Usage:
             # move --to private = full repatriation. Containment validated both directions
   memory graphs [list]                 # registry: private + every memory-graphs/<slug>/ store
   memory graphs create <slug> [--display-name "…"] [--description "…"]
-  memory graphs sync [--dry-run]       # detect + repair drifted copies (private wins), report violations
+  memory graphs sync [--dry-run]       # detect + repair drifted copies (default copy wins), report violations
+  memory graphs delete <slug> --confirm  # PERMANENT: blocked while entries exist only there; user must approve
   memory rules [list]                  # standing distribution rules (memory/graphs/rules.json)
   memory rules apply [--dry-run]       # reconcile all rules against existing private entries
   memory index [--force]

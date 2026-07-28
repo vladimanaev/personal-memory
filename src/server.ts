@@ -285,6 +285,29 @@ async function apiPutGraphManifest(req: IncomingMessage, res: ServerResponse, sl
   sendJson(res, 200, { ok: true, slug });
 }
 
+async function apiDeleteGraph(req: IncomingMessage, res: ServerResponse, slug: string): Promise<void> {
+  let data: Record<string, unknown>;
+  try {
+    data = (JSON.parse((await readBody(req, 32 * 1024)) || "{}") ?? {}) as Record<string, unknown>;
+  } catch (err) {
+    sendJson(res, (err as { status?: number }).status ?? 400, {
+      error: err instanceof Error ? err.message : "invalid JSON body",
+    });
+    return;
+  }
+  if (data.confirm !== true) {
+    sendJson(res, 400, { error: "graph deletion is permanent and requires confirm: true" });
+    return;
+  }
+  try {
+    const { deleteGraph } = await import("./membership.js");
+    const result = await deleteGraph(slug);
+    sendJson(res, result.deleted ? 200 : 409, result);
+  } catch (err) {
+    sendJson(res, 400, { error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
 async function apiGetRules(res: ServerResponse): Promise<void> {
   try {
     sendJson(res, 200, { rules: await readRules() });
@@ -543,6 +566,7 @@ export function startServer(opts: { port: number; open: boolean }): Promise<neve
         if (!GRAPH_SLUG.test(slug) || RESERVED_GRAPH_ROUTES.has(slug)) sendJson(res, 404, { error: "not found" });
         else if (req.method === "GET") await apiGraphManifest(res, slug);
         else if (req.method === "PUT") await apiPutGraphManifest(req, res, slug);
+        else if (req.method === "DELETE") await apiDeleteGraph(req, res, slug);
         else sendJson(res, 405, { error: "method not allowed" });
       } else if (url.pathname === "/api/maintenance") {
         if (req.method === "GET") await apiMaintenance(res);

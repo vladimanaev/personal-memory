@@ -9,7 +9,7 @@
  * checks before acting. Take a verified backup first (MEMORY-GUARDRAILS.md).
  */
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, renameSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, renameSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const ROOT = process.cwd();
@@ -34,18 +34,40 @@ function checkpoint(dir: string, msg: string): void {
 checkpoint(join(ROOT, "memory"), "Checkpoint before multi-graph migration");
 if (existsSync(OLD_PUBLIC)) checkpoint(OLD_PUBLIC, "Checkpoint before multi-graph migration");
 
-// 2. Relocate the public store.
+// 2. Relocate the public store — but an EMPTY one is dropped, not carried
+//    over (no graph ships by default; an empty store has nothing to keep
+//    beyond history of already-deleted entries, and the checkpoint above +
+//    the recommended backup preserve that).
+function entryCount(dir: string): number {
+  const entriesDir = join(dir, "entries");
+  if (!existsSync(entriesDir)) return 0;
+  let n = 0;
+  const walk = (d: string) => {
+    for (const ent of readdirSync(d, { withFileTypes: true })) {
+      if (ent.isDirectory()) walk(join(d, ent.name));
+      else if (ent.name.endsWith(".md")) n++;
+    }
+  };
+  walk(entriesDir);
+  return n;
+}
+
 if (existsSync(OLD_PUBLIC) && existsSync(NEW_PUBLIC)) {
   console.error("✗ BOTH memory-public/ and memory-graphs/public/ exist — resolve manually before re-running");
   process.exit(1);
 } else if (existsSync(OLD_PUBLIC)) {
-  mkdirSync(PARENT, { recursive: true });
-  renameSync(OLD_PUBLIC, NEW_PUBLIC);
-  console.log("✓ moved memory-public/ → memory-graphs/public/ (.git history intact)");
+  if (entryCount(OLD_PUBLIC) === 0) {
+    rmSync(OLD_PUBLIC, { recursive: true, force: true });
+    console.log("✓ memory-public/ was empty — removed (no graph ships by default; create your own with `memory graphs create`)");
+  } else {
+    mkdirSync(PARENT, { recursive: true });
+    renameSync(OLD_PUBLIC, NEW_PUBLIC);
+    console.log("✓ moved memory-public/ → memory-graphs/public/ (.git history intact)");
+  }
 } else if (existsSync(NEW_PUBLIC)) {
   console.log("✓ memory-graphs/public/ already in place");
 } else {
-  console.log("✓ no public store yet (fresh clone) — nothing to relocate");
+  console.log("✓ no legacy public store — nothing to relocate");
 }
 
 // 3. Manifest for the public graph.

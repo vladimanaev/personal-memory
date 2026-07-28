@@ -68,9 +68,13 @@ fresh capture and can be backfilled with `rules apply`. Still:
 - `graphs sync --dry-run` is the consistency check (drifted copies, missing
   default-graph homes, containment violations); plain `graphs sync` repairs drift
   by rewriting copies from the default graph's version, checkpointed per store.
-- Deleting a graph is manual and deliberate: move its entries out first
-  (`move <id> --to default`), then remove the `memory-graphs/<slug>/`
-  directory yourself with the user's confirmation.
+- Deleting a graph: `npx tsx src/cli.ts graphs delete <slug> --confirm` (or
+  the UI's delete button, which shows a confirmation modal). It is PERMANENT
+  — the store and its git history go — so only run it after the user
+  explicitly approves THIS deletion. The CLI blocks it while any entry exists
+  ONLY in that graph (move those out first: `move <id> --to default`);
+  synced copies just lose the membership and live on in their other graphs;
+  rules targeting the graph are removed with it.
 
 ## Principles
 

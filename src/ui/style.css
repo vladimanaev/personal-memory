@@ -2565,3 +2565,24 @@ dialog.modal.backfill-modal {
   font-size: 13px;
   padding: 4px 0 8px;
 }
+
+/* destructive affordances — quiet until hovered, unmistakable after */
+.glink-danger {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+  color: var(--muted);
+}
+.glink-danger:hover {
+  color: var(--danger, #e5534b);
+}
+.chip.chip-danger {
+  border-color: var(--danger, #e5534b);
+  color: var(--danger, #e5534b);
+}
+.chip.chip-danger:hover {
+  background: var(--danger, #e5534b);
+  color: var(--bg, #fff);
+}

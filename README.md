@@ -304,11 +304,13 @@ What it does depends on where you're coming from:
   relocates — all your memories are in the `default` graph by construction.
   The script checkpoints `memory/.git` and rebuilds the search index (the
   new format has a membership column; a few minutes, once).
-- **From the two-graph layout** (`memory-public/` exists): the script
-  additionally relocates `memory-public/` to `memory-graphs/public/` — a
-  plain directory rename, its git history moves with it — and writes it a
-  `GRAPH.md` manifest. Afterwards `public` is an ordinary named graph like
-  any you create yourself: keep it, or delete the directory if it's empty.
+- **From the two-graph layout** (`memory-public/` exists): if it holds
+  entries, the script relocates it to `memory-graphs/public/` — a plain
+  directory rename, its git history moves with it — and writes it a
+  `GRAPH.md` manifest; afterwards `public` is an ordinary named graph like
+  any you create yourself (deletable anytime via the Graphs screen or
+  `memory graphs delete public --confirm`). An EMPTY public store is simply
+  dropped — no graph ships by default.
 - Re-running the script is always a no-op; it finishes with a consistency
   check (`memory graphs sync --dry-run`).
 

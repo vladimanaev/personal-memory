@@ -1728,6 +1728,7 @@ function graphLedgerRow(g) {
       <span class="gcol-act">
         <a class="glink" href="#/graph/${encodeURIComponent(g.slug)}">view</a>
         ${builtin ? "" : `<a class="glink" href="#/graphs/${encodeURIComponent(g.slug)}">edit</a>`}
+        ${builtin ? "" : `<button class="glink glink-danger" data-gdel="${esc(g.slug)}">delete</button>`}
       </span>
     </div>`;
 }
@@ -1911,6 +1912,56 @@ async function openBackfillModal(draftRules) {
   }, { className: "backfill-modal" });
 }
 
+/** Confirm-then-delete a shared graph. Deletion is permanent (nested repo included). @param {string} slug */
+function openDeleteGraphModal(slug) {
+  const g = (state.graphs ?? []).find((x) => x.slug === slug);
+  const count = g?.entryCount ?? 0;
+  openModal(`delete graph "${slug}"`, (body, close) => {
+    body.innerHTML = `
+      <div class="modal-form">
+        <p class="modal-hint">
+          This permanently deletes <code>memory-graphs/${esc(slug)}/</code> — the
+          store <b>and its git history</b>. ${count > 0
+            ? `Its <b>${count}</b> synced ${count === 1 ? "copy" : "copies"} will lose this membership but remain in their other graphs.`
+            : "The graph is empty."}
+          Entries that exist <em>only</em> in this graph block deletion (move them out first).
+          Distribution rules targeting it are removed with it.
+        </p>
+        <div class="modal-err" id="gd-err" hidden></div>
+        <div class="modal-actions">
+          <button type="button" class="chip" id="gd-cancel">cancel</button>
+          <button type="button" class="chip chip-danger" id="gd-confirm">delete graph</button>
+        </div>
+      </div>`;
+    $("#gd-cancel").addEventListener("click", close);
+    $("#gd-confirm").addEventListener("click", async () => {
+      const err = $("#gd-err");
+      err.hidden = true;
+      try {
+        const res = await fetch(`/api/graphs/${encodeURIComponent(slug)}`, {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ confirm: true }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (res.status === 409 && Array.isArray(data.soleMembers)) {
+          throw new Error(
+            `blocked — these entries exist nowhere else: ${data.soleMembers.join(", ")}. Move them out first (memory move <id> --to default).`,
+          );
+        }
+        if (!res.ok) throw new Error(data.error ?? `delete failed (${res.status})`);
+        state.graphs = null; // registry changed
+        await Promise.all([loadGraphs(), reloadRecordData()]);
+        close();
+        render();
+      } catch (e) {
+        err.textContent = e instanceof Error ? e.message : String(e);
+        err.hidden = false;
+      }
+    });
+  });
+}
+
 function openNewGraphModal() {
   openModal("new graph", (body, close) => {
     body.innerHTML = `
@@ -1997,7 +2048,7 @@ function renderGraphs() {
   if (state.rulesDraft === null) state.rulesDraft = (state.rules ?? []).map(cloneRule);
 
   main.innerHTML = `
-    <div class="colophon">graphs partition the store into shareable views — capture lands in <b>private</b>, and an entry reaches a named graph by promotion or a distribution rule<span class="sep">·</span>named graphs are self-contained; only private can reference entries that left it</div>
+    <div class="colophon">graphs partition the store into shareable views — capture lands in the <b>default</b> graph, and an entry reaches a named graph by promotion or a distribution rule<span class="sep">·</span>named graphs are self-contained; only the default graph can reference entries that left it</div>
     <div class="graphs-head">
       <h2>Graphs</h2>
       <button class="chip" id="new-graph">+ new graph</button>
@@ -2012,6 +2063,12 @@ function renderGraphs() {
   `;
   $("#new-graph").addEventListener("click", openNewGraphModal);
   $("#rules-run").addEventListener("click", () => openBackfillModal(null));
+  $(".glist").addEventListener("click", (ev) => {
+    const t = ev.target;
+    if (!(t instanceof HTMLElement)) return;
+    const del = t.closest("[data-gdel]");
+    if (del) openDeleteGraphModal(/** @type {string} */ (del.getAttribute("data-gdel")));
+  });
 
   const host = $("#rules-host");
   host.addEventListener("change", (ev) => {
