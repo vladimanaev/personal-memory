@@ -1,9 +1,9 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { relative, join } from "node:path";
 import matter from "gray-matter";
-import { FrontmatterSchema, type Frontmatter, type GraphId, type MemoryEntry } from "./schema.js";
-import { INDEX_DIR, ROOT, loadAllEntries, writeEntry } from "./ingest.js";
-import { storeFor, validateCrossGraphLinks } from "./graphs.js";
+import { FrontmatterSchema, sortGraphs, type Frontmatter, type GraphId, type MemoryEntry } from "./schema.js";
+import { INDEX_DIR, ROOT, loadAllEntries, writeEntryAll } from "./ingest.js";
+import { storeFor, validateContainment } from "./graphs.js";
 import { syncIndex, findSimilar } from "./store.js";
 import { commitMemoryRepo } from "./memory-git.js";
 import { buildChainIndex, entryStatus, validateFollowsTargets } from "./chains.js";
@@ -449,8 +449,9 @@ export async function analyzeChainLinks(entries: MemoryEntry[]): Promise<ChainLi
       const e = byId.get(hit.id);
       if (!e || e.id === o.id || e.type === "summary") continue;
       if (e.date <= o.date) continue;
-      // Never suggest a link a public entry couldn't legally hold.
-      if (e.graph === "public" && o.graph === "private") continue;
+      // Never suggest a link `applyChainLink` would reject under containment:
+      // the later entry's shared graphs must all contain the open entry.
+      if (e.graphs.some((g) => g !== "private" && !o.graphs.includes(g))) continue;
       if (componentOf(e.id) === componentOf(o.id)) continue; // already chained together
       if (dismissed.has(`${o.id}|${e.id}`)) continue; // user said: wrong pair
       const shared = [
@@ -500,28 +501,33 @@ export async function applyChainLink(opts: {
   const entry = entries.find((e) => e.id === opts.laterId);
   if (!entry) throw new Error(`no entry with id '${opts.laterId}'`);
   validateFollowsTargets(entries, entry, opts.follows);
-  // A public entry must never gain a link to a private id.
-  validateCrossGraphLinks(new Map(entries.map((e) => [e.id, e])), entry, opts.follows);
+  // A shared-graph member must never gain a link outside its graphs.
+  validateContainment(new Map(entries.map((e) => [e.id, e])), entry, opts.follows);
 
   const mergedFollows = [...new Set([...(entry.follows ?? []), ...opts.follows])];
   if (mergedFollows.length === (entry.follows ?? []).length) {
     return { laterId: entry.id, follows: entry.follows ?? [], changed: false };
   }
 
-  const { body, path: _p, graph, ...rest } = entry;
+  const { body, path: _p, graphs, paths: _paths, ...rest } = entry;
   const fm = FrontmatterSchema.parse({
     ...rest,
     follows: mergedFollows,
     updated: new Date().toISOString().slice(0, 10),
   }) as Frontmatter;
-  const path = await writeEntry(fm, body, graph);
+  const written = await writeEntryAll(fm, body, graphs);
+  const path = written["private"] ?? Object.values(written)[0]!;
   const index = await syncIndex();
-  // The add-time auto-commit hook only fires on `add`; commit the entry's
-  // own store explicitly.
-  const afterCommit = await commitMemoryRepo(
-    `Link memory: ${entry.id} follows ${mergedFollows.join(", ")}`,
-    storeFor(graph).dir,
-  );
+  // The add-time auto-commit hook only fires on `add`; commit every member
+  // store explicitly (the file changed in all of them).
+  let afterCommit = false;
+  for (const g of graphs) {
+    afterCommit =
+      (await commitMemoryRepo(
+        `Link memory: ${entry.id} follows ${mergedFollows.join(", ")}`,
+        storeFor(g).dir,
+      )) || afterCommit;
+  }
   const audit = opts.refreshAudit === false ? undefined : await refreshGraphMaintenanceAudit();
   return {
     laterId: entry.id,
@@ -579,6 +585,8 @@ function previewSlugMerge(entries: MemoryEntry[], kind: SlugKind, from: string, 
 }
 
 async function writeFrontmatterMerge(entry: MemoryEntry, kind: SlugKind, from: string, to: string): Promise<void> {
+  // Rewrite EVERY materialization identically — inputs are byte-identical
+  // copies, so identical rewrites preserve the copy-sync invariant.
   const raw = await readFile(entry.path, "utf8");
   const parsed = matter(raw);
   const field = FIELD_BY_KIND[kind];
@@ -586,7 +594,10 @@ async function writeFrontmatterMerge(entry: MemoryEntry, kind: SlugKind, from: s
   const current = Array.isArray(data[field]) ? data[field].map(String) : [];
   data[field] = [...new Set(current.map((slug) => (slug === from ? to : slug)))];
   const fm = FrontmatterSchema.parse(data) as Frontmatter;
-  await writeFile(entry.path, matter.stringify(parsed.content, fm), "utf8");
+  const file = matter.stringify(parsed.content, fm);
+  for (const path of Object.values(entry.paths)) {
+    await writeFile(path, file, "utf8");
+  }
 }
 
 export async function mergeSlugs(opts: {
@@ -608,9 +619,9 @@ export async function mergeSlugs(opts: {
 
   const affectedIds = new Set(preview.entries.map((e) => e.id));
   const affected = entries.filter((e) => affectedIds.has(e.id));
-  // A merge can touch entries in BOTH stores — checkpoint and commit each
+  // A merge can touch entries across MANY stores — checkpoint and commit each
   // affected store so every side has its own undo point.
-  const affectedGraphs = [...new Set(affected.map((e) => e.graph))] as GraphId[];
+  const affectedGraphs = sortGraphs(affected.flatMap((e) => e.graphs)) as GraphId[];
   let beforeCommit = false;
   for (const g of affectedGraphs) {
     beforeCommit =

@@ -40,6 +40,7 @@ is_protected_path() {
   case "$1" in
     *memory/entries/*|memory/entries/*|./memory/entries/*) return 0 ;;
     *memory-public/entries/*|memory-public/entries/*|./memory-public/entries/*) return 0 ;;
+    *memory-graphs/*/entries/*|memory-graphs/*/entries/*|./memory-graphs/*/entries/*) return 0 ;;
     *.index/*|.index/*|./.index/*) return 0 ;;
     *) return 1 ;;
   esac
@@ -70,7 +71,7 @@ case "$tool" in
       *cli.ts\ add*|*src/cli.ts\ remove*) exit 0 ;;
     esac
     case "$command" in
-      *memory/entries*|*memory-public/entries*|*.index/*|*.index*)
+      *memory/entries*|*memory-public/entries*|*memory-graphs/*/entries*|*.index/*|*.index*)
         case "$command" in
           *'>'*|*'tee '*|*'cp '*|*'mv '*|*'rm '*|*'sed -i'*|*'perl -pi'*|*'touch '*|*'truncate '*|*'dd '*|*'install '*|*'python '*|*'node '*) deny ;;
         esac

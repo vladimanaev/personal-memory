@@ -20,10 +20,12 @@ esac
 
 cd "${CLAUDE_PROJECT_DIR:-.}" || exit 0
 
-# Both stores are checked (not parsed from --graph: a source-id match can
-# redirect the write to the OTHER store), and each commits into its own
-# nested repo. Never fall back to the parent repo.
-for store in memory memory-public; do
+# Every store is checked (not parsed from --graph: a source-id match or a
+# distribution rule can direct the write anywhere), and each commits into its
+# own nested repo. Never fall back to the parent repo. The unmatched-glob
+# literal `memory-graphs/*/` is absorbed by the .git guard below.
+for store in memory memory-public memory-graphs/*/; do
+  store="${store%/}"
   [ -d "$store/.git" ] || continue
 
   # Stage everything in the nested repo (paths are relative to the store).

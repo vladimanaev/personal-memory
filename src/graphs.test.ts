@@ -1,14 +1,24 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { MemoryEntry } from "./schema.js";
-import { graphOfPath, parseGraphId, storesUnder, validateCrossGraphLinks } from "./graphs.js";
+import { sortGraphs } from "./schema.js";
+import { graphOfPath, storesUnder, validateContainment } from "./graphs.js";
 import { hashEntry } from "./ingest.js";
 
-const stores = storesUnder("/repo");
+function tempRoot(withGraphs: string[] = []): string {
+  const root = mkdtempSync(join(tmpdir(), "pm-graphs-"));
+  mkdirSync(join(root, "memory", "entries"), { recursive: true });
+  for (const g of withGraphs) {
+    mkdirSync(join(root, "memory-graphs", g, "entries"), { recursive: true });
+  }
+  return root;
+}
 
 function entry(
-  partial: Partial<MemoryEntry> & Pick<MemoryEntry, "id" | "graph">,
+  partial: Partial<MemoryEntry> & Pick<MemoryEntry, "id" | "graphs">,
 ): MemoryEntry {
   return {
     date: "2026-01-01",
@@ -19,74 +29,96 @@ function entry(
     tags: [],
     body: "body",
     path: `/repo/memory/entries/2026/01/${partial.id}.md`,
+    paths: {},
     ...partial,
   } as MemoryEntry;
 }
 
-test("graphOfPath: private store and outside paths are private", () => {
-  assert.equal(graphOfPath(join("/repo", "memory", "entries", "a.md"), stores), "private");
-  assert.equal(graphOfPath("/somewhere/else.md", stores), "private");
+test("sortGraphs: private first, then lexicographic, deduped", () => {
+  assert.deepEqual(sortGraphs(["zeta", "private", "acme", "acme"]), ["private", "acme", "zeta"]);
+  assert.deepEqual(sortGraphs(["beta", "alpha"]), ["alpha", "beta"]);
 });
 
-test("graphOfPath: public store paths are public", () => {
-  assert.equal(graphOfPath(join("/repo", "memory-public", "entries", "a.md"), stores), "public");
-  assert.equal(graphOfPath(join("/repo", "memory-public"), stores), "public");
+test("storesUnder: private + slug-shaped dirs under memory-graphs/", () => {
+  const root = tempRoot(["public", "team-x"]);
+  try {
+    const stores = storesUnder(root);
+    assert.deepEqual(sortGraphs(stores.keys()), ["private", "public", "team-x"]);
+    assert.equal(stores.get("team-x")!.dir, join(root, "memory-graphs", "team-x"));
+    assert.equal(stores.get("private")!.dir, join(root, "memory"));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
-test("graphOfPath: memory-public prefix never bleeds into lookalike dirs", () => {
-  // `memory-public-old/` shares the `memory-public` prefix but is NOT the store.
-  assert.equal(graphOfPath(join("/repo", "memory-public-old", "a.md"), stores), "private");
+test("storesUnder: legacy memory-public layout is refused", () => {
+  const root = tempRoot();
+  mkdirSync(join(root, "memory-public"));
+  try {
+    assert.throws(() => storesUnder(root), /migrate-graphs/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
-test("parseGraphId accepts only the two graphs", () => {
-  assert.equal(parseGraphId("private"), "private");
-  assert.equal(parseGraphId("public"), "public");
-  assert.throws(() => parseGraphId("shared"), /invalid graph/);
-  assert.throws(() => parseGraphId(undefined), /invalid graph/);
+test("graphOfPath: store prefixes resolve; outside paths and lookalikes are private", () => {
+  const root = tempRoot(["team-x"]);
+  try {
+    const stores = storesUnder(root);
+    assert.equal(graphOfPath(join(root, "memory", "entries", "a.md"), stores), "private");
+    assert.equal(graphOfPath(join(root, "memory-graphs", "team-x", "entries", "a.md"), stores), "team-x");
+    assert.equal(graphOfPath(join(root, "memory-graphs-old", "a.md"), stores), "private");
+    assert.equal(graphOfPath("/somewhere/else.md", stores), "private");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
-test("hash stability: graph never participates in the content hash", () => {
-  const priv = entry({ id: "2026-01-01-x", graph: "private" });
-  const pub = entry({
+test("hash stability: membership never participates in the content hash", () => {
+  const a = entry({ id: "2026-01-01-x", graphs: ["private"] });
+  const b = entry({
     id: "2026-01-01-x",
-    graph: "public",
-    path: "/repo/memory-public/entries/2026/01/2026-01-01-x.md",
+    graphs: ["private", "team-x"],
+    paths: { private: "/p", "team-x": "/t" },
   });
-  // Same content, different store/path → identical hash, so a `move` between
-  // graphs never re-chunks and pre-split hashes stay valid.
-  assert.equal(hashEntry(priv), hashEntry(pub));
+  assert.equal(hashEntry(a), hashEntry(b));
 });
 
 function byIdOf(...entries: MemoryEntry[]): Map<string, MemoryEntry> {
   return new Map(entries.map((e) => [e.id, e]));
 }
 
-test("cross-graph links: private may reference anything", () => {
-  const pubTarget = entry({ id: "t-pub", graph: "public" });
-  const privTarget = entry({ id: "t-priv", graph: "private" });
-  const byId = byIdOf(pubTarget, privTarget);
+test("containment: private-only sources may reference anything", () => {
+  const byId = byIdOf(entry({ id: "t1", graphs: ["private"] }), entry({ id: "t2", graphs: ["team-x"] }));
   assert.doesNotThrow(() =>
-    validateCrossGraphLinks(byId, { id: "src", graph: "private" }, ["t-pub", "t-priv"]),
+    validateContainment(byId, { id: "src", graphs: ["private"] }, ["t1", "t2"]),
   );
 });
 
-test("cross-graph links: public → public is fine", () => {
-  const byId = byIdOf(entry({ id: "t-pub", graph: "public" }));
+test("containment: shared member may only reference fellow members", () => {
+  const member = entry({ id: "t-in", graphs: ["private", "team-x"] });
+  const outsider = entry({ id: "t-out", graphs: ["private"] });
+  const byId = byIdOf(member, outsider);
   assert.doesNotThrow(() =>
-    validateCrossGraphLinks(byId, { id: "src", graph: "public" }, ["t-pub"]),
+    validateContainment(byId, { id: "src", graphs: ["private", "team-x"] }, ["t-in"]),
   );
-});
-
-test("cross-graph links: public → private is forbidden and names the violators", () => {
-  const byId = byIdOf(entry({ id: "t-priv", graph: "private" }), entry({ id: "t-pub", graph: "public" }));
   assert.throws(
-    () => validateCrossGraphLinks(byId, { id: "src", graph: "public" }, ["t-pub", "t-priv"]),
-    /cannot reference private entries: t-priv/,
+    () => validateContainment(byId, { id: "src", graphs: ["private", "team-x"] }, ["t-in", "t-out"]),
+    /member of graph 'team-x' but references entries that are not: t-out/,
   );
 });
 
-test("cross-graph links: unknown target ids are ignored (existence checked elsewhere)", () => {
+test("containment: every shared membership is checked", () => {
+  const inX = entry({ id: "t", graphs: ["private", "team-x"] });
+  const byId = byIdOf(inX);
+  assert.throws(
+    () => validateContainment(byId, { id: "src", graphs: ["private", "team-x", "team-y"] }, ["t"]),
+    /member of graph 'team-y'/,
+  );
+});
+
+test("containment: unknown target ids are ignored (existence checked elsewhere)", () => {
   assert.doesNotThrow(() =>
-    validateCrossGraphLinks(new Map(), { id: "src", graph: "public" }, ["ghost-id"]),
+    validateContainment(new Map(), { id: "src", graphs: ["team-x"] }, ["ghost-id"]),
   );
 });

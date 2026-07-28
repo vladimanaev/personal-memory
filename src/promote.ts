@@ -20,10 +20,17 @@ export const PROMOTION_DISMISSALS_PATH = join(INDEX_DIR, "promotion-dismissals.j
 
 export interface PromotionDismissal {
   id: string;
+  /** Target graph the promotion was declined for (older records lack it → "public"). */
+  graph?: string;
   /** Content hash at dismissal time — a changed entry is re-proposed. */
   hash: string;
   dismissedAt: string;
   reason?: string;
+}
+
+/** Dismissal target with the pre-multi-graph default applied. */
+export function dismissalGraph(d: PromotionDismissal): string {
+  return d.graph ?? "public";
 }
 
 export interface PromotionCandidate {
@@ -52,37 +59,47 @@ async function writePromotionDismissals(dismissals: PromotionDismissal[]): Promi
   await rename(tmp, PROMOTION_DISMISSALS_PATH);
 }
 
-/** Record "keep this private" for an entry at its CURRENT content. */
-export async function dismissPromotion(id: string, reason?: string): Promise<PromotionDismissal> {
+/** Record "don't promote to <graph>" for an entry at its CURRENT content. */
+export async function dismissPromotion(
+  id: string,
+  graph: string,
+  reason?: string,
+): Promise<PromotionDismissal> {
   const entries = await loadAllEntries();
   const entry = entries.find((e) => e.id === id);
   if (!entry) throw new Error(`no entry with id '${id}'`);
-  if (entry.graph === "public") throw new Error(`'${id}' is already in the public graph`);
+  if (entry.graphs.includes(graph)) throw new Error(`'${id}' is already a member of '${graph}'`);
   const dismissal: PromotionDismissal = {
     id,
+    graph,
     hash: hashEntry(entry),
     dismissedAt: new Date().toISOString(),
     ...(reason ? { reason } : {}),
   };
-  const rest = (await readPromotionDismissals()).filter((d) => d.id !== id);
+  const rest = (await readPromotionDismissals()).filter(
+    (d) => !(d.id === id && dismissalGraph(d) === graph),
+  );
   await writePromotionDismissals([...rest, dismissal]);
   return dismissal;
 }
 
 /**
- * The mechanical promotion prefilter: private entries not dismissed at their
- * current content. Semantic eligibility (the routing prompt) is the agent's
- * judgment, applied on top of this list — never here.
+ * The mechanical promotion prefilter for one target graph: private-home
+ * entries not already members and not dismissed (for that graph) at their
+ * current content. Semantic eligibility (the target's criteria) is the
+ * agent's judgment, applied on top of this list — never here.
  */
 export function promotionCandidates(
   entries: MemoryEntry[],
   dismissals: PromotionDismissal[],
-  opts: { since?: string; until?: string } = {},
+  opts: { graph: string; since?: string; until?: string },
 ): PromotionCandidate[] {
-  const dismissedHash = new Map(dismissals.map((d) => [d.id, d.hash]));
+  const dismissedHash = new Map(
+    dismissals.filter((d) => dismissalGraph(d) === opts.graph).map((d) => [d.id, d.hash]),
+  );
   const byId = new Map(entries.map((e) => [e.id, e]));
   return entries
-    .filter((e) => e.graph === "private")
+    .filter((e) => e.graphs.includes("private") && !e.graphs.includes(opts.graph))
     .filter((e) => (opts.since ? e.date >= opts.since : true))
     .filter((e) => (opts.until ? e.date <= opts.until : true))
     .filter((e) => dismissedHash.get(e.id) !== hashEntry(e))
@@ -93,8 +110,9 @@ export function promotionCandidates(
       type: e.type,
       title: e.title,
       path: e.path,
-      blockedBy: [...(e.follows ?? []), ...(e.sources ?? [])].filter(
-        (id) => byId.get(id)?.graph === "private",
-      ),
+      blockedBy: [...(e.follows ?? []), ...(e.sources ?? [])].filter((id) => {
+        const t = byId.get(id);
+        return t !== undefined && !t.graphs.includes(opts.graph);
+      }),
     }));
 }

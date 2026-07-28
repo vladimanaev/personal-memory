@@ -7,6 +7,7 @@ import {
   loadAllEntries,
   makeId,
   writeEntry,
+  writeEntryAll,
   entryPath,
   hashEntry,
   findEntryBySourceIds,
@@ -14,8 +15,16 @@ import {
   ROOT,
 } from "./ingest.js";
 import { search, findSimilar, syncIndex, applyFilters, type SearchCompleteness, type SearchFilters } from "./store.js";
-import type { GraphId, MemoryEntry } from "./schema.js";
-import { ensureStore, parseGraphId, storeFor, validateCrossGraphLinks } from "./graphs.js";
+import { PRIVATE_GRAPH, sharedGraphs, type GraphId, type MemoryEntry } from "./schema.js";
+import {
+  createGraph,
+  ensureStore,
+  listGraphStores,
+  loadGraphManifest,
+  requireGraph,
+  validateContainment,
+} from "./graphs.js";
+import { copyEntry, moveEntry, removeEntry, syncGraphs } from "./membership.js";
 import { commitMemoryRepo } from "./memory-git.js";
 import { buildChainIndex, entryStatus, validateFollowsTargets, type ChainAnnotation } from "./chains.js";
 import { applyChainLink, dismissSlugSuggestion, mergeSlugs, proposeSlugMerge, slugUsage, type SlugKind } from "./graph-maintenance.js";
@@ -41,13 +50,14 @@ function filtersFrom(values: Record<string, unknown>): SearchFilters {
     tag: (values.tag as string) || undefined,
     since: (values.since as string) || undefined,
     until: (values.until as string) || undefined,
-    graph: values.graph ? parseGraphId(values.graph) : undefined,
+    graph: values.graph ? requireGraph(values.graph) : undefined,
   };
 }
 
-/** ` [public]` marker for listings — private entries stay unlabeled (the default). */
-function graphSuffix(e: Pick<MemoryEntry, "graph">): string {
-  return e.graph === "public" ? "  [public]" : "";
+/** ` [team-x,public]` membership marker — private-only entries stay unlabeled. */
+function graphSuffix(e: Pick<MemoryEntry, "graphs">): string {
+  const shared = sharedGraphs(e);
+  return shared.length ? `  [${shared.join(",")}]` : "";
 }
 
 function positiveInt(value: unknown, fallback: number, label: string): number {
@@ -152,7 +162,7 @@ async function cmdAdd(argv: string[]) {
   const sourceIds = list(values["source-ids"] as string).map(normalizeSourceId);
   const capturedConnectors = await resolveCapturedConnectors(sourceIds, list(values.connector as string));
   const uniq = (xs: string[]) => [...new Set(xs)];
-  const requestedGraph: GraphId = values.graph ? parseGraphId(values.graph) : "private";
+  const requestedGraph: GraphId = values.graph ? requireGraph(values.graph) : PRIVATE_GRAPH;
   const entries = await loadAllEntries();
 
   // --- resolve the target: an existing entry to update in place, or a new one ---
@@ -168,13 +178,13 @@ async function cmdAdd(argv: string[]) {
     }
   }
 
-  // An update stays in the entry's own store — a re-capture must never
+  // An update keeps the entry's own membership — a re-capture must never
   // silently relocate an entry between graphs. Reclassify explicitly instead.
-  const graph: GraphId = target?.graph ?? requestedGraph;
-  if (target && values.graph && requestedGraph !== target.graph) {
+  const graphs: string[] = target ? target.graphs : [requestedGraph];
+  if (target && values.graph && !target.graphs.includes(requestedGraph)) {
     console.log(
-      `↻ ${target.id} lives in the ${target.graph} graph — --graph ${requestedGraph} ignored; ` +
-        `use 'cli.ts move ${target.id} --to ${requestedGraph}' to reclassify`,
+      `↻ ${target.id} lives in [${target.graphs.join(",")}] — --graph ${requestedGraph} ignored; ` +
+        `use 'cli.ts copy|move ${target.id} --to ${requestedGraph}' to reclassify`,
     );
   }
 
@@ -233,21 +243,21 @@ async function cmdAdd(argv: string[]) {
         },
   );
 
-  // --- a brand-new id must be unique across BOTH stores (chains/index/move key by id) ---
+  // --- a brand-new id must be unique across ALL stores (chains/index/move key by id) ---
   if (!target) {
     const collision = entries.find((e) => e.id === fm.id);
     if (collision) {
       throw new Error(
-        `id '${fm.id}' already exists in the ${collision.graph} graph (${rel(collision.path)})\n` +
+        `id '${fm.id}' already exists (graphs: ${collision.graphs.join(",")}; ${rel(collision.path)})\n` +
           `  refresh it with --update ${fm.id}, or pick a distinct --id`,
       );
     }
   }
 
-  // --- cross-graph guard: a public entry must never reference private ids ---
-  if (graph === "public") {
+  // --- containment guard: a shared-graph entry only references fellow members ---
+  {
     const byId = new Map(entries.map((e) => [e.id, e]));
-    validateCrossGraphLinks(byId, { id: fm.id, graph }, [
+    validateContainment(byId, { id: fm.id, graphs }, [
       ...(fm.follows ?? []),
       ...(fm.sources ?? []),
     ]);
@@ -255,7 +265,13 @@ async function cmdAdd(argv: string[]) {
 
   // --- idempotency: skip a re-capture whose content is identical (hash ignores `updated`) ---
   if (target) {
-    const candidate: MemoryEntry = { ...fm, body: body.trim(), path: target.path, graph: target.graph };
+    const candidate: MemoryEntry = {
+      ...fm,
+      body: body.trim(),
+      path: target.path,
+      paths: target.paths,
+      graphs: target.graphs,
+    };
     if (hashEntry(candidate) === hashEntry(target)) {
       console.log(`✓ unchanged ${fm.id}`);
       const captured = await markCapturedConnectors(capturedConnectors);
@@ -264,14 +280,34 @@ async function cmdAdd(argv: string[]) {
     }
   }
 
-  if (graph === "public") await ensureStore("public");
-  const path = await writeEntry(fm, body, graph);
+  let path: string;
+  if (target) {
+    // Refresh EVERY materialization so the copy-sync invariant holds.
+    const written = await writeEntryAll(fm, body, graphs);
+    path = written[PRIVATE_GRAPH] ?? Object.values(written)[0]!;
+  } else {
+    if (requestedGraph !== PRIVATE_GRAPH) await ensureStore(requestedGraph);
+    path = await writeEntry(fm, body, requestedGraph);
+  }
   const stats = await syncIndex();
-  console.log(`✓ ${target ? "updated" : "created"} ${fm.id}${graph === "public" ? " [public]" : ""}`);
+  const label = sharedGraphs({ graphs }).length ? ` [${sharedGraphs({ graphs }).join(",")}]` : "";
+  console.log(`✓ ${target ? "updated" : "created"} ${fm.id}${label}`);
   console.log(`  ${rel(path)}`);
   console.log(`  indexed (+${stats.added} changed, ${stats.unchanged} unchanged)`);
   const captured = await markCapturedConnectors(capturedConnectors);
   if (captured.length) console.log(`  connector captured: ${captured.join(", ")}`);
+
+  // Standing distribution rules auto-apply to fresh private captures; a rule
+  // failure must never fail the capture itself.
+  if (!target && requestedGraph === PRIVATE_GRAPH) {
+    try {
+      const { applyRules } = await import("./graph-rules.js");
+      const report = await applyRules({ ids: [fm.id] });
+      for (const line of report.actions) console.log(`  → rule: ${line}`);
+    } catch (err) {
+      console.warn(`  ⚠ rules not applied: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
 }
 
 async function cmdLink(argv: string[]) {
@@ -302,35 +338,47 @@ async function cmdRemove(argv: string[]) {
   const { positionals } = parseArgs({ args: argv, options: {}, allowPositionals: true });
   const id = positionals[0];
   if (!id) throw new Error("usage: memory remove <id>");
-  const entries = await loadAllEntries();
-  const target = entries.find((e) => e.id === id);
-  if (!target) throw new Error(`no entry with id '${id}'`);
-
-  const referrers = entries.filter((e) => e.sources?.includes(id));
-  if (referrers.length) {
-    console.error(`✗ ${id} is referenced as a source by: ${referrers.map((e) => e.id).join(", ")}`);
+  const result = await removeEntry(id);
+  if (result.blockedBy) {
+    console.error(`✗ ${id} is referenced as a source by: ${result.blockedBy.join(", ")}`);
     console.error("  update or remove those summaries first");
     process.exitCode = 2;
     return;
   }
-
-  // Chain links tolerate dangling targets (maintenance reports them), so a
-  // followed entry can still be removed — but say what gets orphaned.
-  const followers = entries.filter((e) => e.follows?.includes(id));
-  if (followers.length) {
-    console.log(`⚠ ${id} is followed by: ${followers.map((e) => e.id).join(", ")} — their links will dangle`);
+  if (result.followers?.length) {
+    console.log(`⚠ ${id} was followed by: ${result.followers.join(", ")} — their links will dangle`);
   }
+  console.log(`✓ removed ${id} from [${result.graphs.join(",")}]`);
+  for (const p of result.paths) console.log(`  ${rel(p)}`);
+  console.log(
+    `  index synced (${result.index?.removed ?? 0} removed); prior content kept in each store's .git history`,
+  );
+}
 
-  // Checkpoint first so the removed content is always recoverable from the
-  // entry's OWN store history (the add-time auto-commit may not have run).
-  const storeDir = storeFor(target.graph).dir;
-  await commitMemoryRepo(`Checkpoint before remove: ${id}`, storeDir);
-  await rm(target.path);
-  const stats = await syncIndex();
-  await commitMemoryRepo(`Remove memory: ${id}`, storeDir);
-  console.log(`✓ removed ${id}`);
-  console.log(`  ${rel(target.path)}`);
-  console.log(`  index synced (${stats.removed} removed); prior content kept in ${rel(storeDir)}/.git history`);
+async function cmdCopy(argv: string[]) {
+  const { values, positionals } = parseArgs({
+    args: argv,
+    options: { to: { type: "string" } },
+    allowPositionals: true,
+  });
+  const id = positionals[0];
+  if (!id || positionals.length !== 1 || !values.to) {
+    throw new Error("usage: memory copy <id> --to <graph>");
+  }
+  const result = await copyEntry({ id, to: values.to as string });
+  if (result.blockedBy) {
+    console.error(`✗ ${id} references entries not in '${result.to}': ${result.blockedBy.join(", ")}`);
+    console.error(`  copy those first: cli.ts copy <id> --to ${result.to}`);
+    process.exitCode = 2;
+    return;
+  }
+  if (!result.changed) {
+    console.log(`✓ unchanged ${id} (already a member of '${result.to}')`);
+    return;
+  }
+  console.log(`✓ copied ${id} → ${result.to} graph (stays private too)`);
+  console.log(`  ${rel(result.path!)}`);
+  console.log(`  indexed (+${result.index?.added ?? 0} changed, ${result.index?.unchanged ?? 0} unchanged)`);
 }
 
 async function cmdMove(argv: string[]) {
@@ -341,73 +389,91 @@ async function cmdMove(argv: string[]) {
   });
   const id = positionals[0];
   if (!id || positionals.length !== 1 || !values.to) {
-    throw new Error("usage: memory move <id> --to private|public");
+    throw new Error("usage: memory move <id> --to <graph>   (replaces the entry's WHOLE membership)");
   }
-  const to = parseGraphId(values.to);
-  const entries = await loadAllEntries();
-  const target = entries.find((e) => e.id === id);
-  if (!target) throw new Error(`no entry with id '${id}'`);
-  if (target.graph === to) {
-    console.log(`✓ unchanged ${id} (already in the ${to} graph)`);
+  const result = await moveEntry({ id, to: values.to as string });
+  if (result.blockedBy) {
+    if (result.blockedBy.kind === "refs") {
+      console.error(`✗ ${id} references entries not in '${result.to}': ${result.blockedBy.ids.join(", ")}`);
+      console.error(`  copy or move those first (cli.ts copy <id> --to ${result.to})`);
+    } else {
+      console.error(`✗ entries in graphs ${id} is leaving still reference it: ${result.blockedBy.ids.join(", ")}`);
+      console.error("  move those first, or keep this entry's membership");
+    }
+    process.exitCode = 2;
     return;
   }
-
-  // Direction preconditions — the public store must never reference a private id.
-  if (to === "public") {
-    const byId = new Map(entries.map((e) => [e.id, e]));
-    const refs = [...(target.follows ?? []), ...(target.sources ?? [])];
-    const violators = refs.filter((r) => {
-      const t = byId.get(r);
-      return t !== undefined && t.graph === "private";
-    });
-    if (violators.length) {
-      console.error(`✗ ${id} references private entries: ${violators.join(", ")}`);
-      console.error("  move those public first (or keep this entry private)");
-      process.exitCode = 2;
-      return;
-    }
-  } else {
-    const publicReferrers = entries.filter(
-      (e) => e.graph === "public" && ((e.follows?.includes(id) ?? false) || (e.sources?.includes(id) ?? false)),
-    );
-    if (publicReferrers.length) {
-      console.error(
-        `✗ public entries reference ${id}: ${publicReferrers.map((e) => e.id).join(", ")}`,
-      );
-      console.error("  move those private first (or leave this entry public)");
-      process.exitCode = 2;
-      return;
-    }
+  if (!result.changed) {
+    console.log(`✓ unchanged ${id} (already exactly in the ${result.to} graph)`);
+    return;
   }
+  console.log(`✓ moved ${id} → ${result.to} graph`);
+  if (result.removedFrom?.length) console.log(`  removed from: ${result.removedFrom.join(", ")}`);
+  console.log(`  ${rel(result.path!)}`);
+  console.log(`  indexed (+${result.index?.added ?? 0} changed, ${result.index?.unchanged ?? 0} unchanged)`);
+}
 
-  const from = target.graph;
-  await ensureStore(to);
-  // Checkpoint both repos so the move is fully undoable from either side.
-  await commitMemoryRepo(`Checkpoint before move: ${id}`, storeFor(from).dir);
-  await commitMemoryRepo(`Checkpoint before move: ${id}`, storeFor(to).dir);
-
-  // Relocate the file bytes verbatim — id, date, and content hash stay
-  // identical; only the store (and therefore the graph) changes.
-  const raw = await readFile(target.path, "utf8");
-  const dest = entryPath(target, to);
-  await mkdir(dirname(dest), { recursive: true });
-  await writeFile(dest, raw, "utf8");
-  await rm(target.path);
-
-  const stats = await syncIndex();
-  // The public repo's history never mentions the other graph — its messages
-  // are plain add/remove; the private repo records the move destination.
-  const msgFor = (g: GraphId) =>
-    g === "public"
-      ? to === "public"
-        ? `Add memory: ${id}`
-        : `Remove memory: ${id}`
-      : `Move memory: ${id} → ${to}`;
-  await commitMemoryRepo(msgFor(from), storeFor(from).dir);
-  await commitMemoryRepo(msgFor(to), storeFor(to).dir);
-  console.log(`✓ moved ${id} → ${to} graph`);
-  console.log(`  ${rel(dest)}`);
-  console.log(`  indexed (+${stats.added} changed, ${stats.unchanged} unchanged)`);
+async function cmdGraphs(argv: string[]) {
+  const sub = argv[0];
+  if (sub === "create") {
+    const { values, positionals } = parseArgs({
+      args: argv.slice(1),
+      options: { "display-name": { type: "string" }, description: { type: "string" } },
+      allowPositionals: true,
+    });
+    const slug = positionals[0];
+    if (!slug || positionals.length !== 1) {
+      throw new Error('usage: memory graphs create <slug> [--display-name "…"] [--description "…"]');
+    }
+    const store = await createGraph({
+      slug,
+      displayName: values["display-name"] as string | undefined,
+      description: values.description as string | undefined,
+    });
+    console.log(`✓ created graph '${store.graph}'`);
+    console.log(`  ${rel(store.dir)} (own nested git repo; manifest: ${rel(store.manifestPath)})`);
+    return;
+  }
+  if (sub === "sync") {
+    const { values } = parseArgs({ args: argv.slice(1), options: { "dry-run": { type: "boolean" } } });
+    const report = await syncGraphs({ dryRun: Boolean(values["dry-run"]) });
+    for (const d of report.drift) {
+      const state = report.repaired.includes(d.id) ? "repaired (private wins)" : "DRIFTED";
+      console.log(`${state}: ${d.id}`);
+      for (const c of d.copies) console.log(`  [${c.graph}] ${rel(c.path)} (${c.hash})`);
+    }
+    for (const v of report.homeViolations) {
+      console.log(`⚠ ${v.id} is multi-member without a private home: [${v.graphs.join(",")}]`);
+    }
+    for (const v of report.containmentViolations) {
+      console.log(`⚠ ${v.id} [${v.graph}] references non-members: ${v.targets.join(", ")}`);
+    }
+    const issues =
+      report.drift.length + report.homeViolations.length + report.containmentViolations.length;
+    console.log(
+      issues === 0
+        ? "✓ all graphs consistent"
+        : `${issues} issue${issues === 1 ? "" : "s"} (${report.repaired.length} repaired)`,
+    );
+    if (issues > report.repaired.length) process.exitCode = 2;
+    return;
+  }
+  if (sub === "list" || sub === undefined) {
+    const entries = await loadAllEntries();
+    for (const store of listGraphStores()) {
+      const count = entries.filter((e) => e.graphs.includes(store.graph)).length;
+      const manifest = store.graph === PRIVATE_GRAPH ? null : await loadGraphManifest(store);
+      const label =
+        store.graph === PRIVATE_GRAPH
+          ? "(built-in — the default home of every capture)"
+          : manifest?.error
+            ? `⚠ invalid manifest: ${manifest.error}`
+            : (manifest?.fm?.display_name ?? manifest?.body?.split("\n")[0] ?? "");
+      console.log(`● ${store.graph.padEnd(14)} ${String(count).padStart(4)} entries  ${rel(store.dir)}  ${label}`);
+    }
+    return;
+  }
+  throw new Error("usage: memory graphs [list] | graphs create <slug> [--display-name …] [--description …] | graphs sync [--dry-run]");
 }
 
 async function cmdIndex(argv: string[]) {
@@ -595,12 +661,12 @@ async function cmdPerson(argv: string[]) {
     allowPositionals: true,
   });
   const slug = positionals[0];
-  if (!slug || positionals.length !== 1) throw new Error("usage: memory person <slug> [--graph private|public]");
-  const graph = values.graph ? parseGraphId(values.graph) : undefined;
+  if (!slug || positionals.length !== 1) throw new Error("usage: memory person <slug> [--graph <name>]");
+  const graph = values.graph ? requireGraph(values.graph) : undefined;
   const all = await loadAllEntries();
   const chainIndex = buildChainIndex(all);
   const entries = all
-    .filter((e) => e.people.includes(slug) && (!graph || e.graph === graph))
+    .filter((e) => e.people.includes(slug) && (!graph || e.graphs.includes(graph)))
     .sort((a, b) => b.date.localeCompare(a.date));
   if (entries.length === 0) {
     console.log(`(no memories mention '${slug}')`);
@@ -626,12 +692,12 @@ async function cmdDigest(argv: string[]) {
   const quarter = values.quarter as string | undefined;
   const tag = values.tag as string | undefined;
   if (!person && !quarter && !tag) {
-    throw new Error("usage: memory digest --person <slug> | --quarter <YYYY-Qn> | --tag <slug> [--graph private|public]");
+    throw new Error("usage: memory digest --person <slug> | --quarter <YYYY-Qn> | --tag <slug> [--graph <name>]");
   }
-  // A digest lives in one graph. A PRIVATE digest may cite sources from both
-  // graphs (private→public links are fine); a PUBLIC digest must restrict its
-  // candidates to public entries so its `sources` back-links can't leak.
-  const digestGraph: GraphId = values.graph ? parseGraphId(values.graph) : "private";
+  // A digest lives in ONE graph. A private digest may cite sources anywhere
+  // (private may reference everything); a shared-graph digest must restrict
+  // its candidates to that graph's members so `sources` back-links can't leak.
+  const digestGraph: GraphId = values.graph ? requireGraph(values.graph) : PRIVATE_GRAPH;
 
   let scope: SearchFilters = {};
   let id: string;
@@ -656,9 +722,9 @@ async function cmdDigest(argv: string[]) {
 
   if (digestGraph === "public") {
     scope = { ...scope, graph: "public" };
-    // Ids are unique across BOTH stores — a public digest gets its own id so
-    // it never collides with the private digest of the same scope.
-    id = id.replace(/^summary-/, "summary-public-");
+    // Ids are unique across ALL stores — a shared-graph digest gets its own
+    // id so it never collides with the private digest of the same scope.
+    id = id.replace(/^summary-/, `summary-${digestGraph}-`);
   }
   const raw = applyFilters(await loadAllEntries(), scope)
     .filter((e) => e.type !== "summary")
@@ -694,7 +760,7 @@ async function cmdDigest(argv: string[]) {
     sources: raw.map((e) => e.id),
   });
 
-  if (digestGraph === "public") await ensureStore("public");
+  if (digestGraph !== PRIVATE_GRAPH) await ensureStore(digestGraph);
   const path = await writeEntry(fm, body, digestGraph);
   await syncIndex();
   console.log(`✓ digest written: ${rel(path)}`);
@@ -708,39 +774,96 @@ async function cmdPromote(argv: string[]) {
   if (sub === "dismiss") {
     const { values, positionals } = parseArgs({
       args: argv.slice(1),
-      options: { reason: { type: "string" } },
+      options: { reason: { type: "string" }, graph: { type: "string" } },
       allowPositionals: true,
     });
     const id = positionals[0];
-    if (!id || positionals.length !== 1) throw new Error("usage: memory promote dismiss <id> [--reason \"…\"]");
-    const d = await dismissPromotion(id, values.reason as string | undefined);
-    console.log(`✓ ${d.id} stays private — won't be proposed again unless its content changes`);
+    if (!id || positionals.length !== 1) {
+      throw new Error('usage: memory promote dismiss <id> [--graph <name>] [--reason "…"]');
+    }
+    const graph = requireGraph((values.graph as string | undefined) ?? "public");
+    const d = await dismissPromotion(id, graph, values.reason as string | undefined);
+    console.log(`✓ ${d.id} won't be proposed for '${graph}' again unless its content changes`);
     return;
   }
 
   if (sub === "candidates" || sub === undefined) {
     const { values } = parseArgs({
       args: sub ? argv.slice(1) : argv,
-      options: { since: { type: "string" }, until: { type: "string" }, limit: { type: "string" } },
+      options: {
+        to: { type: "string" },
+        since: { type: "string" },
+        until: { type: "string" },
+        limit: { type: "string" },
+      },
     });
+    const graph = requireGraph((values.to as string | undefined) ?? "public");
+    if (graph === PRIVATE_GRAPH) throw new Error("promotion targets a shared graph — private is the source");
     const entries = await loadAllEntries();
     const candidates = promotionCandidates(entries, await readPromotionDismissals(), {
+      graph,
       since: values.since as string | undefined,
       until: values.until as string | undefined,
     });
     const limit = values.limit ? positiveInt(values.limit, candidates.length, "--limit") : candidates.length;
     for (const c of candidates.slice(0, limit)) {
-      const blocked = c.blockedBy.length ? `  [blocked by private refs: ${c.blockedBy.join(", ")}]` : "";
+      const blocked = c.blockedBy.length ? `  [blocked by non-member refs: ${c.blockedBy.join(", ")}]` : "";
       console.log(`${c.date}  ${c.type.padEnd(11)} ${c.id}${blocked}`);
     }
     console.log(
-      `\n${candidates.length} candidate${candidates.length === 1 ? "" : "s"} ` +
-        `(private entries not yet reviewed; apply the eligibility prompt before proposing any)`,
+      `\n${candidates.length} candidate${candidates.length === 1 ? "" : "s"} for '${graph}' ` +
+        `(not yet reviewed; apply the graph's eligibility criteria before proposing any)`,
     );
     return;
   }
 
-  throw new Error("usage: memory promote candidates [--since DATE] [--until DATE] [--limit N] | promote dismiss <id> [--reason \"…\"]");
+  throw new Error(
+    'usage: memory promote candidates [--to <graph>] [--since DATE] [--until DATE] [--limit N] | promote dismiss <id> [--graph <name>] [--reason "…"]',
+  );
+}
+
+async function cmdRules(argv: string[]) {
+  const sub = argv[0];
+  const { readRules, applyRules, matchRule } = await import("./graph-rules.js");
+
+  if (sub === "apply") {
+    const { values } = parseArgs({ args: argv.slice(1), options: { "dry-run": { type: "boolean" } } });
+    const dryRun = Boolean(values["dry-run"]);
+    const report = await applyRules({ dryRun });
+    for (const c of report.plan.conflicts) console.log(`⚠ skipped ${c.id}: ${c.reason}`);
+    if (dryRun) {
+      for (const a of report.plan.actions) console.log(`would ${a.action} ${a.id} → ${a.graph}`);
+      console.log(`\n${report.plan.actions.length} action(s), ${report.plan.conflicts.length} conflict(s) — dry run, nothing changed`);
+      return;
+    }
+    for (const line of report.actions) console.log(`✓ ${line}`);
+    for (const b of report.blocked) {
+      console.log(`✗ blocked ${b.id} → ${b.graph}: references non-members ${b.ids.join(", ")}`);
+    }
+    console.log(
+      `\n${report.copied} copied, ${report.moved} moved, ${report.skippedConflicts} conflict(s), ${report.blocked.length} blocked`,
+    );
+    return;
+  }
+
+  if (sub === "list" || sub === undefined) {
+    const rules = await readRules();
+    if (rules.length === 0) {
+      console.log("(no rules configured — memory/graphs/rules.json)");
+      return;
+    }
+    const entries = await loadAllEntries();
+    for (const r of rules) {
+      const match = [r.match.tag ? `tag #${r.match.tag}` : "", r.match.type ? `type ${r.match.type}` : ""]
+        .filter(Boolean)
+        .join(" + ");
+      const n = entries.filter((e) => e.graphs.includes(PRIVATE_GRAPH) && matchRule(e, r)).length;
+      console.log(`● ${match}  →  ${r.graph}  (${r.mode})   matches ${n} private entr${n === 1 ? "y" : "ies"}`);
+    }
+    return;
+  }
+
+  throw new Error("usage: memory rules [list] | rules apply [--dry-run]");
 }
 
 async function cmdRouting() {
@@ -1006,27 +1129,36 @@ Usage:
             [--update <id>]      # refresh a specific entry in place
             [--force-new]        # bypass the near-duplicate guard
             [--dup-threshold N]  # cosine threshold for the guard (default 0.92)
-            [--graph private|public]  # which graph to file a NEW entry in (default private;
-                                      # updates stay in their entry's graph — reclassify with 'move')
+            [--graph <name>]     # file a NEW entry in that graph (default private; reserved for an
+                                 # EXPLICIT user request — updates keep their entry's membership)
   memory link <id> --follows <earlier-id,…>
             # add timeline links to an existing entry (e.g. a decision settling a pending-decision)
-            # a PUBLIC entry can never follow a private one (link direction is enforced)
-  memory remove <id>   # delete an entry + sync index (prior content stays in its store's git history)
-  memory move <id> --to private|public
-            # reclassify an entry between graphs; validates link direction, checkpoints both repos
+            # containment is enforced: a shared-graph entry only references fellow members
+  memory remove <id>   # delete ALL of an entry's copies + sync index (content stays in each repo's history)
+  memory copy <id> --to <graph>
+            # add membership: materialize the entry into another graph (it stays private too);
+            # every copy is kept in sync automatically on later updates
+  memory move <id> --to <graph>
+            # replace the entry's WHOLE membership with <graph> (removes every other copy);
+            # move --to private = full repatriation. Containment validated both directions
+  memory graphs [list]                 # registry: private + every memory-graphs/<slug>/ store
+  memory graphs create <slug> [--display-name "…"] [--description "…"]
+  memory graphs sync [--dry-run]       # detect + repair drifted copies (private wins), report violations
+  memory rules [list]                  # standing distribution rules (memory/graphs/rules.json)
+  memory rules apply [--dry-run]       # reconcile all rules against existing private entries
   memory index [--force]
-  memory query "<question>" ["<alt phrasing>" …] [--person X] [--type Y] [--since DATE] [--until DATE] [--graph G] [-k N] [--deep]
+  memory query "<question>" ["<alt phrasing>" …] [--person X] [--type Y] [--since DATE] [--until DATE] [--graph <name>] [-k N] [--deep]
             # each quoted positional is a separate phrasing; all are fused (2-4 recommended)
             # --deep: recall-over-precision preset (k=40, wider candidate pool)
   memory recall "<question>" ["<agent phrasing>" …] [--person X] [--type Y] [--since DATE] [--until DATE] [--graph G] [-k N]
             [--complete | --complete-if-small | --no-complete] [--require-complete] [--no-expand] [--format text|json]
             # first phrasing is primary; extras are agent-supplied; CLI adds deterministic expansions unless --no-expand
             # default: k=40, deep pools, complete-if-small (limit 200)
-            # --graph private|public scopes to one graph; default searches BOTH (public hits labeled)
+            # --graph <name> scopes to one graph's members; default searches ALL (shared memberships labeled)
   memory list [--person|--type|--team|--tag|--since|--until|--graph|--limit]
-  memory person <slug> [--graph private|public]
-  memory digest --person <slug> | --quarter <YYYY-Qn> | --tag <slug> [--graph private|public]
-            # public digest: candidates restricted to public entries; written to the public store
+  memory person <slug> [--graph <name>]
+  memory digest --person <slug> | --quarter <YYYY-Qn> | --tag <slug> [--graph <name>]
+            # shared-graph digest: candidates restricted to that graph's members; written there (id summary-<graph>-…)
   memory maintenance [--threshold N]  # read-only report: digest debt, index health, slug hygiene (default 15)
   memory slugs list --kind person|team|tag [--min-count N]
             # vocabulary with usage counts (for tag compaction / slug reuse)
@@ -1037,9 +1169,9 @@ Usage:
   memory slugs dismiss --kind person|team|tag --from <slug> --to <slug>
             # permanently hide a wrong merge suggestion from maintenance
   memory routing                     # show + validate the public-eligibility prompt (template vs private override)
-  memory promote candidates [--since DATE] [--until DATE] [--limit N]
-            # private entries awaiting public-promotion review (dismissed ones hidden until edited)
-  memory promote dismiss <id> [--reason "…"]   # record "keep private" — hidden until content changes
+  memory promote candidates [--to <graph>] [--since DATE] [--until DATE] [--limit N]
+            # private entries awaiting promotion review for <graph> (default public)
+  memory promote dismiss <id> [--graph <name>] [--reason "…"]   # record "not for that graph" — hidden until content changes
   memory connectors                  # list + validate connectors/<name>.md (fetch config + extraction prompt per source)
   memory connectors mark-pulled <name> [--at ISO_TIMESTAMP]
             # record that a connector sweep completed; captures are recorded by memory add
@@ -1056,6 +1188,9 @@ async function main() {
     case "link": return cmdLink(rest);
     case "remove": return cmdRemove(rest);
     case "move": return cmdMove(rest);
+    case "copy": return cmdCopy(rest);
+    case "graphs": return cmdGraphs(rest);
+    case "rules": return cmdRules(rest);
     case "index": return cmdIndex(rest);
     case "query": return cmdQuery(rest);
     case "recall": return cmdRecall(rest);

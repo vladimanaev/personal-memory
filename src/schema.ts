@@ -112,27 +112,64 @@ export const RoutingSchema = z
     /** false = skip routing entirely; every capture goes to `default_graph`. */
     enabled: z.boolean().default(true),
     /** Machine-readable fallback verdict — applied on any doubt. */
-    default_graph: z.enum(["private", "public"]).default("private"),
+    default_graph: slug.default("private"),
   })
   .strict();
 
 export type Routing = z.infer<typeof RoutingSchema>;
 
 /**
- * Which physical store an entry lives in. `private` is the local-only
- * `memory/` repo; `public` is the shareable `memory-public/` repo. Derived
- * from the file's on-disk location — never stored in frontmatter, so the two
- * can't drift and existing files never need touching.
+ * A graph name. `private` is the local-only `memory/` repo; every other graph
+ * is a user-created shareable store under `memory-graphs/<slug>/`. Membership
+ * is derived from where an entry's file(s) sit on disk — never stored in
+ * frontmatter, so location and metadata can't drift.
  */
-export type GraphId = "private" | "public";
-export const GRAPH_IDS = ["private", "public"] as const satisfies readonly GraphId[];
+export type GraphId = string;
+export const PRIVATE_GRAPH = "private";
 
-/** A fully-parsed memory: validated frontmatter + Markdown body + file path. */
+/** Canonical membership order: private first, then lexicographic. */
+export function sortGraphs(gs: Iterable<string>): string[] {
+  return [...new Set(gs)].sort((a, b) =>
+    a === PRIVATE_GRAPH ? -1 : b === PRIVATE_GRAPH ? 1 : a.localeCompare(b),
+  );
+}
+
+/**
+ * Per-graph manifest — `memory-graphs/<slug>/GRAPH.md`. Frontmatter is the
+ * machine-readable envelope; the body is the graph's description +
+ * eligibility notes agents consult before copying/moving anything there.
+ * Travels with the store when shared.
+ */
+export const GraphManifestSchema = z
+  .object({
+    /** Must equal the directory slug (`memory-graphs/<name>/`). */
+    name: slug,
+    display_name: z.string().min(1).optional(),
+    enabled: z.boolean().default(true),
+    created: isoDate.optional(),
+  })
+  .strict();
+
+export type GraphManifest = z.infer<typeof GraphManifestSchema>;
+
+/** A fully-parsed memory: validated frontmatter + Markdown body + membership. */
 export interface MemoryEntry extends Frontmatter {
   body: string;
+  /** Home copy's path: the private copy when a member of private, else the sole copy. */
   path: string;
-  /** Derived from `path` (which store the file sits in); excluded from the content hash. */
-  graph: GraphId;
+  /** Every materialization, graph → absolute file path. */
+  paths: Record<string, string>;
+  /**
+   * Sorted membership (`sortGraphs`); never empty; length > 1 implies the
+   * entry is a private member (copies originate from private). Derived from
+   * file locations; excluded from the content hash.
+   */
+  graphs: string[];
+}
+
+/** Memberships other than private (the labels shown in listings). */
+export function sharedGraphs(e: Pick<MemoryEntry, "graphs">): string[] {
+  return e.graphs.filter((g) => g !== PRIVATE_GRAPH);
 }
 
 /**
@@ -156,8 +193,8 @@ export interface MemoryRecord {
   people: string;
   teams: string;
   tags: string;
-  /** Which store the entry lives in (`private` | `public`) — enables SQL scope prefilters. */
-  graph: string;
+  /** Pipe-delimited sorted membership, e.g. `"|private|team-x|"` — enables SQL scope prefilters. */
+  graphs: string;
   /** Content hash of the whole source entry — drives incremental indexing. */
   hash: string;
   /** The text that was embedded (title + chunk of body). */

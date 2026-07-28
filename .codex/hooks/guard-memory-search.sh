@@ -40,7 +40,7 @@ esac
 case "$command" in
   *'rg '*|rg\ *|*'grep '*|grep\ *|*'fd '*|fd\ *|*'find '*|find\ *|*'ag '*|ag\ *|*'ack '*|ack\ *)
     case "$command" in
-      *memory/*|*./memory*|*' memory '*|*memory-public*|*.index/*|*.index*) deny ;;
+      *memory/*|*./memory*|*' memory '*|*memory-public*|*memory-graphs*|*.index/*|*.index*) deny ;;
     esac
     case "$command" in
       *rg*--no-ignore*|*rg*\ -uuu*|*rg*\ -uu*|*rg*\ -u*)

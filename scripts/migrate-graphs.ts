@@ -1,0 +1,91 @@
+#!/usr/bin/env -S npx tsx
+/**
+ * Idempotent migration: two-graph layout → N-graph layout.
+ *
+ *   memory-public/  →  memory-graphs/public/   (plain rename — .git history intact)
+ *
+ * Uses ONLY fs + git (never src/graphs.ts) so it can run while the legacy
+ * guard in the engine refuses the old layout. Safe to re-run: every step
+ * checks before acting. Take a verified backup first (MEMORY-GUARDRAILS.md).
+ */
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, renameSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+
+const ROOT = process.cwd();
+const OLD_PUBLIC = join(ROOT, "memory-public");
+const PARENT = join(ROOT, "memory-graphs");
+const NEW_PUBLIC = join(PARENT, "public");
+
+function git(dir: string, ...args: string[]): string {
+  return execFileSync("git", ["-C", dir, ...args], { encoding: "utf8" });
+}
+
+function checkpoint(dir: string, msg: string): void {
+  if (!existsSync(join(dir, ".git"))) return;
+  git(dir, "add", "-A", ".");
+  if (git(dir, "status", "--porcelain").trim()) {
+    git(dir, "commit", "-q", "-m", msg);
+    console.log(`✓ checkpointed ${dir}`);
+  }
+}
+
+// 1. Checkpoint every nested repo that exists.
+checkpoint(join(ROOT, "memory"), "Checkpoint before multi-graph migration");
+if (existsSync(OLD_PUBLIC)) checkpoint(OLD_PUBLIC, "Checkpoint before multi-graph migration");
+
+// 2. Relocate the public store.
+if (existsSync(OLD_PUBLIC) && existsSync(NEW_PUBLIC)) {
+  console.error("✗ BOTH memory-public/ and memory-graphs/public/ exist — resolve manually before re-running");
+  process.exit(1);
+} else if (existsSync(OLD_PUBLIC)) {
+  mkdirSync(PARENT, { recursive: true });
+  renameSync(OLD_PUBLIC, NEW_PUBLIC);
+  console.log("✓ moved memory-public/ → memory-graphs/public/ (.git history intact)");
+} else if (existsSync(NEW_PUBLIC)) {
+  console.log("✓ memory-graphs/public/ already in place");
+} else {
+  console.log("✓ no public store yet (fresh clone) — nothing to relocate");
+}
+
+// 3. Manifest for the public graph.
+const manifest = join(NEW_PUBLIC, "GRAPH.md");
+if (existsSync(NEW_PUBLIC) && !existsSync(manifest)) {
+  writeFileSync(
+    manifest,
+    `---
+name: public
+created: '${new Date().toISOString().slice(0, 10)}'
+---
+
+The built-in shareable graph. Eligibility criteria live in the
+graph-routing prompt (\`routing/graph-routing.md\`, overridden by
+\`memory/routing/graph-routing.md\`): only content every teammate could see —
+work artifacts, announced decisions, technical learnings — never anything
+about identifiable people's performance, hiring, comp, health, or feelings.
+`,
+    "utf8",
+  );
+  checkpoint(NEW_PUBLIC, "Add GRAPH.md manifest");
+  console.log("✓ wrote memory-graphs/public/GRAPH.md");
+}
+
+// 4. Promotion dismissals gain the per-graph field (reader defaults anyway).
+const dismissalsPath = join(ROOT, ".index", "promotion-dismissals.json");
+if (existsSync(dismissalsPath)) {
+  try {
+    const records = JSON.parse(readFileSync(dismissalsPath, "utf8")) as { graph?: string }[];
+    if (Array.isArray(records) && records.some((r) => r.graph === undefined)) {
+      for (const r of records) r.graph ??= "public";
+      writeFileSync(dismissalsPath, `${JSON.stringify(records, null, 2)}\n`, "utf8");
+      console.log("✓ promotion dismissals migrated to per-graph records");
+    }
+  } catch {
+    console.warn("⚠ could not parse promotion-dismissals.json — leaving as-is (reader is tolerant)");
+  }
+}
+
+// 5. Rebuild the index (INDEX_VERSION bump forces it) + consistency check.
+execFileSync("npx", ["tsx", "src/cli.ts", "index"], { stdio: "inherit" });
+execFileSync("npx", ["tsx", "src/cli.ts", "graphs", "sync", "--dry-run"], { stdio: "inherit" });
+console.log("Done. Layout: memory/ (private) + memory-graphs/<name>/ (shared graphs).");

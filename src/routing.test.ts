@@ -25,9 +25,9 @@ test("parseRouting: enabled and default_graph default to true/private", () => {
   assert.equal(fm.default_graph, "private");
 });
 
-test("parseRouting: rejects a bad default_graph", () => {
+test("parseRouting: rejects a malformed default_graph", () => {
   assert.throws(
-    () => parseRouting(`---\nname: graph-routing\ndefault_graph: shared\n---\nbody`),
+    () => parseRouting(`---\nname: graph-routing\ndefault_graph: "Not A Slug!"\n---\nbody`),
     /invalid routing frontmatter/,
   );
 });

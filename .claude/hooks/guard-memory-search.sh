@@ -33,6 +33,7 @@ case "$path" in
   ""|"."|"./"|"/") deny ;;
   memory|memory/*|./memory|./memory/*) deny ;;
   memory-public|memory-public/*|./memory-public|./memory-public/*) deny ;;
+  memory-graphs|memory-graphs/*|./memory-graphs|./memory-graphs/*) deny ;;
 esac
 
 # Anything else (e.g. path=src) is allowed: emit nothing, exit 0.

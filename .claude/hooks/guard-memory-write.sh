@@ -7,10 +7,10 @@
 # entry invisible to recall and unversioned. Same for .index/ (rebuildable
 # derivative, never hand-edited). Full contract: MEMORY-GUARDRAILS.md.
 #
-# Allowed and untouched by this guard: memory/summaries/ + memory-public/summaries/
-# (Synthesis prose after `digest`), memory/connectors/ (private overrides), and
-# memory/routing/ (the private routing-prompt override). Both stores' entries/
-# are protected: memory/ (private graph) and memory-public/ (public graph).
+# Allowed and untouched by this guard: every store's summaries/ (Synthesis
+# prose after `digest`), memory/connectors/ + memory/routing/ + memory/graphs/
+# (private config overrides). Every store's entries/ is protected: memory/
+# (private graph) and memory-graphs/<name>/ (each named shared graph).
 
 input="$(cat)"
 
@@ -18,7 +18,7 @@ tool="$(printf '%s' "$input" | jq -r '.tool_name // ""')"
 
 deny() {
   cat <<JSON
-{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Never write memory entries or .index/ by hand — a manual file skips index sync, dedup, the near-dup guard, and auto-commit (see MEMORY-GUARDRAILS.md). This covers BOTH stores (memory/ and memory-public/). Capture/update via the CLI instead:\n  npx tsx src/cli.ts add --title … --type … [--graph public|private] [--people …] [--source-ids …] --body \"…\"\n  (same --source-ids updates in place; manual notes: add --update <id>; reclassify: move <id> --to <graph>)\nmemory/summaries/ (Synthesis section), memory/connectors/, and memory/routing/ stay editable."}}
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Never write memory entries or .index/ by hand — a manual file skips index sync, dedup, the near-dup guard, and auto-commit (see MEMORY-GUARDRAILS.md). This covers memory/ and EVERY memory-graphs/<name>/ store. Capture/update via the CLI instead:\n  npx tsx src/cli.ts add --title … --type … [--people …] [--source-ids …] --body \"…\"\n  (same --source-ids updates in place; manual notes: add --update <id>; membership: copy|move <id> --to <graph>)\nEach store's summaries/ Synthesis, plus memory/connectors/, memory/routing/, and memory/graphs/ stay editable."}}
 JSON
   exit 0
 }
@@ -27,7 +27,7 @@ case "$tool" in
   Write|Edit|NotebookEdit)
     file_path="$(printf '%s' "$input" | jq -r '.tool_input.file_path // .tool_input.notebook_path // ""')"
     case "$file_path" in
-      *memory/entries/*|*memory-public/entries/*|*.index/*) deny ;;
+      *memory/entries/*|*memory-public/entries/*|*memory-graphs/*/entries/*|*.index/*) deny ;;
     esac
     ;;
   Bash)
@@ -36,7 +36,7 @@ case "$tool" in
     # write (redirect/copy/move/delete/in-place edit). Plain reads pass, and
     # `cli.ts add` never mentions memory/entries at all.
     case "$cmd" in
-      *memory/entries*|*memory-public/entries*|*.index/*)
+      *memory/entries*|*memory-public/entries*|*memory-graphs/*/entries*|*.index/*)
         case "$cmd" in
           *'>'*|*'tee '*|*'cp '*|*'mv '*|*'rm '*|*'sed -i'*|*'touch '*|*'truncate '*|*'dd '*) deny ;;
         esac

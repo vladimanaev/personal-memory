@@ -31,9 +31,11 @@ esac
 root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cd "$root" || exit 0
 
-# Both stores are checked (not parsed from --graph: a source-id match can
-# redirect the write to the OTHER store); each commits into its own repo.
-for store in memory memory-public; do
+# Every store is checked (not parsed from --graph: a source-id match or a
+# distribution rule can direct the write anywhere); each commits into its own
+# repo. The unmatched-glob literal is absorbed by the .git guard below.
+for store in memory memory-public memory-graphs/*/; do
+  store="${store%/}"
   [ -d "$store/.git" ] || continue
 
   git -C "$store" add -A . 2>/dev/null || continue

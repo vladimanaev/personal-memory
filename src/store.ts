@@ -16,9 +16,10 @@ const TABLE = "memory";
  * a meta.json written before versioning existed) forces one clean rebuild of
  * the table from the Markdown source of truth. v2: people/teams/tags columns.
  * v3: semantic chunks include compact metadata headers. v4: graph column
- * (private/public store split).
+ * (private/public store split). v5: pipe-delimited `graphs` membership column
+ * (N named graphs, synced-copy model).
  */
-const INDEX_VERSION = 4;
+const INDEX_VERSION = 5;
 
 interface IndexMeta {
   embedderId: string;
@@ -68,7 +69,7 @@ async function recordsFor(entries: MemoryEntry[], embedder: Embedder): Promise<M
     people: packSlugs(p.entry.people),
     teams: packSlugs(p.entry.teams),
     tags: packSlugs(p.entry.tags),
-    graph: p.entry.graph,
+    graphs: packSlugs(p.entry.graphs),
     hash: p.hash,
     text: p.text,
     vector: vectors[i]!,
@@ -102,24 +103,24 @@ export async function syncIndex(opts: { force?: boolean } = {}): Promise<{
 
   let table = await openTable(db);
 
-  // Current per-entry hash + graph from the index. A `move` between stores
-  // changes the graph but NOT the content hash, so the graph must participate
-  // in change detection or moved entries would keep their stale scope.
-  const existing = new Map<string, { hash: string; graph: string }>();
+  // Current per-entry hash + membership from the index. copy/move change
+  // membership but NOT the content hash, so the graphs string must
+  // participate in change detection or relocated entries keep a stale scope.
+  const existing = new Map<string, { hash: string; graphs: string }>();
   if (table && !force) {
-    const rows = (await table.query().select(["id", "hash", "graph"]).toArray()) as {
+    const rows = (await table.query().select(["id", "hash", "graphs"]).toArray()) as {
       id: string;
       hash: string;
-      graph: string;
+      graphs: string;
     }[];
-    for (const r of rows) existing.set(r.id, { hash: r.hash, graph: r.graph });
+    for (const r of rows) existing.set(r.id, { hash: r.hash, graphs: r.graphs });
   }
 
   const wanted = new Map(entries.map((e) => [e.id, hashEntry(e)]));
 
   const changed = entries.filter((e) => {
     const cur = existing.get(e.id);
-    return cur?.hash !== wanted.get(e.id) || cur?.graph !== e.graph;
+    return cur?.hash !== wanted.get(e.id) || cur?.graphs !== packSlugs(e.graphs);
   });
   const removedIds = [...existing.keys()].filter((id) => !wanted.has(id));
   const unchanged = entries.length - changed.length;
@@ -226,7 +227,7 @@ export interface SearchFilters {
   tag?: string;
   since?: string; // ISO date inclusive
   until?: string; // ISO date inclusive
-  /** Scope to one store; undefined = both graphs. */
+  /** Scope to entries that are MEMBERS of this graph; undefined = all graphs. */
   graph?: GraphId;
 }
 
@@ -283,7 +284,7 @@ function matchesFilters(e: MemoryEntry, f: SearchFilters): boolean {
   if (f.type && e.type !== f.type) return false;
   if (f.since && e.date < f.since) return false;
   if (f.until && e.date > f.until) return false;
-  if (f.graph && e.graph !== f.graph) return false;
+  if (f.graph && !e.graphs.includes(f.graph)) return false;
   return true;
 }
 
@@ -312,7 +313,7 @@ function whereClause(f: SearchFilters): string | undefined {
   if (f.person && SLUG_RE.test(f.person)) parts.push(`people LIKE '%|${f.person}|%'`);
   if (f.team && SLUG_RE.test(f.team)) parts.push(`teams LIKE '%|${f.team}|%'`);
   if (f.tag && SLUG_RE.test(f.tag)) parts.push(`tags LIKE '%|${f.tag}|%'`);
-  if (f.graph && SLUG_RE.test(f.graph)) parts.push(`graph = '${f.graph}'`);
+  if (f.graph && SLUG_RE.test(f.graph)) parts.push(`graphs LIKE '%|${f.graph}|%'`);
   return parts.length ? parts.join(" AND ") : undefined;
 }
 
@@ -621,7 +622,7 @@ export async function findSimilar(
   // VectorQuery at runtime, which is what exposes distanceType().
   let vq = table.search(qvec!) as lancedb.VectorQuery;
   if (opts.graph && SLUG_RE.test(opts.graph)) {
-    vq = vq.where(`graph = '${opts.graph}'`) as lancedb.VectorQuery;
+    vq = vq.where(`graphs LIKE '%|${opts.graph}|%'`) as lancedb.VectorQuery;
   }
   // Generous pool: near-duplicates rank at the very top by construction, but
   // multi-chunk entries crowding the head must not push a real dup past the cap.
