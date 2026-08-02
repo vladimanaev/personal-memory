@@ -316,7 +316,9 @@ of requiring users to assemble a new upgrade sequence for every release.
 
 The backup includes the complete graph-store layout: `memory/`, the legacy
 `memory-public/` store when present, and every named graph under
-`memory-graphs/`. Validate or restore one of those archives with:
+`memory-graphs/`. It also preserves connector timestamps, promotion/chain/slug
+dismissals, and deferred slug proposals from `.index/`; search tables and
+caches remain rebuildable. Validate or restore one of those archives with:
 
 ```bash
 ./scripts/restore_backup.sh ../personal-memory-backups/personal-memory-<timestamp>.tgz --dry-run
@@ -324,11 +326,14 @@ The backup includes the complete graph-store layout: `memory/`, the legacy
 ```
 
 Restore validates paths and archive integrity before replacing anything, makes
-another verified backup of the current stores, restores the archive as one
-complete layout, and rebuilds the derived index. If a later step fails, it
-rolls the original stores back automatically. An archive containing the legacy
-`memory-public/` layout is restored exactly and can then be migrated again with
-`./scripts/migrate.sh`.
+another verified backup of the current stores and workflow state, and restores
+the archive as one complete layout. For the current layout it rebuilds the
+derived index when Node.js 20+ and local dependencies are available; otherwise
+it prints the commands to run later. If a later step fails, it rolls the
+original stores and complete prior index back automatically. An archive
+containing the legacy `memory-public/` layout is restored exactly without an
+index rebuild—the CLI remains unavailable until that layout is migrated again
+with `./scripts/migrate.sh`.
 
 What it does depends on where you're coming from:
 

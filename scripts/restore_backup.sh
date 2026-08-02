@@ -33,13 +33,16 @@ require_command() {
   command -v "$1" >/dev/null 2>&1 || die "required command not found: $1"
 }
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 REPO_PARENT="$(dirname "$REPO_ROOT")"
 BACKUP_DIR="$REPO_PARENT/personal-memory-backups"
 ARCHIVE_INPUT=""
 DRY_RUN=0
 CONFIRM=0
+
+# shellcheck source=migration_lib.sh
+source "$SCRIPT_DIR/migration_lib.sh"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -75,58 +78,19 @@ done
 (( DRY_RUN + CONFIRM == 1 )) || die "choose exactly one of --dry-run or --confirm"
 
 require_command tar
-require_command node
-require_command npx
 
 case "$ARCHIVE_INPUT" in
   /*) archive_candidate="$ARCHIVE_INPUT" ;;
   *) archive_candidate="$PWD/$ARCHIVE_INPUT" ;;
 esac
 [[ -f "$archive_candidate" ]] || die "backup archive not found: $ARCHIVE_INPUT"
-archive_dir="$(cd "$(dirname "$archive_candidate")" && pwd)"
+archive_dir="$(cd "$(dirname "$archive_candidate")" && pwd -P)"
 ARCHIVE_PATH="$archive_dir/$(basename "$archive_candidate")"
 
 cd "$REPO_ROOT"
 
-node_major="$(node -p 'process.versions.node.split(".")[0]')"
-[[ "$node_major" =~ ^[0-9]+$ ]] || die "could not determine the Node.js version"
-(( node_major >= 20 )) || die "Node.js 20 or newer is required (found $(node --version))"
-
 log "Validating backup archive"
-tar -tzf "$ARCHIVE_PATH" >/dev/null
-
-while IFS= read -r archive_listing; do
-  case "${archive_listing:0:1}" in
-    -|d) ;;
-    *) die "archive contains an unsupported entry type: $archive_listing" ;;
-  esac
-done < <(tar -tvzf "$ARCHIVE_PATH")
-
-HAS_MEMORY=0
-HAS_LEGACY_PUBLIC=0
-HAS_NAMED_GRAPHS=0
-while IFS= read -r archive_entry; do
-  while [[ "$archive_entry" == ./* ]]; do
-    archive_entry="${archive_entry#./}"
-  done
-  archive_entry="${archive_entry%/}"
-  [[ -n "$archive_entry" ]] || continue
-
-  [[ "$archive_entry" != /* ]] || die "archive contains an absolute path: $archive_entry"
-  case "/$archive_entry/" in
-    *"/../"*|*"/./"*) die "archive contains an unsafe path: $archive_entry" ;;
-  esac
-
-  top_level="${archive_entry%%/*}"
-  case "$top_level" in
-    memory) HAS_MEMORY=1 ;;
-    memory-public) HAS_LEGACY_PUBLIC=1 ;;
-    memory-graphs) HAS_NAMED_GRAPHS=1 ;;
-    *) die "archive contains an unexpected top-level path: $top_level" ;;
-  esac
-done < <(tar -tzf "$ARCHIVE_PATH")
-
-(( HAS_MEMORY || HAS_LEGACY_PUBLIC || HAS_NAMED_GRAPHS )) || die "archive contains no memory graph stores"
+migration_validate_archive "$ARCHIVE_PATH"
 
 RESTORE_ROOT="$(mktemp -d "$REPO_ROOT/.personal-memory-restore.XXXXXX")"
 EXTRACTED_ROOT="$RESTORE_ROOT/extracted"
@@ -139,7 +103,7 @@ cleanup() {
   trap - EXIT
 
   if (( RESTORE_STARTED && ! RESTORE_COMPLETE )); then
-    printf '\nRestore failed; rolling back the original graph stores.\n' >&2
+    printf '\nRestore failed; rolling back the original graph stores and index state.\n' >&2
     for store_name in memory memory-public memory-graphs; do
       if [[ -e "$CURRENT_ROOT/$store_name" ]]; then
         rm -rf "$REPO_ROOT/$store_name"
@@ -148,8 +112,13 @@ cleanup() {
         rm -rf "$REPO_ROOT/$store_name"
       fi
     done
-    rm -rf "$REPO_ROOT/.index"
-    printf 'Original stores restored; rebuild .index before using the CLI.\n' >&2
+    if [[ -e "$CURRENT_ROOT/.index" ]]; then
+      rm -rf "$REPO_ROOT/.index"
+      mv "$CURRENT_ROOT/.index" "$REPO_ROOT/.index"
+    elif [[ -e "$RESTORE_ROOT/installed-.index" ]]; then
+      rm -rf "$REPO_ROOT/.index"
+    fi
+    printf 'Original stores and index state restored.\n' >&2
   fi
 
   if [[ "$RESTORE_ROOT" == "$REPO_ROOT/".personal-memory-restore.* ]]; then
@@ -178,11 +147,7 @@ if (( DRY_RUN )); then
 fi
 
 umask 077
-mkdir -p "$BACKUP_DIR"
-BACKUP_DIR="$(cd "$BACKUP_DIR" && pwd)"
-if [[ "$BACKUP_DIR" == "$REPO_ROOT" || "$BACKUP_DIR" == "$REPO_ROOT/"* ]]; then
-  die "pre-restore backup directory must be outside the repository: $BACKUP_DIR"
-fi
+BACKUP_DIR="$(migration_external_dir "$BACKUP_DIR" "$REPO_ROOT" "pre-restore backup directory")"
 
 current_stores=()
 for store_name in memory memory-public memory-graphs; do
@@ -196,13 +161,22 @@ if [[ ${#current_stores[@]} -gt 0 ]]; then
   timestamp="$(date '+%Y%m%d-%H%M%S')"
   pre_restore_path="$BACKUP_DIR/pre-restore-$timestamp-$$.tgz"
   log "Backing up the current graph stores before restore"
-  tar -czf "$pre_restore_path" -- "${current_stores[@]}"
-  tar -tzf "$pre_restore_path" >/dev/null
+  pre_restore_paths=("${current_stores[@]}")
+  for state_file in "${DURABLE_INDEX_STATE_FILES[@]}"; do
+    if [[ -f ".index/$state_file" ]]; then
+      pre_restore_paths+=(".index/$state_file")
+    fi
+  done
+  migration_create_archive "$pre_restore_path" "${pre_restore_paths[@]}"
   printf 'Verified pre-restore backup: %s\n' "$pre_restore_path"
 fi
 
 log "Replacing the graph-store layout from the validated archive"
 RESTORE_STARTED=1
+if [[ -e "$REPO_ROOT/.index" ]]; then
+  [[ ! -L "$REPO_ROOT/.index" ]] || die ".index must not be a symbolic link"
+  mv "$REPO_ROOT/.index" "$CURRENT_ROOT/.index"
+fi
 for store_name in memory memory-public memory-graphs; do
   if [[ -e "$REPO_ROOT/$store_name" ]]; then
     mv "$REPO_ROOT/$store_name" "$CURRENT_ROOT/$store_name"
@@ -213,17 +187,48 @@ for store_name in memory memory-public memory-graphs; do
   fi
 done
 
-rm -rf "$REPO_ROOT/.index"
+touch "$RESTORE_ROOT/installed-.index"
+mkdir -p "$REPO_ROOT/.index"
+archive_has_index_state=0
+for state_file in "${DURABLE_INDEX_STATE_FILES[@]}"; do
+  if [[ -f "$EXTRACTED_ROOT/.index/$state_file" ]]; then
+    archive_has_index_state=1
+    mv "$EXTRACTED_ROOT/.index/$state_file" "$REPO_ROOT/.index/$state_file"
+  fi
+done
+if (( ! archive_has_index_state )); then
+  for state_file in "${DURABLE_INDEX_STATE_FILES[@]}"; do
+    if [[ -f "$CURRENT_ROOT/.index/$state_file" ]]; then
+      cp -p "$CURRENT_ROOT/.index/$state_file" "$REPO_ROOT/.index/$state_file"
+    fi
+  done
+  printf 'Archive predates durable index-state backups; preserved the current workflow state.\n'
+fi
 
 if [[ -d "$REPO_ROOT/memory-public" ]]; then
   log "Legacy two-graph layout restored"
   printf 'The rebuild is deferred because the current engine rejects memory-public/.\n'
   printf 'Run ./scripts/migrate.sh when you are ready to migrate this restored layout.\n'
 else
-  log "Rebuilding the derived index"
-  npx tsx src/cli.ts index --force
-  npx tsx src/cli.ts graphs sync --dry-run
-  npx tsx src/cli.ts graphs list
+  can_rebuild_index=0
+  if command -v node >/dev/null 2>&1 && [[ -x "$REPO_ROOT/node_modules/.bin/tsx" ]]; then
+    node_major="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || true)"
+    if [[ "$node_major" =~ ^[0-9]+$ ]] && (( node_major >= 20 )); then
+      can_rebuild_index=1
+    fi
+  fi
+
+  if (( can_rebuild_index )); then
+    log "Rebuilding the derived index"
+    "$REPO_ROOT/node_modules/.bin/tsx" src/cli.ts index --force
+    "$REPO_ROOT/node_modules/.bin/tsx" src/cli.ts graphs sync --dry-run
+    "$REPO_ROOT/node_modules/.bin/tsx" src/cli.ts graphs list
+  else
+    log "Derived index rebuild deferred"
+    printf 'The graph stores and workflow state are restored. Install Node.js 20+ and dependencies, then run:\n'
+    printf '  npx tsx src/cli.ts index --force\n'
+    printf '  npx tsx src/cli.ts graphs sync --dry-run\n'
+  fi
 fi
 
 RESTORE_COMPLETE=1

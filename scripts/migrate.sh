@@ -33,11 +33,14 @@ require_command() {
   command -v "$1" >/dev/null 2>&1 || die "required command not found: $1"
 }
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 BACKUP_DIR="$(dirname "$REPO_ROOT")/personal-memory-backups"
 UPDATE_CODE=1
 INSTALL_DEPS=1
+
+# shellcheck source=migration_lib.sh
+source "$SCRIPT_DIR/migration_lib.sh"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -72,21 +75,18 @@ require_command npx
 
 cd "$REPO_ROOT"
 git rev-parse --show-toplevel >/dev/null 2>&1 || die "$REPO_ROOT is not a Git checkout"
-
-node_major="$(node -p 'process.versions.node.split(".")[0]')"
-[[ "$node_major" =~ ^[0-9]+$ ]] || die "could not determine the Node.js version"
-(( node_major >= 20 )) || die "Node.js 20 or newer is required (found $(node --version))"
+if ! git diff --quiet || ! git diff --cached --quiet; then
+  die "tracked changes make migration unsafe; commit or stash them first"
+fi
 
 umask 077
-mkdir -p "$BACKUP_DIR"
-BACKUP_DIR="$(cd "$BACKUP_DIR" && pwd)"
-if [[ "$BACKUP_DIR" == "$REPO_ROOT" || "$BACKUP_DIR" == "$REPO_ROOT/"* ]]; then
-  die "backup directory must be outside the repository: $BACKUP_DIR"
-fi
+BACKUP_DIR="$(migration_external_dir "$BACKUP_DIR" "$REPO_ROOT" "backup directory")"
 
 store_paths=()
 for store_path in memory memory-public memory-graphs; do
   if [[ -e "$store_path" ]]; then
+    [[ ! -L "$store_path" ]] || die "graph store must not be a symbolic link: $store_path"
+    [[ -d "$store_path" ]] || die "graph store is not a directory: $store_path"
     store_paths+=("$store_path")
   fi
 done
@@ -96,8 +96,13 @@ if [[ ${#store_paths[@]} -gt 0 ]]; then
   timestamp="$(date '+%Y%m%d-%H%M%S')"
   backup_path="$BACKUP_DIR/personal-memory-$timestamp-$$.tgz"
   log "Backing up every existing graph store: ${store_paths[*]}"
-  tar -czf "$backup_path" -- "${store_paths[@]}"
-  tar -tzf "$backup_path" >/dev/null
+  backup_paths=("${store_paths[@]}")
+  for state_file in "${DURABLE_INDEX_STATE_FILES[@]}"; do
+    if [[ -f ".index/$state_file" ]]; then
+      backup_paths+=(".index/$state_file")
+    fi
+  done
+  migration_create_archive "$backup_path" "${backup_paths[@]}"
   printf 'Verified backup: %s\n' "$backup_path"
 else
   log "No existing memory stores found; backup is not needed"
@@ -130,9 +135,6 @@ if (( UPDATE_CODE )); then
   if [[ "$head_sha" == "$fetched_sha" ]]; then
     printf 'Already up to date with %s/%s.\n' "$remote_name" "$remote_branch"
   elif git merge-base --is-ancestor "$head_sha" "$fetched_sha"; then
-    if ! git diff --quiet || ! git diff --cached --quiet; then
-      die "tracked changes would make the update unsafe; commit/stash them or rerun with --no-update"
-    fi
     git merge --ff-only "$fetched_sha"
   elif git merge-base --is-ancestor "$fetched_sha" "$head_sha"; then
     printf 'Local branch is ahead of %s/%s; keeping the local commits.\n' "$remote_name" "$remote_branch"
@@ -145,6 +147,10 @@ fi
 
 [[ -f scripts/migrate-graphs.ts ]] || die "scripts/migrate-graphs.ts is missing after the code update"
 
+node_major="$(node -p 'process.versions.node.split(".")[0]')"
+[[ "$node_major" =~ ^[0-9]+$ ]] || die "could not determine the Node.js version"
+(( node_major >= 20 )) || die "Node.js 20 or newer is required (found $(node --version))"
+
 if (( INSTALL_DEPS )); then
   log "Installing Node.js dependencies"
   if [[ -f package-lock.json ]]; then
@@ -154,6 +160,10 @@ if (( INSTALL_DEPS )); then
   fi
 else
   log "Skipping dependency installation"
+fi
+
+if ! git diff --quiet || ! git diff --cached --quiet; then
+  die "tracked files changed before migration execution; commit or stash them first"
 fi
 
 log "Migrating the memory stores"
