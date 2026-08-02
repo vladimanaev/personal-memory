@@ -43,6 +43,7 @@ secrets.*
 
 # ---- Personal Memory RAG ----
 .index/
+/.personal-memory-restore.*/
 # local Claude tool state — may contain internal service config
 .claude/transcript-uploader/
 .cache/transformers/

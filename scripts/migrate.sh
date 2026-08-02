@@ -94,8 +94,8 @@ done
 backup_path=""
 if [[ ${#store_paths[@]} -gt 0 ]]; then
   timestamp="$(date '+%Y%m%d-%H%M%S')"
-  backup_path="$BACKUP_DIR/personal-memory-$timestamp.tgz"
-  log "Backing up ${store_paths[*]}"
+  backup_path="$BACKUP_DIR/personal-memory-$timestamp-$$.tgz"
+  log "Backing up every existing graph store: ${store_paths[*]}"
   tar -czf "$backup_path" -- "${store_paths[@]}"
   tar -tzf "$backup_path" >/dev/null
   printf 'Verified backup: %s\n' "$backup_path"

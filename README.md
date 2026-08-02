@@ -314,6 +314,22 @@ Keep this wrapper as the stable entry point for future project migrations:
 new migration steps can be added behind the same backup-first command instead
 of requiring users to assemble a new upgrade sequence for every release.
 
+The backup includes the complete graph-store layout: `memory/`, the legacy
+`memory-public/` store when present, and every named graph under
+`memory-graphs/`. Validate or restore one of those archives with:
+
+```bash
+./scripts/restore_backup.sh ../personal-memory-backups/personal-memory-<timestamp>.tgz --dry-run
+./scripts/restore_backup.sh ../personal-memory-backups/personal-memory-<timestamp>.tgz --confirm
+```
+
+Restore validates paths and archive integrity before replacing anything, makes
+another verified backup of the current stores, restores the archive as one
+complete layout, and rebuilds the derived index. If a later step fails, it
+rolls the original stores back automatically. An archive containing the legacy
+`memory-public/` layout is restored exactly and can then be migrated again with
+`./scripts/migrate.sh`.
+
 What it does depends on where you're coming from:
 
 - **From the original single-graph layout** (just `memory/`): nothing
