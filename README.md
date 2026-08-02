@@ -298,6 +298,22 @@ git pull
 npx tsx scripts/migrate-graphs.ts
 ```
 
+Or use the all-in-one wrapper, which creates and verifies a private backup,
+fast-forwards from the configured upstream when possible, installs dependencies,
+runs the migration, and prints the resulting graph registry:
+
+```bash
+./scripts/migrate.sh
+```
+
+It never pushes commits or memory data to a remote. Run
+`./scripts/migrate.sh --help` for options such as `--no-update`,
+`--skip-install`, and a custom backup directory.
+
+Keep this wrapper as the stable entry point for future project migrations:
+new migration steps can be added behind the same backup-first command instead
+of requiring users to assemble a new upgrade sequence for every release.
+
 What it does depends on where you're coming from:
 
 - **From the original single-graph layout** (just `memory/`): nothing
