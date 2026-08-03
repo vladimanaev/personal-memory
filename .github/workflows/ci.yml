@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      # npm lockfiles generated on macOS can omit optional native package
+      # records for Linux even though LanceDB declares them. Install the exact
+      # version requested by the package so the existing cross-platform tests
+      # can load LanceDB without rewriting the lockfile.
+      - if: runner.os == 'Linux'
+        run: |
+          version="$(node -p "require('./node_modules/@lancedb/lancedb/package.json').optionalDependencies['@lancedb/lancedb-linux-x64-gnu']")"
+          npm install --no-save --ignore-scripts "@lancedb/lancedb-linux-x64-gnu@$version"
+      - run: npm run typecheck
+      - run: npm test

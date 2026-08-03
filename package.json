@@ -12,7 +12,7 @@
     "start": "tsx src/cli.ts ui",
     "memory": "tsx src/cli.ts",
     "index": "tsx src/cli.ts index",
-    "test": "node --import tsx --test src/*.test.ts",
+    "test": "node --import tsx --test src/*.test.ts && bash scripts/migration-scripts.test.sh",
     "typecheck": "tsc --noEmit && tsc -p src/ui"
   },
   "engines": {
