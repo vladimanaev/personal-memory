@@ -1,5 +1,5 @@
 ---
-description: Pull memories from connected sources (Gmail, Slack, …)
+description: Ingest NEW memories from connected sources (Gmail, Slack, …) — not for recalling what's stored
 argument-hint: [connector name — default: all enabled pull connectors]
 ---
 

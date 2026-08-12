@@ -23,7 +23,12 @@ members only reference fellow members — the CLI enforces it.
 
 When the user asks anything about people, past events, decisions, or
 wants to plan/remember — **you MUST retrieve through the CLI**, not by reading
-files freestyle:
+files freestyle. This is what it sounds like in practice: *"pull memory on
+Jane"*, *"recap where we landed on X"*, *"catch me up"*, *"brief me"*,
+*"prep me for my 1:1 with Jane"*, *"what do I know about the Acme account"*.
+Every one of those is a `recall`, and a request being urgent (the meeting starts
+in two minutes) is the strongest reason to retrieve properly, not the excuse to
+skip it:
 
 ```bash
 npx tsx src/cli.ts recall "<question form>" "<keyword form>" "<entity form>" [--person X] [--type Y] [--since DATE] [--format json]
@@ -37,11 +42,20 @@ are fused with CLI-generated expansion phrases into one weighted ranking.
 `--complete` / `--require-complete` when exhaustive recall is required.
 `npx tsx src/cli.ts maintenance` reports which digests are due + index health.
 
-**Do NOT use Grep / Glob / free-form Read to discover memories under `memory/`.**
-Keyword/file search only finds exact-word matches and will silently miss
-semantically-relevant entries the moment there is more than a handful — which
-defeats the entire point of this store. Semantic ranking + filters live in the
-CLI.
+**Do NOT use Grep / Glob / free-form Read to discover memories under `memory/`
+— and that includes shell commands (`grep`, `rg`, `find`, `cat`, `ls`, `awk`)
+run through Bash.** The rule is about *discovery*, not about which tool performs
+it; shelling out is not a loophole, it is the same mistake with an extra step.
+That includes searches that never name the store but sweep it anyway —
+`grep -rli "jane doe" .` from the repo root reads every entry. A PreToolUse
+hook denies all of these shapes, and a denial means "run `memory recall`",
+not "find another way in".
+
+Two things hand-searching silently costs you: entries that don't spell the name
+or term your way (a project, a nickname, a related workstream) never surface at
+all, and raw files carry none of the timeline metadata — so a matter that was
+settled weeks ago reads as if it were still open. Semantic ranking, filters, and
+the `⤷ superseded by` / `status: resolved by` annotations all live in the CLI.
 
 The only correct use of `Read` here is to open the **specific files a `recall`
 or `query` result cited**, to ground your answer. Discovery → CLI. Reading a

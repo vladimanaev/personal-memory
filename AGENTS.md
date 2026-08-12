@@ -15,7 +15,11 @@ sent to any API by default.
   still pending → **capture** (see `skills/log-memory/SKILL.md`).
 - User asks a question about people / past events, or wants to plan or
   remember → **recall**, grounded in the store (see `skills/recall-memory/SKILL.md`).
-  Don't answer people/history questions from chat history alone.
+  This is also what "pull memory on X", "pull up what we have on X", "recap
+  where we landed", "catch me up", "brief me", and "prep me for my 1:1 with
+  Jane" mean — all of them are recall, not a connector pull.
+  Don't answer people/history questions from chat history alone, and don't
+  reach for file search because the request sounded urgent.
 - User wants ONLY one shared graph's memories (preparing a team update, doc,
   or any output leaving the private context) → **single-graph recall**
   (see `skills/recall-graph/SKILL.md`) — never falls back to other graphs.
@@ -148,11 +152,17 @@ Run with `npx tsx src/cli.ts <cmd>` (Node ≥ 20 — `nvm use 20`).
 
 ## Rules
 
-1. **Retrieve through the CLI — never grep/glob `memory/` to find entries.**
+1. **Retrieve through the CLI — never grep/glob `memory/` to find entries, and
+   never hand-search it from the shell either** (`grep`, `rg`, `find`, `cat`,
+   `ls`, `awk` over a store are the same violation; the rule is about
+   *discovery*, not about which tool performs it).
    `memory recall` / `memory query` (semantic + lexical, ranked, filtered) are
    the only correct ways to discover memories. Keyword/file search misses
-   semantic matches and won't scale. Use `Read` only on the specific files a
-   recall/query result cites.
+   semantic matches, won't scale, and returns raw files stripped of the
+   `⤷ superseded by` / `status: resolved by` annotations — so a settled matter
+   reads as still open. Use `Read` only on the specific files a recall/query
+   result cites. Requests that sound like "pull memory on X", "recap this",
+   "catch me up", or "prep me for my 1:1" are all `recall`.
 2. **Write through the CLI — never hand-create/edit files under
    `memory/entries/`, any `memory-graphs/<name>/entries/`, or `.index/`.**
    Capture and update go ONLY through `cli.ts add` (same `--source-ids`

@@ -95,3 +95,14 @@ target/
 memory/
 # Shared memory graphs — every named graph, each its own nested repo
 memory-graphs/
+
+# Loose memory entries. The two rules above protect LOCATIONS, not CONTENT: an
+# entry moved out of the store (a scratch dir, a _to_delete/ folder, the repo
+# root) instantly loses that protection and is one `git add .` from a public
+# push — and an entry's FILENAME alone leaks names and topics. So also ignore
+# the entry filename shape anywhere in the tree, plus the usual scratch dirs.
+# No tracked file matches this shape; verify with:
+#   git ls-files | grep -E '[0-9]{4}-[0-9]{2}-[0-9]{2}-.*\.md$'
+**/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-*.md
+_to_delete/
+_scratch/

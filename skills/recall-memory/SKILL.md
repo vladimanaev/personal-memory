@@ -1,6 +1,6 @@
 ---
 name: recall-memory
-description: Use when the user wants to discuss, plan, or remember anything about people, past events, or decisions — any question that should be grounded in the stored personal memory rather than chat history alone. Retrieves and reasons over the memory.
+description: Use whenever the user asks you to pull/pull up/look up memory, recall something, recap or catch them up, or brief/prep them for a meeting, 1:1, or review — and for any question about people, past events, decisions, commitments, or plans that should be grounded in the stored personal memory rather than chat history alone. Discovery runs ONLY through the memory CLI (recall / person / list) — never grep, ls, cat, Glob, or free-form Read over the store, from any tool including the shell.
 ---
 
 # Recalling personal memory
@@ -35,11 +35,22 @@ index files, and the entry paths that CLI output cites.
 | "I'll just grep `memory/` for the keyword" | Misses semantic matches; breaks past a handful of entries |
 | "I'll glob and read all the entries" | Doesn't scale; no ranking; wastes context |
 | "The repo is small, file search is fine" | It won't stay small — build the right habit now |
+| "I'll just `grep -r` / `cat` it from Bash" | Same mistake, different tool — no ranking, no chain status; the hook denies it too |
+| "`grep -rli "jane doe" .` — I'm not touching `memory/`" | You are. An unscoped sweep from the repo root walks straight into the store |
+| "It's urgent, they're about to walk into the meeting" | Urgency is when a stale, half-complete answer costs the most |
 
 **Discovery is always via `memory recall` / `memory query` / `memory list` /
 `memory person`.**
 Use `Read` only to open the specific files those commands cite. Do not use
-Grep/Glob to find memories.
+Grep/Glob — **or shell `grep`/`rg`/`find`/`cat`/`ls`** — to find memories. The rule
+is about *discovery*, not about which tool performs it: shelling out is not a
+loophole, it is the same mistake with an extra step.
+
+Concretely, hand-searching costs you two things the CLI gives for free: entries
+that never spell the name or term your way (a project, a nickname, a related
+workstream) never surface at all, and raw files carry no `⤷ superseded by` /
+`status: resolved by` metadata — so a settled matter reads as if it were still
+current.
 
 ## Adaptive depth — pick the right mode for the question
 
