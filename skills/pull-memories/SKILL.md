@@ -1,9 +1,14 @@
 ---
 name: pull-memories
-description: Use when the user asks to pull/sync/ingest memories from connected sources (Gmail, Slack, …) — iterates the enabled connectors in connectors/, fetches recent items via MCP, applies each connector's extraction prompt, and captures memory-worthy items idempotently.
+description: Use when the user asks to pull/sync/ingest NEW memories from connected external sources (Gmail, Slack, …) INTO the store — a connector sweep that iterates the enabled connectors in connectors/, fetches recent items via MCP, applies each connector's extraction prompt, and captures memory-worthy items idempotently. NOT for retrieving what is already stored — "pull memory on Jane", "pull up what I know about X", recaps and meeting prep all belong to the recall-memory skill.
 ---
 
 # Pulling memories from connectors
+
+**Wrong tool?** This skill *ingests* — it goes out to Gmail/Slack and writes new
+entries. If the user meant "pull up what we have on X", a recap, or prep for a
+meeting, they want *retrieval*: stop and use the `recall-memory` skill
+(`/recall`) instead.
 
 You are sweeping the user's connected sources and capturing what is memory-worthy
 into the Personal Memory store. Each source's config is a connector file —

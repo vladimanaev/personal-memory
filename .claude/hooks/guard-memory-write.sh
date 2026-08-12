@@ -14,7 +14,36 @@
 
 input="$(cat)"
 
-tool="$(printf '%s' "$input" | jq -r '.tool_name // ""')"
+# Do not depend on `jq`: in a sandboxed/mounted environment (cowork VM, container)
+# the image may not ship it, and a non-zero exit here is a NON-BLOCKING error —
+# the guard would silently allow every write. Fall back to awk, then to raw input.
+field() {
+  if command -v jq >/dev/null 2>&1; then
+    printf '%s' "$input" | jq -r "$1 // \"\"" 2>/dev/null
+    return
+  fi
+  key="$(printf '%s' "$1" | sed 's/.*\.//; s/[^A-Za-z_].*//')"
+  printf '%s' "$input" | awk -v key="$key" '
+    { s = $0
+      k = "\"" key "\":"
+      i = index(s, k); if (i == 0) exit
+      s = substr(s, i + length(k))
+      sub(/^[ \t]*/, "", s)
+      if (substr(s, 1, 1) != "\"") exit
+      s = substr(s, 2)
+      out = ""; esc = 0
+      for (j = 1; j <= length(s); j++) {
+        c = substr(s, j, 1)
+        if (esc) { out = out c; esc = 0; continue }
+        if (c == "\\") { out = out c; esc = 1; continue }
+        if (c == "\"") break
+        out = out c
+      }
+      print out; exit
+    }' 2>/dev/null
+}
+
+tool="$(field .tool_name)"
 
 deny() {
   cat <<JSON
@@ -25,13 +54,17 @@ JSON
 
 case "$tool" in
   Write|Edit|NotebookEdit)
-    file_path="$(printf '%s' "$input" | jq -r '.tool_input.file_path // .tool_input.notebook_path // ""')"
+    file_path="$(field .tool_input.file_path)"
+    [ -n "$file_path" ] || file_path="$(field .tool_input.notebook_path)"
+    # Extraction failed outright → match the raw payload rather than allowing.
+    [ -n "$file_path" ] || file_path="$input"
     case "$file_path" in
       *memory/entries/*|*memory-public/entries/*|*memory-graphs/*/entries/*|*.index/*) deny ;;
     esac
     ;;
   Bash)
-    cmd="$(printf '%s' "$input" | jq -r '.tool_input.command // ""')"
+    cmd="$(field .tool_input.command)"
+    [ -n "$cmd" ] || cmd="$input"
     # Only deny commands that reference the protected paths AND look like a
     # write (redirect/copy/move/delete/in-place edit). Plain reads pass, and
     # `cli.ts add` never mentions memory/entries at all.

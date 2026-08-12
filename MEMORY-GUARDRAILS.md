@@ -53,7 +53,10 @@ CLI keeps them in sync.
   — it rewrites just the affected frontmatter arrays, syncs the index, and
   checkpoints `memory/.git` before and after.
 - **Recall** goes ONLY through `cli.ts recall | query | person | list` (see CLAUDE.md /
-  AGENTS.md rule #1) — never Grep/Glob/Read to discover entries.
+  AGENTS.md rule #1) — never Grep/Glob/Read to discover entries, and never a shell
+  search either (`grep`, `rg`, `find`, `cat`, `ls`, `awk` over a store). Hand-search
+  misses semantic matches and returns files stripped of the `⤷ superseded by` /
+  `status: resolved by` annotations, so a settled matter reads as still open.
 
 ## Why (do not rationalize around this)
 
@@ -82,9 +85,33 @@ four things a manual write skips:
 
 ## Enforcement
 
-- **Claude Code**: a PreToolUse hook (`.claude/hooks/guard-memory-write.sh`)
+- **Claude Code — writes**: a PreToolUse hook (`.claude/hooks/guard-memory-write.sh`)
   denies Write/Edit/Bash calls that would touch `memory/entries/`, any
   `memory-graphs/<name>/entries/`, or `.index/`.
   A denial is not an obstacle to work around — it means: use `cli.ts add`.
-- **Codex / other agents**: no hook layer — this file IS the enforcement.
-  AGENTS.md requires reading it before any write under `memory/`.
+- **Claude Code — reads**: a second PreToolUse hook
+  (`.claude/hooks/guard-memory-search.sh`) denies hand-*discovery* in three
+  shapes: Grep/Glob calls that would touch a store; Bash searches/bulk reads
+  that **name** one (`grep`, `rg`, `find`, `cat`, `ls`, `head`, `awk`,
+  `git grep`, …); and **unscoped recursive sweeps that don't name it but walk
+  into it anyway** (`grep -rli "jane doe" .`, `rg jane`, `find . -name …`).
+  That last shape is the one hand-search actually takes — searching from the
+  repo root is not "scoped to code". Shelling out is not a loophole.
+  Any `cli.ts` invocation passes untouched, as do plain store git checks
+  (`git -C memory log|status`), stdin filtering (`git log | grep …`), and
+  searches scoped to a real non-store path (`src/`, `skills/`, `scripts/`).
+  The `Read` tool is deliberately never blocked — opening the specific paths a
+  recall cited is the sanctioned last step.
+- The `.claude` guards are covered by `scripts/memory-guards.test.sh` (runs under
+  `npm test`). Change a pattern, add a case.
+- **Codex**: the same two guards exist, wired through `.codex/hooks.json`
+  (`.codex/hooks/guard-memory-search.sh`, `guard-memory-write.sh`) — plus an
+  `apply_patch` branch, since that is how Codex edits files. They are kept
+  behaviourally in sync with the `.claude` pair by hand.
+  ⚠️ **The two sets are separate copies and have drifted before** (Codex once
+  guarded Bash while Claude Code did not, and vice-versa for whole-tree sweeps).
+  Only the `.claude` pair is under test. **Change one, change both**, and re-read
+  the other before assuming it covers a case.
+- **Other agents** (no hook layer): this file IS the enforcement. AGENTS.md
+  requires reading it before any write under `memory/`, and rule #1 there carries
+  the same read-side rule.
