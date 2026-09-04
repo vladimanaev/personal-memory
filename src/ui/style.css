@@ -1605,11 +1605,14 @@ body.view-graph .site-header {
 /* edges */
 
 /* links wear the hue of their entity endpoint so connections read at a glance */
+/* No transition here, deliberately. Selecting a node changes the state of
+   thousands of edges at once; animating each one starts thousands of
+   simultaneous transitions and the resulting repaints cost hundreds of
+   milliseconds per click. The highlight is instant instead. */
 .gedge {
   stroke: var(--baseline);
   stroke-opacity: 0.16;
   vector-effect: non-scaling-stroke; /* hairlines stay hairline at any zoom */
-  transition: stroke-opacity 0.15s ease, opacity 0.15s ease;
 }
 
 .gedge.ge-person {
@@ -1635,8 +1638,13 @@ body.view-graph .site-header {
   stroke-opacity: 0.92;
 }
 
+/* A dimmed edge used to render at opacity 0.025 on top of stroke-opacity 0.16
+   — an effective alpha of 0.004, i.e. invisible — yet the browser still
+   rasterized every one of them. Selecting a node dims thousands of edges at
+   once, so that invisible paint was the bulk of the click latency. Taking them
+   out of the render tree looks identical and costs nothing. */
 .gedge.is-dim {
-  opacity: 0.025;
+  display: none;
 }
 
 /* nodes — kind is carried by hue + shape (shape/size double as the CVD channel) */
@@ -1644,7 +1652,7 @@ body.view-graph .site-header {
 .gnode {
   cursor: pointer;
   outline: none;
-  transition: opacity 0.15s ease;
+  /* see .gedge — highlighting is instant, for the same reason */
 }
 
 .gn-person .nshape {
