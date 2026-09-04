@@ -1,57 +1,31 @@
 // @ts-check
 /**
- * memory graph — force-directed node-link view of the store.
+ * Graph view — force-directed node-link view of the store.
  * Nodes are entries, people, tags, and teams; edges are membership
  * (entry ↔ entity) plus summary→source links. With entry nodes hidden,
  * entities are linked directly by weighted co-occurrence (shared entries).
  * Hand-rolled SVG + a tiny deterministic simulation — no dependencies.
  *
- * @typedef {{ id: string, date: string, type: string, title: string,
- *             people: string[], teams: string[], tags: string[],
- *             sources?: string[], follows?: string[],
- *             graphs?: string[], graph?: string, ghost?: boolean,
- *             chain?: { prev: string[], next: string[],
- *                       latest: { id: string, type: string, date: string },
- *                       resolvedBy?: string, status?: "open"|"resolved",
- *                       dangling?: string[] } }} GraphEntry
+ * The pure parts live next door and are unit-tested: `graph-model.js` builds
+ * and projects the model, `graph-sim.js` is the layout kernel.
  *
- * @typedef {"person"|"tag"|"team"|"entry"} NodeKind
- * @typedef {"people"|"topics"|"entries"|"custom"} GraphMode
- *
- * @typedef {Object} GNode
- * @property {string} id namespaced: e:<entry-id> p:<person> t:<tag> m:<team>
- * @property {NodeKind} kind
- * @property {string} label
- * @property {string} etype entry type (entry nodes only; "" for entities)
- * @property {boolean} ghost entry from another graph shown in the private view for a cross-graph edge
- * @property {string} gmemb ghost's non-private memberships, comma-joined (ghost nodes only)
- * @property {number} deg
- * @property {number} r
- * @property {number} links edge count in the current projection (spring normalizer)
- * @property {string[]} entryIds backing entries (entities only)
- * @property {number} x
- * @property {number} y
- * @property {number} vx
- * @property {number} vy
- * @property {number|null} fx
- * @property {number|null} fy
- *
- * @typedef {{ a: string, b: string, weight: number, chain?: boolean }} GEdge
+ * @import { GraphEntry, GNode, GEdge, NodeKind, GraphMode } from "./graph-model.js"
  */
 
 import { comboboxHtml, wireCombobox } from "./combobox.js";
-
-const W = 1200;
-const H = 800;
-const PAD = 34;
-
-/** @type {{ kind: NodeKind, plural: string }[]} */
-const KINDS = [
-  { kind: "person", plural: "people" },
-  { kind: "tag", plural: "tags" },
-  { kind: "team", plural: "teams" },
-  { kind: "entry", plural: "entries" },
-];
+import {
+  KINDS,
+  buildGraph,
+  entryGraphs,
+  esc,
+  labelSet,
+  modeLabel,
+  nodeTip,
+  presetTypes,
+  projectGraph,
+  trunc,
+} from "./graph-model.js";
+import { H, W, computeFit, createSim, initPositions } from "./graph-sim.js";
 
 // view state survives route switches so the graph doesn't rearrange on return
 const gstate = {
@@ -80,300 +54,8 @@ const K_MAX = 8;
 
 // ---------- helpers ----------
 
-/** @param {unknown} s */
-function esc(s) {
-  return String(s).replace(/[&<>"']/g, (c) =>
-    c === "&" ? "&amp;" : c === "<" ? "&lt;" : c === ">" ? "&gt;" : c === '"' ? "&quot;" : "&#39;",
-  );
-}
-
-/** @param {string} s @param {number} [n] */
-function trunc(s, n = 18) {
-  return s.length > n ? `${s.slice(0, n - 1)}…` : s;
-}
-
-/** An entry's graph memberships, tolerating the pre-multigraph shape.
- * @param {GraphEntry} e @returns {string[]} */
-function entryGraphs(e) {
-  return e.graphs ?? [e.graph === "private" ? "default" : (e.graph ?? "default")];
-}
-
-/** @param {string} str 32-bit FNV-1a — stable per-node seed */
-function fnv1a(str) {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < str.length; i++) {
-    h ^= str.charCodeAt(i);
-    h = Math.imul(h, 0x01000193);
-  }
-  return h >>> 0;
-}
-
-/** @param {number} seed deterministic PRNG */
-function mulberry32(seed) {
-  let a = seed;
-  return () => {
-    a |= 0;
-    a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
 function reducedMotion() {
   return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-}
-
-/** @param {Exclude<GraphMode, "custom">} mode @returns {Record<NodeKind, boolean>} */
-function presetTypes(mode) {
-  if (mode === "topics") return { person: false, tag: true, team: false, entry: false };
-  if (mode === "entries") return { person: true, tag: false, team: false, entry: true };
-  return { person: true, tag: false, team: true, entry: true };
-}
-
-/** @param {GraphMode} mode */
-function modeLabel(mode) {
-  return mode === "people" ? "people" : mode === "topics" ? "topics" : mode === "entries" ? "entries" : "custom";
-}
-
-// ---------- graph model ----------
-
-/**
- * @param {GraphEntry[]} entries
- * @returns {{ nodes: Map<string, GNode>, edges: GEdge[], memberships: string[][] }}
- */
-function buildGraph(entries) {
-  /** @type {Map<string, GNode>} */
-  const nodes = new Map();
-  /** @type {GEdge[]} */
-  const edges = [];
-  /** membership lists per entry (entity node ids) — feeds co-occurrence mode */
-  /** @type {string[][]} */
-  const memberships = [];
-  const entryIds = new Set(entries.map((e) => e.id));
-
-  /** @param {string} id @param {NodeKind} kind @param {string} label */
-  const ensure = (id, kind, label) => {
-    let n = nodes.get(id);
-    if (!n) {
-      n = { id, kind, label, etype: "", ghost: false, gmemb: "", deg: 0, r: 4, links: 0, entryIds: [], x: 0, y: 0, vx: 0, vy: 0, fx: null, fy: null };
-      nodes.set(id, n);
-    }
-    return n;
-  };
-
-  for (const e of entries) {
-    const en = ensure(`e:${e.id}`, "entry", e.title);
-    en.etype = e.type;
-    // ghost = an entry from another graph surfaced only so a private chain edge
-    // has a target; it contributes its entry node alone, no memberships/co-occurrence
-    if (e.ghost) {
-      en.ghost = true;
-      en.gmemb = entryGraphs(e).filter((g) => g !== "default").join(", ") || "other";
-      continue;
-    }
-    /** @type {string[]} */
-    const members = [];
-    /** @param {string[]} slugs @param {"p"|"t"|"m"} ns @param {NodeKind} kind */
-    const link = (slugs, ns, kind) => {
-      for (const s of slugs) {
-        const node = ensure(`${ns}:${s}`, kind, s);
-        node.deg++;
-        node.entryIds.push(e.id);
-        members.push(node.id);
-        edges.push({ a: en.id, b: node.id, weight: 1 });
-        en.deg++;
-      }
-    };
-    link(e.people, "p", "person");
-    link(e.tags, "t", "tag");
-    link(e.teams, "m", "team");
-    if (e.type === "summary" && e.sources) {
-      for (const s of e.sources) {
-        if (!entryIds.has(s)) continue; // dangling back-link
-        edges.push({ a: en.id, b: `e:${s}`, weight: 1 });
-        en.deg++;
-      }
-    }
-    if (e.follows) {
-      for (const f of e.follows) {
-        if (!entryIds.has(f)) continue; // dangling chain link
-        edges.push({ a: en.id, b: `e:${f}`, weight: 1, chain: true });
-        en.deg++;
-      }
-    }
-    memberships.push(members);
-  }
-
-  for (const n of nodes.values()) {
-    n.r = n.kind === "entry" ? 4.5 : Math.min(20, Math.max(5, 5 + 2.6 * Math.sqrt(n.deg)));
-  }
-  return { nodes, edges, memberships };
-}
-
-/**
- * Project the full model onto the enabled node kinds. Direct entity↔entity
- * co-occurrence links (weighted by shared entries) are always present — the
- * entries chip only adds/removes the entry-node layer and its membership edges.
- * @param {{ nodes: Map<string, GNode>, edges: GEdge[], memberships: string[][] }} model
- * @param {Record<NodeKind, boolean>} types
- * @param {Record<string, boolean>} entryTypes
- * @param {{ minTagDegree?: number, keepTag?: string }} [opts]
- * @returns {{ nodes: GNode[], edges: GEdge[], hasCo: boolean }}
- */
-function projectGraph(model, types, entryTypes, opts = {}) {
-  const visible = [...model.nodes.values()].filter(
-    (n) =>
-      types[n.kind] &&
-      (n.kind !== "entry" || entryTypes[n.etype] !== false) &&
-      (n.kind !== "tag" || n.deg >= (opts.minTagDegree ?? 1) || n.label === opts.keepTag),
-  );
-  const ids = new Set(visible.map((n) => n.id));
-  /** @type {Map<string, GEdge>} */
-  const co = new Map();
-  for (const members of model.memberships) {
-    const vis = members.filter((id) => ids.has(id));
-    for (let i = 0; i < vis.length; i++) {
-      for (let j = i + 1; j < vis.length; j++) {
-        const a = /** @type {string} */ (vis[i]);
-        const b = /** @type {string} */ (vis[j]);
-        const key = a < b ? `${a}|${b}` : `${b}|${a}`;
-        const edge = co.get(key);
-        if (edge) edge.weight++;
-        else co.set(key, { a, b, weight: 1 });
-      }
-    }
-  }
-  const edges = [...co.values()];
-  if (types.entry) edges.push(...model.edges.filter((e) => ids.has(e.a) && ids.has(e.b)));
-  return { nodes: visible, edges, hasCo: co.size > 0 };
-}
-
-// ---------- simulation ----------
-
-/** @param {GNode[]} nodes seeded/warm-started, iterated in sorted-id order for determinism */
-function initPositions(nodes) {
-  for (const n of [...nodes].sort((a, b) => a.id.localeCompare(b.id))) {
-    const p = gstate.lastPos.get(n.id);
-    if (p) {
-      n.x = p.x;
-      n.y = p.y;
-    } else {
-      const rnd = mulberry32(fnv1a(n.id));
-      const th = rnd() * Math.PI * 2;
-      const rad = 60 + rnd() * Math.min(W, H) * 0.34;
-      n.x = W / 2 + Math.cos(th) * rad;
-      n.y = H / 2 + Math.sin(th) * rad;
-    }
-    n.vx = 0;
-    n.vy = 0;
-  }
-}
-
-/**
- * One tick: pairwise repulsion (O(n²), fine ≤ ~400 nodes), link springs,
- * weak centering, collision push, damped integration. Pinned nodes (fx/fy)
- * follow the pointer instead.
- * @param {GNode[]} nodes @param {GEdge[]} edges @param {Map<string, GNode>} byId
- * @param {number} alpha
- */
-function simStep(nodes, edges, byId, alpha) {
-  for (let i = 0; i < nodes.length; i++) {
-    const a = /** @type {GNode} */ (nodes[i]);
-    for (let j = i + 1; j < nodes.length; j++) {
-      const b = /** @type {GNode} */ (nodes[j]);
-      const dx = b.x - a.x;
-      const dy = b.y - a.y;
-      const d2 = Math.max(dx * dx + dy * dy, 36);
-      const d = Math.sqrt(d2);
-      // radius-scaled charge: hubs repel far harder than leaves, which keeps
-      // the high-degree clique at the core from collapsing into a puck
-      const push = (70 * a.r * b.r * alpha) / d2;
-      const ux = dx / d;
-      const uy = dy / d;
-      a.vx -= push * ux;
-      a.vy -= push * uy;
-      b.vx += push * ux;
-      b.vy += push * uy;
-    }
-  }
-  for (const e of edges) {
-    const a = byId.get(e.a);
-    const b = byId.get(e.b);
-    if (!a || !b) continue;
-    const dx = b.x - a.x;
-    const dy = b.y - a.y;
-    const d = Math.max(Math.sqrt(dx * dx + dy * dy), 1);
-    // spring strength is normalized by the smaller endpoint's link count
-    // (the d3-force trick) — otherwise hub nodes' many springs overwhelm
-    // repulsion and contract the core into a puck
-    const isCo = a.kind !== "entry" && b.kind !== "entry"; // direct entity link
-    const rest = isCo ? 120 + 40 / e.weight : a.kind === "entry" && b.kind === "entry" ? 110 : 85;
-    const s = 1 / Math.max(1, Math.min(a.links, b.links));
-    const f = 0.08 * s * alpha * (d - rest);
-    const ux = dx / d;
-    const uy = dy / d;
-    a.vx += f * ux;
-    a.vy += f * uy;
-    b.vx -= f * ux;
-    b.vy -= f * uy;
-  }
-  for (const n of nodes) {
-    n.vx += (W / 2 - n.x) * 0.008 * alpha;
-    n.vy += (H / 2 - n.y) * 0.008 * alpha;
-  }
-  for (let i = 0; i < nodes.length; i++) {
-    const a = /** @type {GNode} */ (nodes[i]);
-    for (let j = i + 1; j < nodes.length; j++) {
-      const b = /** @type {GNode} */ (nodes[j]);
-      const dx = b.x - a.x;
-      const dy = b.y - a.y;
-      const d = Math.max(Math.sqrt(dx * dx + dy * dy), 0.01);
-      const min = a.r + b.r + 14;
-      if (d < min) {
-        const shift = (min - d) / 2;
-        const ux = dx / d;
-        const uy = dy / d;
-        a.x -= shift * ux;
-        a.y -= shift * uy;
-        b.x += shift * ux;
-        b.y += shift * uy;
-      }
-    }
-  }
-  for (const n of nodes) {
-    if (n.fx !== null && n.fy !== null) {
-      n.x = n.fx;
-      n.y = n.fy;
-      n.vx = 0;
-      n.vy = 0;
-      continue;
-    }
-    n.vx *= 0.85;
-    n.vy *= 0.85;
-    n.x = Math.min(W - PAD, Math.max(PAD, n.x + n.vx));
-    n.y = Math.min(H - PAD, Math.max(PAD, n.y + n.vy));
-  }
-}
-
-/** rescale settled positions to fill the viewBox — the zoom/pan substitute
- * @param {GNode[]} nodes */
-function fitToView(nodes) {
-  if (nodes.length === 0) return;
-  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-  for (const n of nodes) {
-    x0 = Math.min(x0, n.x - n.r);
-    y0 = Math.min(y0, n.y - n.r);
-    x1 = Math.max(x1, n.x + n.r);
-    y1 = Math.max(y1, n.y + n.r + 14); // room for the label line
-  }
-  const s = Math.min((W - 2 * PAD) / Math.max(x1 - x0, 1), (H - 2 * PAD) / Math.max(y1 - y0, 1), 1.5);
-  const ox = (W - (x1 - x0) * s) / 2 - x0 * s;
-  const oy = (H - (y1 - y0) * s) / 2 - y0 * s;
-  for (const n of nodes) {
-    n.x = n.x * s + ox;
-    n.y = n.y * s + oy;
-  }
 }
 
 // ---------- markup ----------
@@ -394,10 +76,7 @@ function glyph(kind) {
 
 /** @param {GNode} n @param {boolean} labeled */
 function nodeMarkup(n, labeled) {
-  const tip =
-    n.kind === "entry"
-      ? `${n.label} — ${n.etype}${n.ghost ? ` · ${n.gmemb} graph` : ""}`
-      : `${n.label} — ${n.kind} — ${n.deg} entr${n.deg === 1 ? "y" : "ies"}`;
+  const tip = nodeTip(n);
   const shape =
     n.kind === "team"
       ? `<rect class="nshape" x="${-n.r}" y="${-n.r}" width="${2 * n.r}" height="${2 * n.r}" rx="3"/>`
@@ -532,10 +211,26 @@ export function renderGraphView(mainEl, entries, opts = {}) {
   let byId = new Map();
   /** @type {Map<string, Element>} */
   let nodeEls = new Map();
+  /** parallel to `nodes` — index access avoids a Map lookup per element per frame */
+  /** @type {Element[]} */
+  let nodeElArr = [];
   /** @type {Element[]} */
   let edgeEls = [];
+  // Highlighting rewrites a whole `class` attribute, but only on elements whose
+  // state actually changed. Touching all ~5,300 elements on every selection is
+  // what made selecting a node cost hundreds of milliseconds.
+  /** class attribute with no state flags, per element */
+  /** @type {string[]} */
+  let nodeBase = [];
+  /** @type {string[]} */
+  let edgeBase = [];
+  /** previously applied state bits, per element */
+  let nodeState = new Uint8Array(0);
+  let edgeState = new Uint8Array(0);
   /** @type {Map<string, Set<string>>} */
   let neighbors = new Map();
+  /** @type {import("./graph-sim.js").Sim | null} */
+  let sim = null;
 
   let raf = 0;
   let alpha = 0;
@@ -543,8 +238,9 @@ export function renderGraphView(mainEl, entries, opts = {}) {
   let draggingId = null;
 
   function draw() {
-    for (const n of nodes) {
-      const el = nodeEls.get(n.id);
+    for (let i = 0; i < nodes.length; i++) {
+      const n = /** @type {GNode} */ (nodes[i]);
+      const el = nodeElArr[i];
       if (el) el.setAttribute("transform", `translate(${n.x.toFixed(1)} ${n.y.toFixed(1)})`);
     }
     for (let i = 0; i < edges.length; i++) {
@@ -566,10 +262,14 @@ export function renderGraphView(mainEl, entries, opts = {}) {
 
   /** @param {number} n */
   function tickTimes(n) {
+    if (!sim) return;
+    let ticked = false;
     for (let i = 0; i < n && alpha > 0.02; i++) {
-      simStep(nodes, edges, byId, alpha);
+      sim.step(alpha);
       alpha *= 0.985;
+      ticked = true;
     }
+    if (ticked) sim.writeBack(nodes);
   }
 
   /** @param {{ alpha?: number, fit?: boolean }} [opts] */
@@ -579,8 +279,8 @@ export function renderGraphView(mainEl, entries, opts = {}) {
     cancelAnimationFrame(raf);
     if (reducedMotion()) {
       tickTimes(300);
-      if (fit) fitToView(nodes);
       draw();
+      if (fit) cameraFit();
       savePos();
       return;
     }
@@ -591,15 +291,17 @@ export function renderGraphView(mainEl, entries, opts = {}) {
       if (alpha > 0.02) {
         raf = requestAnimationFrame(loop);
       } else {
-        if (fit && draggingId === null) {
-          fitToView(nodes);
-          draw();
-        }
+        if (fit && draggingId === null) cameraFit();
         savePos();
       }
     };
     raf = requestAnimationFrame(loop);
   }
+
+  const HIT = 1, HOT = 2, DIM = 4;
+  /** the eight possible state suffixes, so highlighting concatenates no strings */
+  const STATE_CLASS = ["", " is-hit", " is-hot", " is-hit is-hot", " is-dim",
+    " is-hit is-dim", " is-hot is-dim", " is-hit is-hot is-dim"];
 
   function updateHighlights() {
     const q = gstate.q.trim().toLowerCase();
@@ -607,16 +309,18 @@ export function renderGraphView(mainEl, entries, opts = {}) {
     const hood = sel ? (neighbors.get(sel) ?? new Set()) : null;
     /** @type {Set<string>} */
     const hitIds = new Set();
-    for (const n of nodes) {
-      const el = nodeEls.get(n.id);
+    for (let i = 0; i < nodes.length; i++) {
+      const n = /** @type {GNode} */ (nodes[i]);
+      const el = nodeElArr[i];
       if (!el) continue;
       const hit = q !== "" && n.label.toLowerCase().includes(q);
       const hot = sel !== null && (n.id === sel || hood?.has(n.id) === true);
       const dim = (q !== "" && !hit) || (sel !== null && !hot);
       if (hit) hitIds.add(n.id);
-      el.classList.toggle("is-hit", hit);
-      el.classList.toggle("is-hot", hot);
-      el.classList.toggle("is-dim", dim);
+      const state = (hit ? HIT : 0) | (hot ? HOT : 0) | (dim ? DIM : 0);
+      if (state === nodeState[i]) continue;
+      nodeState[i] = state;
+      el.setAttribute("class", nodeBase[i] + STATE_CLASS[state]);
     }
     for (let i = 0; i < edges.length; i++) {
       const e = /** @type {GEdge} */ (edges[i]);
@@ -624,8 +328,11 @@ export function renderGraphView(mainEl, entries, opts = {}) {
       if (!el) continue;
       const hot = sel !== null && (e.a === sel || e.b === sel);
       const searchDim = q !== "" && (!hitIds.has(e.a) || !hitIds.has(e.b));
-      el.classList.toggle("is-hot", hot);
-      el.classList.toggle("is-dim", searchDim || (sel !== null && !hot));
+      const dim = searchDim || (sel !== null && !hot);
+      const state = (hot ? HOT : 0) | (dim ? DIM : 0);
+      if (state === edgeState[i]) continue;
+      edgeState[i] = state;
+      el.setAttribute("class", edgeBase[i] + STATE_CLASS[state]);
     }
   }
 
@@ -695,20 +402,6 @@ export function renderGraphView(mainEl, entries, opts = {}) {
     if (tag instanceof HTMLSelectElement && tag.value !== gstate.tagFilter) tag.value = gstate.tagFilter;
   }
 
-  /** @param {GNode[]} ns */
-  function labelSet(ns) {
-    if (gstate.mode !== "topics") {
-      return new Set(ns.filter((n) => n.kind === "person").map((n) => n.id));
-    }
-    return new Set(
-      ns
-        .filter((n) => n.kind === "tag")
-        .sort((a, b) => b.deg - a.deg || b.links - a.links || a.label.localeCompare(b.label))
-        .slice(0, 14)
-        .map((n) => n.id),
-    );
-  }
-
   /** rebuild the projection + SVG contents (initial render and chip toggles) */
   function refresh() {
     const scopedEntries = graphEntries();
@@ -741,7 +434,7 @@ export function renderGraphView(mainEl, entries, opts = {}) {
       sb.add(e.a);
     }
 
-    const labeled = labelSet(nodes);
+    const labeled = labelSet(nodes, gstate.mode);
     /** an edge wears the hue of its most salient endpoint kind
      * @param {GEdge} e @returns {NodeKind} */
     const edgeKind = (e) => {
@@ -764,11 +457,17 @@ export function renderGraphView(mainEl, entries, opts = {}) {
       .join("");
     nodesG.innerHTML = nodes.map((n) => nodeMarkup(n, labeled.has(n.id))).join("");
     nodeEls = new Map();
-    for (const el of nodesG.querySelectorAll(".gnode")) {
+    nodeElArr = [...nodesG.querySelectorAll(".gnode")];
+    for (const el of nodeElArr) {
       const id = el.getAttribute("data-node");
       if (id) nodeEls.set(id, el);
     }
     edgeEls = [...edgesG.querySelectorAll(".gedge")];
+    // the freshly written markup carries no state flags, so this is the base
+    nodeBase = nodeElArr.map((el) => el.getAttribute("class") ?? "");
+    edgeBase = edgeEls.map((el) => el.getAttribute("class") ?? "");
+    nodeState = new Uint8Array(nodeElArr.length);
+    edgeState = new Uint8Array(edgeEls.length);
 
     emptyEl.hidden = nodes.length > 0;
     const scope = gstate.tagFilter ? ` · #${gstate.tagFilter}` : "";
@@ -780,7 +479,8 @@ export function renderGraphView(mainEl, entries, opts = {}) {
 
     syncToolbar(model);
     renderTypeLegend(scopedEntries);
-    initPositions(nodes);
+    initPositions(nodes, gstate.lastPos);
+    sim = nodes.length > 0 ? createSim(nodes, edges) : null;
     updateHighlights();
     renderDetail();
     draw();
@@ -867,6 +567,14 @@ export function renderGraphView(mainEl, entries, opts = {}) {
   }
   applyView();
 
+  /** Frame the whole layout by moving the camera, never by moving the nodes —
+   *  a camera zoom scales positions and radii together, so the spacing the
+   *  collision pass worked out survives. */
+  function cameraFit() {
+    gstate.view = computeFit(nodes, K_MIN, K_MAX);
+    applyView();
+  }
+
   /** outer svg (viewBox) coords for a pointer event */
   /** @param {{ clientX: number, clientY: number }} ev @returns {{ x: number, y: number } | null} */
   function toSvgPoint(ev) {
@@ -911,10 +619,7 @@ export function renderGraphView(mainEl, entries, opts = {}) {
   const onClick = (sel, fn) => /** @type {HTMLElement} */ (mainEl.querySelector(sel)).addEventListener("click", fn);
   onClick("#gz-in", () => zoomBy(1.4, W / 2, H / 2));
   onClick("#gz-out", () => zoomBy(1 / 1.4, W / 2, H / 2));
-  onClick("#gz-fit", () => {
-    gstate.view = { k: 1, tx: 0, ty: 0 };
-    applyView();
-  });
+  onClick("#gz-fit", cameraFit);
 
   let downX = 0;
   let downY = 0;
@@ -955,10 +660,12 @@ export function renderGraphView(mainEl, entries, opts = {}) {
     }
     const n = draggingId !== null ? byId.get(draggingId) : undefined;
     const p = toWorldPoint(ev);
-    if (!n || !p) return;
+    if (!n || !p || !sim) return;
     moved = true;
-    n.fx = Math.min(W - PAD, Math.max(PAD, p.x));
-    n.fy = Math.min(H - PAD, Math.max(PAD, p.y));
+    // no clamp: the layout is bounded by a soft radial force, not a hard box
+    sim.pin(n.id, p.x, p.y);
+    n.x = p.x;
+    n.y = p.y;
     if (reducedMotion()) {
       // no animated re-heat: apply the move with a few synchronous ticks
       alpha = 0.1;
@@ -974,11 +681,7 @@ export function renderGraphView(mainEl, entries, opts = {}) {
   svg.addEventListener("pointerup", (ev) => {
     const wasDragging = draggingId;
     if (wasDragging !== null) {
-      const n = byId.get(wasDragging);
-      if (n) {
-        n.fx = null;
-        n.fy = null;
-      }
+      sim?.unpin(wasDragging);
       draggingId = null;
     }
     panning = false;
