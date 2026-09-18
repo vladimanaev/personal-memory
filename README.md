@@ -251,9 +251,8 @@ read time — nothing to keep in sync:
   `status: open` or `status: resolved by <id>` (also in `--format json`).
 - Ranking gets a mild recency boost (at most +2%, decaying over ~3 months), so
   newer entries win near-ties without burying strong older matches.
-- `memory maintenance` — and the web UI's maintenance screen — suggest likely
-  missing links for still-open items (semantically close later entries sharing
-  a person or tag), with one-click link and dismiss in the UI.
+- `memory maintenance` reports **dangling links** — entries whose `follows`
+  points at an id that no longer exists — so a broken chain never goes unnoticed.
 - The UI shows each chained entry's full timeline in its detail panel, and the
   graph view draws chains as dashed edges between entries.
 

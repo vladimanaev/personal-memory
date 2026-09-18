@@ -99,24 +99,11 @@ import { comboboxHtml, wireCombobox } from "./combobox.js";
  * @property {string|null} lastSeen
  * @property {string[]} reasons
  *
- * @typedef {Object} ChainLinkSuggestion
- * @property {string} openId
- * @property {string} openTitle
- * @property {string} openType
- * @property {string} openDate
- * @property {string} laterId
- * @property {string} laterTitle
- * @property {string} laterType
- * @property {string} laterDate
- * @property {number} sim
- * @property {string[]} shared
- *
  * @typedef {Object} GraphAudit
  * @property {string} generatedAt
  * @property {Record<string, number>} counts
  * @property {Record<string, number>} suggestionCounts
  * @property {SlugSuggestion[]} suggestions
- * @property {ChainLinkSuggestion[]} [chainSuggestions]
  *
  * @typedef {Object} MaintenanceState
  * @property {"never"|"running"|"success"|"error"} status
@@ -584,13 +571,6 @@ function graphBadge(e) {
     .filter((g) => g !== "default")
     .map((g) => `<span class="badge gshare">${esc(g)}</span>`)
     .join("");
-}
-
-/** same, but resolved from an entry id against the loaded record (no badge if absent)
- * @param {string} id */
-function graphBadgeById(id) {
-  const e = state.entries.find((x) => x.id === id);
-  return e ? graphBadge(e) : "";
 }
 
 /** one ledger line — shared by entries list and overview recent feed */
@@ -1323,64 +1303,6 @@ async function postSlugDismiss(s) {
   if (route().view === "maintenance") render();
 }
 
-/** @param {ChainLinkSuggestion} s */
-function chainKey(s) {
-  return `${s.laterId}|${s.openId}`;
-}
-
-/**
- * Accept or dismiss a suggested timeline link. Accept resolves the open item
- * with the later entry; dismiss persistently hides a wrong pair.
- * @param {ChainLinkSuggestion} s @param {"link"|"dismiss"} action
- */
-async function postChainLink(s, action) {
-  const key = chainKey(s);
-  state.mergeBusy = key;
-  state.mergeErrors[key] = "";
-  render();
-  try {
-    const res = await fetch(action === "link" ? "/api/maintenance/link" : "/api/maintenance/link/dismiss", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body:
-        action === "link"
-          ? JSON.stringify({ laterId: s.laterId, follows: [s.openId], confirm: true })
-          : JSON.stringify({ laterId: s.laterId, openId: s.openId }),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error ?? `${action} failed (${res.status})`);
-    await Promise.all([action === "link" ? reloadRecordData() : Promise.resolve(), loadMaintenance()]);
-  } catch (err) {
-    state.mergeErrors[key] = err instanceof Error ? err.message : String(err);
-  }
-  state.mergeBusy = "";
-  if (route().view === "maintenance") render();
-}
-
-/** @param {ChainLinkSuggestion} s */
-function chainSuggestionRow(s) {
-  const key = chainKey(s);
-  const busy = state.mergeBusy === key;
-  const err = state.mergeErrors[key];
-  return `
-    <div class="mrow" data-suggestion="${esc(key)}">
-      <span class="mdate">${esc(s.openDate)}</span>
-      <span class="mmain">
-        <span class="mtop">
-          <span class="badge tdot gt-${esc(s.openType)}">${esc(s.openType)}</span>
-          <a href="#/entry/${encodeURIComponent(s.openId)}">${esc(s.openTitle)}</a>${graphBadgeById(s.openId)}
-          <span class="arrow">→</span>
-          <span class="badge tdot gt-${esc(s.laterType)}">${esc(s.laterType)}</span>
-          <a href="#/entry/${encodeURIComponent(s.laterId)}">${esc(s.laterTitle)}</a>${graphBadgeById(s.laterId)}
-          <span class="score">${s.sim.toFixed(2)}</span>
-          <span class="mactions"><button class="chip chip-primary" data-mlink="${esc(key)}" ${busy ? "disabled" : ""}>${busy ? "working…" : "link"}</button><button class="chip" data-mdismiss="${esc(key)}" ${busy ? "disabled" : ""} title="wrong pair — hide this suggestion permanently">dismiss</button></span>
-        </span>
-        <span class="msnippet">${esc(s.laterId)} --follows ${esc(s.openId)} · ${esc(s.laterDate)} resolves ${esc(s.openDate)} · shared: ${esc(s.shared.join(", "))}</span>
-        ${err ? `<span class="merr">${esc(err)}</span>` : ""}
-      </span>
-    </div>`;
-}
-
 /** @param {MaintenanceSnapshot} m */
 function maintenanceStatusHtml(m) {
   const st = m.state;
@@ -1397,7 +1319,6 @@ function maintenanceStatusHtml(m) {
       <div class="mline"><span class="mk">duration</span><span>${esc(duration(st.durationMs))}</span></div>
       <div class="mline"><span class="mk">cleanup window</span><span>${st.cleanupOlderThanDays ?? 7} days</span></div>
       <div class="mline"><span class="mk">slug suggestions</span><span>${suggestions.person ?? 0} people · ${suggestions.team ?? 0} teams · ${suggestions.tag ?? 0} tags</span></div>
-      <div class="mline"><span class="mk">chain suggestions</span><span>${(m.audit?.chainSuggestions ?? []).length} unlinked chain${(m.audit?.chainSuggestions ?? []).length === 1 ? "" : "s"}</span></div>
       <div class="mline"><span class="mk">lancedb</span><span>${opt ? (opt.tableExists ? "optimized" : "no table") : "not run"}</span></div>
       <div class="mline"><span class="mk">prune</span><span>${prune ? `${prune.oldVersionsRemoved ?? 0} versions · ${prune.bytesRemoved ?? 0} bytes` : "—"}</span></div>
       <div class="mline"><span class="mk">compaction</span><span>${compaction ? `${compaction.filesRemoved ?? 0} files removed · ${compaction.filesAdded ?? 0} files added` : "—"}</span></div>
@@ -1464,20 +1385,12 @@ function renderMaintenance() {
     return;
   }
   const suggestions = m.audit?.suggestions ?? [];
-  const chainSuggestions = m.audit?.chainSuggestions ?? [];
   main.innerHTML = `
     <div class="maintenance-head">
       <div class="colophon">scheduled graph maintenance <span class="sep">·</span> audit ${esc(shortDateTime(m.audit?.generatedAt))}</div>
       <button class="chip" id="mrun" ${m.running ? "disabled" : ""}>${m.running ? "running…" : "run now"}</button>
     </div>
     ${maintenanceStatusHtml(m)}
-    <h2>Chain Link Suggestions</h2>
-    <div class="colophon">open pending-decisions/todos with a semantically-close later entry sharing a person/tag — linking marks the open item resolved and connects them in the graph</div>
-    ${
-      chainSuggestions.length
-        ? `<div class="ledger l-top mledger">${chainSuggestions.map(chainSuggestionRow).join("")}</div>`
-        : `<div class="empty">no unlinked chains detected</div>`
-    }
     <h2>Merge Suggestions</h2>
     ${
       suggestions.length
@@ -2297,25 +2210,11 @@ document.addEventListener("click", (ev) => {
     if (s) postSlugMerge(s, false);
     return;
   }
-  const linkEl = t.closest("[data-mlink]");
-  if (linkEl instanceof HTMLElement) {
-    ev.preventDefault();
-    const s = state.maintenance?.audit?.chainSuggestions?.find((x) => chainKey(x) === linkEl.dataset.mlink);
-    if (s) postChainLink(s, "link");
-    return;
-  }
   const slugDismissEl = t.closest("[data-msdismiss]");
   if (slugDismissEl instanceof HTMLElement) {
     ev.preventDefault();
     const s = state.maintenance?.audit?.suggestions.find((x) => mergeKey(x) === slugDismissEl.dataset.msdismiss);
     if (s) postSlugDismiss(s);
-    return;
-  }
-  const dismissEl = t.closest("[data-mdismiss]");
-  if (dismissEl instanceof HTMLElement) {
-    ev.preventDefault();
-    const s = state.maintenance?.audit?.chainSuggestions?.find((x) => chainKey(x) === dismissEl.dataset.mdismiss);
-    if (s) postChainLink(s, "dismiss");
     return;
   }
   const cancelConfirmEl = t.closest("[data-mcancel-confirm]");

@@ -93,8 +93,7 @@ the latest state instead of a stale one:
   that settles a `pending-decision`, a follow-up note with new facts, an
   outcome after an incident.
 - **After the fact**: `npx tsx src/cli.ts link <later-id> --follows <earlier-id>`
-  links two existing entries. `memory maintenance` suggests likely missing
-  links as ready-to-run `link` commands — review and run the ones that are right.
+  links two existing entries.
 - The CLI validates targets (must exist, not be newer, no cycles) and derives
   everything else at read time: an unresolved `pending-decision`/`todo` shows as
   `[open]`, a chained one as `[resolved → <id>]`, and recall annotates stale
