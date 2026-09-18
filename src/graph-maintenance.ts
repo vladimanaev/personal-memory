@@ -4,9 +4,9 @@ import matter from "gray-matter";
 import { DEFAULT_GRAPH, FrontmatterSchema, sortGraphs, type Frontmatter, type GraphId, type MemoryEntry } from "./schema.js";
 import { INDEX_DIR, ROOT, loadAllEntries, writeEntryAll } from "./ingest.js";
 import { storeFor, validateContainment } from "./graphs.js";
-import { syncIndex, findSimilar } from "./store.js";
+import { syncIndex } from "./store.js";
 import { commitMemoryRepo } from "./memory-git.js";
-import { buildChainIndex, entryStatus, validateFollowsTargets } from "./chains.js";
+import { validateFollowsTargets } from "./chains.js";
 
 export const GRAPH_MAINTENANCE_PATH = join(INDEX_DIR, "graph-maintenance.json");
 
@@ -35,26 +35,16 @@ export interface SlugProposal {
   proposedAt: string;
 }
 
-export interface ChainLinkSuggestion {
-  openId: string;
-  openTitle: string;
-  openType: string;
-  openDate: string;
-  laterId: string;
-  laterTitle: string;
-  laterType: string;
-  laterDate: string;
-  sim: number;
-  shared: string[];
-}
-
 export interface GraphMaintenanceAudit {
   generatedAt: string;
   counts: Record<SlugKind, number>;
   suggestionCounts: Record<SlugKind, number>;
   suggestions: SlugSuggestion[];
-  /** Absent in audits written before timeline chains existed. */
-  chainSuggestions?: ChainLinkSuggestion[];
+  /**
+   * @deprecated Chain link suggestions were removed. Never populated; retained
+   * only so audit files written before the removal still parse.
+   */
+  chainSuggestions?: unknown[];
 }
 
 export interface SlugMergePreview {
@@ -297,41 +287,6 @@ export function analyzeGraphHygiene(
   return { generatedAt, counts, suggestionCounts, suggestions };
 }
 
-/** "clearly related" for bge-small — well below the 0.92 near-duplicate bar. */
-const CHAIN_SUGGESTION_MIN_SIM = 0.6;
-
-export const CHAIN_DISMISSALS_PATH = join(INDEX_DIR, "chain-dismissals.json");
-
-export interface ChainDismissal {
-  openId: string;
-  laterId: string;
-  dismissedAt: string;
-}
-
-export async function readChainDismissals(): Promise<ChainDismissal[]> {
-  try {
-    const parsed: unknown = JSON.parse(await readFile(CHAIN_DISMISSALS_PATH, "utf8"));
-    return Array.isArray(parsed) ? (parsed as ChainDismissal[]) : [];
-  } catch {
-    return [];
-  }
-}
-
-/**
- * Persistently hide one wrong suggestion (the pair, in either role order,
- * never resurfaces). Lives in `.index/` like connector state: user judgment
- * that is cheap to re-give if the index dir is ever wiped.
- */
-export async function dismissChainSuggestion(openId: string, laterId: string): Promise<GraphMaintenanceAudit> {
-  const dismissals = await readChainDismissals();
-  if (!dismissals.some((d) => d.openId === openId && d.laterId === laterId)) {
-    dismissals.push({ openId, laterId, dismissedAt: new Date().toISOString() });
-    await mkdir(INDEX_DIR, { recursive: true });
-    await writeFile(CHAIN_DISMISSALS_PATH, JSON.stringify(dismissals, null, 2), "utf8");
-  }
-  return refreshGraphMaintenanceAudit();
-}
-
 export const SLUG_DISMISSALS_PATH = join(INDEX_DIR, "slug-dismissals.json");
 
 export interface SlugDismissal {
@@ -365,7 +320,7 @@ export function slugDismissalKeys(dismissals: SlugDismissal[]): Set<string> {
 
 /**
  * Persistently hide one wrong merge suggestion. Lives in `.index/` like
- * chain dismissals: user judgment that is cheap to re-give if wiped.
+ * connector state: user judgment that is cheap to re-give if wiped.
  */
 export async function dismissSlugSuggestion(kind: SlugKind, from: string, to: string): Promise<GraphMaintenanceAudit> {
   const dismissals = await readSlugDismissals();
@@ -410,70 +365,6 @@ export async function proposeSlugMerge(kind: SlugKind, from: string, to: string,
     await writeFile(SLUG_PROPOSALS_PATH, JSON.stringify(proposals, null, 2), "utf8");
   }
   return refreshGraphMaintenanceAudit();
-}
-
-/**
- * Slugs carried by most of the store (e.g. the owner's own person slug) say
- * nothing about two entries being the same matter — drop them as evidence.
- */
-function commonSlugs(entries: MemoryEntry[]): Set<string> {
-  if (entries.length < 8) return new Set();
-  const counts = new Map<string, number>();
-  for (const e of entries) {
-    for (const s of new Set([...e.people, ...e.tags])) counts.set(s, (counts.get(s) ?? 0) + 1);
-  }
-  return new Set([...counts.entries()].filter(([, n]) => n > entries.length / 2).map(([s]) => s));
-}
-
-/**
- * Likely missing timeline links: for every still-open pending-decision/todo,
- * later entries that are semantically close AND share a person or tag but sit
- * in a different (or no) chain. Needs the vector index (returns [] without it).
- */
-export async function analyzeChainLinks(entries: MemoryEntry[]): Promise<ChainLinkSuggestion[]> {
-  const chainIndex = buildChainIndex(entries);
-  const open = entries.filter((e) => entryStatus(e, chainIndex)?.status === "open");
-  if (open.length === 0) return [];
-  const byId = new Map(entries.map((e) => [e.id, e] as const));
-  const componentOf = (id: string): string => chainIndex.get(id)?.latest.id ?? id;
-  const dismissed = new Set((await readChainDismissals()).map((d) => `${d.openId}|${d.laterId}`));
-  const common = commonSlugs(entries);
-
-  const out: ChainLinkSuggestion[] = [];
-  for (const o of open) {
-    const similar = await findSimilar(`${o.title}\n${o.body}`, {
-      minSim: CHAIN_SUGGESTION_MIN_SIM,
-      limit: 5,
-    });
-    for (const hit of similar) {
-      const e = byId.get(hit.id);
-      if (!e || e.id === o.id || e.type === "summary") continue;
-      if (e.date <= o.date) continue;
-      // Never suggest a link `applyChainLink` would reject under containment:
-      // the later entry's shared graphs must all contain the open entry.
-      if (e.graphs.some((g) => g !== DEFAULT_GRAPH && !o.graphs.includes(g))) continue;
-      if (componentOf(e.id) === componentOf(o.id)) continue; // already chained together
-      if (dismissed.has(`${o.id}|${e.id}`)) continue; // user said: wrong pair
-      const shared = [
-        ...e.people.filter((p) => o.people.includes(p) && !common.has(p)),
-        ...e.tags.filter((t) => o.tags.includes(t) && !common.has(t)),
-      ];
-      if (shared.length === 0) continue;
-      out.push({
-        openId: o.id,
-        openTitle: o.title,
-        openType: o.type,
-        openDate: o.date,
-        laterId: e.id,
-        laterTitle: e.title,
-        laterType: e.type,
-        laterDate: e.date,
-        sim: hit.sim,
-        shared,
-      });
-    }
-  }
-  return out.sort((a, b) => b.sim - a.sim);
 }
 
 export interface ChainLinkResult {
@@ -556,7 +447,6 @@ export async function readGraphMaintenanceAudit(): Promise<GraphMaintenanceAudit
 export async function refreshGraphMaintenanceAudit(): Promise<GraphMaintenanceAudit> {
   const entries = await loadAllEntries();
   const audit = analyzeGraphHygiene(entries, undefined, slugDismissalKeys(await readSlugDismissals()), await readSlugProposals());
-  audit.chainSuggestions = await analyzeChainLinks(entries);
   await writeGraphMaintenanceAudit(audit);
   return audit;
 }

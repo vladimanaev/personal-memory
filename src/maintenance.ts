@@ -2,8 +2,8 @@ import { loadAllEntries } from "./ingest.js";
 import { indexStatus } from "./store.js";
 import { lexicalStatus } from "./lexical.js";
 import type { MemoryEntry } from "./schema.js";
-import { analyzeChainLinks, analyzeGraphHygiene, readSlugDismissals, readSlugProposals, slugDismissalKeys, writeGraphMaintenanceAudit } from "./graph-maintenance.js";
-import { buildChainIndex, entryStatus } from "./chains.js";
+import { analyzeGraphHygiene, readSlugDismissals, readSlugProposals, slugDismissalKeys, writeGraphMaintenanceAudit } from "./graph-maintenance.js";
+import { buildChainIndex } from "./chains.js";
 
 /**
  * Read-only hygiene report: digest debt (scopes with many unsummarized raw
@@ -87,34 +87,20 @@ export async function runMaintenance(threshold: number): Promise<void> {
     console.log("→ fix: npx tsx src/cli.ts connectors");
   }
 
-  console.log("\n## Possible unlinked chains");
+  console.log("\n## Dangling links");
   const chainIndex = buildChainIndex(entries);
   const dangling = [...chainIndex.entries()].filter(([, a]) => a.dangling?.length);
-  for (const [id, a] of dangling) {
-    console.log(`⚠ ${id} follows missing entr${a.dangling!.length === 1 ? "y" : "ies"}: ${a.dangling!.join(", ")}`);
-  }
-  const hasOpen = entries.some((e) => entryStatus(e, chainIndex)?.status === "open");
-  let chainSuggestions: Awaited<ReturnType<typeof analyzeChainLinks>> = [];
-  if (!hasOpen) {
-    console.log("(no open pending-decisions/todos)");
-  } else if (idx.chunkRows === 0) {
-    console.log("(index is empty — run: npx tsx src/cli.ts index)");
+  if (dangling.length === 0) {
+    console.log("(none)");
   } else {
-    chainSuggestions = await analyzeChainLinks(entries);
-    if (chainSuggestions.length === 0) {
-      console.log("(no likely-related later entries for the open items)");
-    } else {
-      for (const s of chainSuggestions) {
-        console.log(
-          `npx tsx src/cli.ts link ${s.laterId} --follows ${s.openId}   # sim ${s.sim.toFixed(2)} · shared: ${s.shared.join(", ")}`,
-        );
-      }
+    for (const [id, a] of dangling) {
+      console.log(`⚠ ${id} follows missing entr${a.dangling!.length === 1 ? "y" : "ies"}: ${a.dangling!.join(", ")}`);
     }
+    console.log("→ fix: re-link with npx tsx src/cli.ts link, or remove the stale follows entry");
   }
 
   console.log("\n## Slug hygiene");
   const audit = analyzeGraphHygiene(entries, undefined, slugDismissalKeys(await readSlugDismissals()), await readSlugProposals());
-  audit.chainSuggestions = chainSuggestions;
   await writeGraphMaintenanceAudit(audit);
   if (audit.suggestions.length === 0) {
     console.log("(no suspiciously-similar slugs)");

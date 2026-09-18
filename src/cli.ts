@@ -1180,8 +1180,8 @@ Usage:
             # record that a connector sweep completed; captures are recorded by memory add
   memory connectors mark-captured <name> [--at ISO_TIMESTAMP]
             # backfill/record connector prompt usage without changing memories
-  memory ui [--port N] [--no-open]   # local web UI (default port 4664; memory writes limited to connector config,
-                                     # slug merges, and chain links — all via the same validated CLI code paths)
+  memory ui [--port N] [--no-open]   # local web UI (default port 4664; memory writes limited to connector config
+                                     # and slug merges — all via the same validated CLI code paths)
 `;
 
 async function main() {
