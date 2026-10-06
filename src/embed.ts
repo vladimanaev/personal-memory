@@ -89,6 +89,37 @@ class VoyageEmbedder implements Embedder {
   }
 }
 
+/** Texts per `embed()` call while indexing; override with MEMORY_EMBED_BATCH. */
+export const DEFAULT_EMBED_BATCH = 16;
+
+/** MEMORY_EMBED_BATCH when it is a positive integer, else the default. */
+export function embedBatchSize(raw = process.env.MEMORY_EMBED_BATCH): number {
+  if (!raw?.trim()) return DEFAULT_EMBED_BATCH;
+  const value = Number(raw);
+  return Number.isInteger(value) && value > 0 ? value : DEFAULT_EMBED_BATCH;
+}
+
+/**
+ * Embed `texts` in consecutive slices of at most `batchSize`, preserving
+ * order. A single call over a whole corpus makes the local model hold
+ * activations for every text at once, so peak memory grows with the corpus;
+ * fixed slices keep it bounded by the batch instead.
+ */
+export async function embedInBatches(
+  embedder: Embedder,
+  texts: string[],
+  batchSize = embedBatchSize(),
+): Promise<number[][]> {
+  if (!Number.isInteger(batchSize) || batchSize < 1) {
+    throw new RangeError(`embed batch size must be a positive integer, got ${batchSize}`);
+  }
+  const vectors: number[][] = [];
+  for (let i = 0; i < texts.length; i += batchSize) {
+    for (const v of await embedder.embed(texts.slice(i, i + batchSize))) vectors.push(v);
+  }
+  return vectors;
+}
+
 let cached: Embedder | null = null;
 
 /** Resolve the configured embedder (default: local, fully private). */

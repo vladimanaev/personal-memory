@@ -2,7 +2,7 @@ import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import * as lancedb from "@lancedb/lancedb";
 import type { OptimizeStats } from "@lancedb/lancedb";
-import { getEmbedder, type Embedder } from "./embed.js";
+import { embedInBatches, getEmbedder, type Embedder } from "./embed.js";
 import { chunkEntry, displayChunkText, entrySearchText, hashEntry, loadAllEntries, INDEX_DIR } from "./ingest.js";
 import { packSlugs, type GraphId, type MemoryEntry, type MemoryRecord } from "./schema.js";
 import { readLexical, buildLexical, syncLexical, bm25Scores, tokenize } from "./lexical.js";
@@ -58,7 +58,7 @@ async function recordsFor(entries: MemoryEntry[], embedder: Embedder): Promise<M
     const hash = hashEntry(e);
     chunkEntry(e).forEach((text, chunkIndex) => pending.push({ entry: e, chunkIndex, text, hash }));
   }
-  const vectors = await embedder.embed(pending.map((p) => p.text));
+  const vectors = await embedInBatches(embedder, pending.map((p) => p.text));
   return pending.map((p, i) => ({
     rowId: `${p.entry.id}#${p.chunkIndex}`,
     id: p.entry.id,
