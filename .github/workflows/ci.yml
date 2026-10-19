@@ -16,6 +16,8 @@ jobs:
         with:
           node-version: 20
           cache: npm
+      # npm 11's stricter lockfile check catches drift that Node 20's bundled npm 10 misses
+      - run: npm install -g npm@11
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
