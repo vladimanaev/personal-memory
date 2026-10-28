@@ -25,7 +25,7 @@ import {
 import { copyEntry, deleteGraph, moveEntry, removeEntry, syncGraphs } from "./membership.js";
 import { commitMemoryRepo } from "./memory-git.js";
 import { buildChainIndex, chainAncestry, entryStatus, OPEN_TYPES, validateFollowsTargets, type ChainAnnotation } from "./chains.js";
-import { applyChainLink, dismissSlugSuggestion, removeChainLink, mergeSlugs, proposeSlugMerge, slugUsage, type SlugKind } from "./graph-maintenance.js";
+import { applyChainLink, applyTagEdit, dismissSlugSuggestion, removeChainLink, mergeSlugs, proposeSlugMerge, slugUsage, type SlugKind } from "./graph-maintenance.js";
 import { recall, type RecallReport } from "./recall.js";
 import { keywordPhrase } from "./recall-queries.js";
 import { resolveIndexSlotDetailed } from "./index-slots.js";
@@ -461,6 +461,54 @@ async function cmdDue(argv: string[]) {
   }
   console.log(`✓ ${id} ${result.due ? `due ${result.due}` : "due date cleared"}`);
   console.log(`  ${result.path}`);
+}
+
+async function cmdTag(argv: string[]) {
+  const { values, positionals } = parseArgs({
+    args: argv,
+    options: { add: { type: "string" }, remove: { type: "string" }, "dry-run": { type: "boolean" } },
+    allowPositionals: true,
+  });
+  const id = positionals[0];
+  const add = list(values.add as string);
+  const remove = list(values.remove as string);
+  if (!id || positionals.length !== 1 || (add.length === 0 && remove.length === 0)) {
+    throw new Error("usage: memory tag <id> [--add a,b] [--remove c] [--dry-run]  (at least one of --add/--remove)");
+  }
+  const result = await applyTagEdit({ id, add, remove, dryRun: Boolean(values["dry-run"]) });
+  if (!result.changed) {
+    console.log(`✓ unchanged ${id} (tags: ${result.after.join(", ") || "none"})`);
+    return;
+  }
+  const show = (t: string[]) => t.join(", ") || "none";
+  if (result.dryRun) {
+    console.log(`✓ would change ${id} tags: ${show(result.before)} → ${show(result.after)}`);
+    console.log(`  copies: ${result.graphs.join(", ")}`);
+  } else {
+    console.log(`✓ ${id} tags: ${show(result.after)}`);
+  }
+  if (result.added.length) console.log(`  added: ${result.added.join(", ")}`);
+  if (result.removed.length) console.log(`  removed: ${result.removed.join(", ")}`);
+  if (result.path) console.log(`  ${result.path}`);
+  if (result.index) console.log(`  indexed (+${result.index.added} changed, ${result.index.unchanged} unchanged)`);
+
+  // Like capture, a newly added tag can match a standing distribution rule.
+  // Rules only queue candidates for review; removing a tag never touches
+  // memberships. A rule failure must not fail the edit.
+  if (result.added.length) {
+    try {
+      const { enqueueRules } = await import("./graph-rules.js");
+      const report = await enqueueRules({ ids: [id], dryRun: result.dryRun });
+      if (result.dryRun) {
+        for (const a of report.plan.actions) console.log(`  → rule: would queue ${a.id} → ${a.graph}`);
+      } else {
+        for (const line of report.actions) console.log(`  → rule: ${line}`);
+        if (report.queued > 0) console.log(`  review queued candidates: memory queue list`);
+      }
+    } catch (err) {
+      console.warn(`  ⚠ rules not applied: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
 }
 
 async function cmdRemove(argv: string[]) {
@@ -1848,6 +1896,9 @@ Usage:
   memory unlink <id> --follows <earlier-id,…>
             # remove wrong timeline links (an outcome chained to an item it doesn't settle);
             # the earlier entry shows [open] again unless something else follows it
+  memory tag <id> [--add a,b] [--remove c] [--dry-run]
+            # edit one entry's tags in place (every copy; title/body untouched); new tags are
+            # judged against standing rules like a capture; removing never changes memberships
   memory remove <id>   # delete ALL of an entry's copies + sync index (content stays in each repo's history)
   memory copy <id> --to <graph>
             # add membership: materialize the entry into another graph (it stays private too);
@@ -1935,6 +1986,7 @@ async function main() {
     case "link": return cmdLink(rest);
     case "unlink": return cmdUnlink(rest);
     case "due": return cmdDue(rest);
+    case "tag": return cmdTag(rest);
     case "remove": return cmdRemove(rest);
     case "move": return cmdMove(rest);
     case "copy": return cmdCopy(rest);

@@ -172,6 +172,28 @@ test("a slug merge rewrites a variant's frontmatter without republishing the pri
   });
 });
 
+test("memory tag edits a variant's tags without republishing the private body", { timeout: 300_000 }, () => {
+  withStore((root) => {
+    publishVariant(root);
+    const hash = /variant_of_hash:\s*\S+/.exec(readFileSync(sharedPath(root), "utf8"))?.[0];
+    assert.ok(hash, "the published copy declares variant_of_hash");
+
+    cli(root, ["tag", ID, "--add", "retro"]);
+    const tagged = readFileSync(sharedPath(root), "utf8");
+    assert.match(tagged, /retro/, "the new tag reached the shared copy");
+    assert.match(tagged, /Hiring loop ran/, "the approved wording survived");
+    assert.doesNotMatch(tagged, /interviews and offers/, "the private body did NOT get republished");
+    assert.ok(tagged.includes(hash), "variant_of_hash is still declared");
+
+    cli(root, ["tag", ID, "--remove", "retro"]);
+    const untagged = readFileSync(sharedPath(root), "utf8");
+    assert.doesNotMatch(untagged, /retro/, "the tag was removed from the shared copy");
+    assert.match(untagged, /Hiring loop ran/, "the approved wording survived the removal");
+    assert.ok(untagged.includes(hash), "variant_of_hash survives the removal");
+    assert.match(cliOutput(root, ["graphs", "sync", "--dry-run"]), /✓ all graphs consistent/);
+  });
+});
+
 test("moving an entry that has a published variant is refused", { timeout: 300_000 }, () => {
   withStore((root) => {
     publishVariant(root);
