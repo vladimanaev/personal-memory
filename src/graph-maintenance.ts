@@ -565,6 +565,68 @@ async function writeFrontmatterMerge(entry: Pick<MemoryEntry, "path" | "paths">,
   await writeEntryAll(fm, parsed.content, Object.keys(entry.paths), await readVariants(entry.paths));
 }
 
+export interface TagEditResult {
+  id: string;
+  before: string[];
+  after: string[];
+  added: string[];
+  removed: string[];
+  changed: boolean;
+  dryRun: boolean;
+  /** Graphs holding a copy of the entry (home first). */
+  graphs: string[];
+  path?: string;
+  index?: { added: number; removed: number; unchanged: number };
+  afterCommit?: boolean;
+}
+
+/**
+ * Add and/or remove tags on ONE entry in place — title, body, links, dates,
+ * sources and memberships are untouched; only `tags` and `updated` change.
+ * Every copy takes the new frontmatter (a declared variant keeps its own body
+ * and `variant_of_hash`, see writeEntryAll), the index is re-synced, and each
+ * member store is committed. Adding or removing nothing new is a no-op.
+ */
+export async function applyTagEdit(opts: {
+  id: string;
+  add?: string[];
+  remove?: string[];
+  dryRun?: boolean;
+}): Promise<TagEditResult> {
+  const add = [...new Set(opts.add ?? [])];
+  const remove = [...new Set(opts.remove ?? [])];
+  const both = add.filter((t) => remove.includes(t));
+  if (both.length) throw new Error(`tag in both --add and --remove: ${both.join(", ")}`);
+  for (const t of [...add, ...remove]) FrontmatterSchema.shape.tags.parse([t]);
+
+  const catalog = await openCatalogForWrite();
+  const entry = await requireEntry(catalog, opts.id);
+  const before = [...entry.tags];
+  const added = add.filter((t) => !before.includes(t));
+  const removed = remove.filter((t) => before.includes(t));
+  const after = [...before.filter((t) => !removed.includes(t)), ...added];
+  const graphs = sortGraphs(entry.graphs) as GraphId[];
+  const base = { id: entry.id, before, after, added, removed, graphs, dryRun: Boolean(opts.dryRun) };
+  if (!added.length && !removed.length) return { ...base, changed: false };
+  if (opts.dryRun) return { ...base, changed: true };
+
+  const parsed = matter(await readFile(entry.path, "utf8"));
+  const fm = FrontmatterSchema.parse({
+    ...parsed.data,
+    tags: after,
+    updated: new Date().toISOString().slice(0, 10),
+  }) as Frontmatter;
+  const written = await writeEntryAll(fm, parsed.content, Object.keys(entry.paths), await readVariants(entry.paths));
+  const path = written[DEFAULT_GRAPH] ?? Object.values(written)[0]!;
+  const index = await syncIndex();
+  const message = `Tag memory: ${entry.id}` + (added.length ? ` +${added.join(",")}` : "") + (removed.length ? ` -${removed.join(",")}` : "");
+  let afterCommit = false;
+  for (const g of graphs) {
+    afterCommit = (await commitMemoryRepo(message, storeFor(g).dir)) || afterCommit;
+  }
+  return { ...base, changed: true, path: rel(path), index, afterCommit };
+}
+
 export async function mergeSlugs(opts: {
   kind: SlugKind;
   from: string;
