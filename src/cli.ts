@@ -6,7 +6,6 @@ import { FrontmatterSchema, type Frontmatter } from "./schema.js";
 import {
   makeId,
   writeEntry,
-  readVariants,
   writeEntryAll,
   entryPath,
   hashEntry,
@@ -354,7 +353,7 @@ async function cmdAdd(argv: string[]) {
     // a declared variant's body, which is a user-approved redaction: it takes
     // the new frontmatter and keeps its own words, going stale (and back into
     // the review queue) rather than being overwritten with the private text.
-    const written = await writeEntryAll(fm, body, graphs, await readVariants(target.paths));
+    const written = await writeEntryAll(fm, body, target.paths);
     path = written[DEFAULT_GRAPH] ?? Object.values(written)[0]!;
   } else {
     path = await writeEntry(fm, body, DEFAULT_GRAPH);

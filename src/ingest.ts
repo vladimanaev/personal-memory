@@ -456,19 +456,33 @@ export function entryPath(fm: Frontmatter, graph: GraphId = DEFAULT_GRAPH): stri
 /**
  * Materialize an entry's content to EVERY member store — the write primitive
  * for content mutations of existing entries (re-captures, links, slug
- * merges). One serialization, byte-identical files, so the copy-sync
- * invariant holds by construction. Returns graph → path written.
+ * merges, due dates). Takes the entry's `paths` map: the graphs to write are
+ * its keys, and the declared variants among them are read from it.
+ *
+ * Copies are byte-identical EXCEPT a shared copy declaring `variant_of_hash`,
+ * which takes the new frontmatter and keeps its own approved body. Returns
+ * graph → path written.
  */
 export async function writeEntryAll(
   fm: Frontmatter,
   body: string,
-  graphs: string[],
-  variants: Record<string, string> = {},
+  paths: Record<string, string>,
 ): Promise<Record<string, string>> {
+  // Variants are read HERE, from the one map the caller already has, rather
+  // than taken as an argument. Twice now a caller has forgotten to pass them
+  // — the slug merge, and the due-date command — and each time the result was
+  // a declared variant's approved redaction being overwritten with the
+  // private body, silently, because rebuilding its frontmatter also dropped
+  // `variant_of_hash` and left `graphs sync` with nothing to notice. An
+  // optional argument whose absence means "republish private text" is not a
+  // safe API, and a REQUIRED one would only have turned the next mistake into
+  // a caller passing `{}`. Deriving the graph list from the same map closes
+  // the gap entirely: there is no longer anything to get wrong.
+  const variants = await readVariants(paths);
   const { variant_of_hash: _v, ...plainFm } = fm;
   const file = matter.stringify(`\n${body.trim()}\n`, plainFm);
   const out: Record<string, string> = {};
-  for (const graph of graphs) {
+  for (const graph of Object.keys(paths)) {
     const path = entryPath(fm, graph);
     await mkdir(join(path, ".."), { recursive: true });
     const declared = variants[graph];
