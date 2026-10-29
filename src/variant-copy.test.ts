@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { GOLDEN_ENTRIES, REPO, runInStore, seedStore } from "./test-store.js";
@@ -202,6 +202,49 @@ test("hashBody ignores a frontmatter bump, so only a body edit goes stale", { ti
     assert.equal(hashes.same, true);
     assert.equal(hashes.diff, true);
   });
+});
+
+/**
+ * The two features meet here. The due-date test above drives `copyEntry`
+ * directly; this one goes the way a user actually does — capture with a due
+ * date, propose it, approve the redaction — because the review queue is what
+ * publishes in practice, and nothing covered that path end to end.
+ */
+test("a dated todo published through the review queue carries its due date and its redaction", { timeout: 300_000 }, () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "pm-variant-")));
+  try {
+    seedStore(root);
+    cli(root, ["index"]);
+    cli(root, [
+      "add", "--title", "Chase the vendor contract", "--type", "todo",
+      "--due", "2026-12-15", "--date", "2026-02-01",
+      "--body", "Vendor wants the signed MSA; legal flagged the indemnity clause.",
+    ]);
+    const id = "2026-02-01-chase-the-vendor-contract";
+
+    const draft = join(root, "redaction.txt");
+    writeFileSync(draft, "Vendor contract is being chased; legal review ongoing.\n", "utf8");
+    cli(root, ["queue", "add", id, "--to", "team-x",
+               "--reason", "Shareable status; the raw note names the clause.",
+               "--summary-file", draft]);
+    cli(root, ["queue", "approve", id, "--graph", "team-x", "--summary"]);
+
+    const shared = join(root, "memory-graphs", "team-x", "entries", "2026", "02", `${id}.md`);
+    const published = readFileSync(shared, "utf8");
+    assert.match(published, /due: ['"]?2026-12-15/, "the due date travelled with the entry");
+    assert.match(published, /variant_of_hash:/, "published as a declared variant");
+    assert.equal(body(published), "Vendor contract is being chased; legal review ongoing.");
+    assert.doesNotMatch(published, /indemnity/, "the private wording stayed private");
+
+    // Re-dating an already-published redaction is the step that leaked twice.
+    cli(root, ["due", id, "2026-11-01"]);
+    const redated = readFileSync(shared, "utf8");
+    assert.match(redated, /due: ['"]?2026-11-01/, "the new due date reached the shared copy");
+    assert.doesNotMatch(redated, /indemnity/, "and still no private wording");
+    assert.match(cliOutput(root, ["graphs", "sync", "--dry-run"]), /✓ all graphs consistent/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("setting or clearing a due date keeps a variant's approved body and hash", { timeout: 300_000 }, () => {

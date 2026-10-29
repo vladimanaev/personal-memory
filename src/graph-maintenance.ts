@@ -2,7 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { relative, join } from "node:path";
 import matter from "gray-matter";
 import { DEFAULT_GRAPH, FrontmatterSchema, sortGraphs, type Frontmatter, type GraphId, type MemoryEntry } from "./schema.js";
-import { INDEX_DIR, ROOT, readVariants, writeEntryAll } from "./ingest.js";
+import { INDEX_DIR, ROOT, writeEntryAll } from "./ingest.js";
 import { storeFor, validateContainment } from "./graphs.js";
 import type { CatalogEntryMeta } from "./catalog.js";
 import { requireEntry } from "./membership.js";
@@ -467,7 +467,7 @@ async function writeFollows(
     updated: new Date().toISOString().slice(0, 10),
   }) as Frontmatter;
   // A declared variant takes the new frontmatter but keeps its approved body.
-  const written = await writeEntryAll(fm, body, graphs, await readVariants(paths));
+  const written = await writeEntryAll(fm, body, paths);
   const path = written[DEFAULT_GRAPH] ?? Object.values(written)[0]!;
   const index = await syncIndex();
   // The add-time auto-commit hook only fires on `add`; commit every member
@@ -524,7 +524,7 @@ export async function applyDueDate(opts: { id: string; due: string | null }): Pr
     updated: new Date().toISOString().slice(0, 10),
   }) as Frontmatter;
   // A declared variant takes the new frontmatter but keeps its approved body.
-  const written = await writeEntryAll(fm, body, graphs, await readVariants(paths));
+  const written = await writeEntryAll(fm, body, paths);
   const path = written[DEFAULT_GRAPH] ?? Object.values(written)[0]!;
   const index = await syncIndex();
   for (const g of graphs) {
@@ -596,7 +596,7 @@ async function writeFrontmatterMerge(entry: Pick<MemoryEntry, "path" | "paths">,
   const current = Array.isArray(data[field]) ? data[field].map(String) : [];
   data[field] = [...new Set(current.map((slug) => (slug === from ? to : slug)))];
   const fm = FrontmatterSchema.parse(data) as Frontmatter;
-  await writeEntryAll(fm, parsed.content, Object.keys(entry.paths), await readVariants(entry.paths));
+  await writeEntryAll(fm, parsed.content, entry.paths);
 }
 
 export async function mergeSlugs(opts: {
