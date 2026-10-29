@@ -60,6 +60,7 @@ against the CLI's total count line and say so in the brief if truncated.
 `open` returns only unresolved `todo`/`pending-decision` entries — anything
 already `[resolved → id]` is settled and never reaches the brief, so no
 status filtering is needed on it.
+Rows tagged `⚠ overdue` are past their `due` date — surface those first.
 
 **Override sources** — each one exactly as the override describes.
 

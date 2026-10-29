@@ -201,3 +201,76 @@ test("open: a filter never promotes an ambiguous thread to exact", { timeout: 30
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("due dates: set at capture or later, shown and filtered by open, rejected on non-open types", { timeout: 300_000 }, () => {
+  const root = mkdtempSync(join(tmpdir(), "pm-cli-due-"));
+  try {
+    seedStore(root, ENTRIES.slice(0, 4));
+    runInStore(root, `const s = await import(${STORE_MOD}); console.log(JSON.stringify(await s.syncIndex()));`);
+
+    // Capture-time due date; a past one is flagged overdue and sorts first in a plain listing.
+    cli(root, ["add", "--type", "todo", "--title", "Renew the parking permit", "--people", "ana-levi",
+      "--date", "2026-01-06", "--due", "2026-01-09", "--body", "Renew it by Friday.", "--force-new"]);
+    const permit = "2026-01-06-renew-the-parking-permit";
+    cli(root, ["due", READOUT, "2999-01-01"]);
+    cli(root, ["add", "--type", "todo", "--title", "Newer undated ask", "--people", "ana-levi",
+      "--date", "2026-01-07", "--body", "Nothing due.", "--force-new"]);
+    const newer = "2026-01-07-newer-undated-ask";
+    const rows = open(root, []).items as (Item & { due?: string; overdue?: boolean })[];
+    // Only the overdue row is pulled ahead; a far-future due does not outrank a newer undated item.
+    assert.deepEqual([rows[0]!.id, rows[0]!.due, rows[0]!.overdue], [permit, "2026-01-09", true]);
+    const at = (id: string) => rows.findIndex((r) => r.id === id);
+    assert.ok(at(newer) < at(READOUT), "newer undated item stays ahead of a far-future due");
+    assert.deepEqual(rows.find((r) => r.id === READOUT)!.overdue, false);
+    assert.match(cli(root, ["open"]), /⚠ overdue 2026-01-09/);
+
+    assert.deepEqual(open(root, ["--overdue"]).items.map((r) => r.id), [permit]);
+    assert.deepEqual(open(root, ["--no-due"]).items.map((r) => r.id).sort(), [EXPENSE, THREAD, VENDOR, newer].sort());
+
+    // A shared-graph item gets the due date in every copy; clearing works; re-setting is idempotent.
+    cli(root, ["due", VENDOR, "2026-02-01"]);
+    assert.equal((open(root, ["--graph", "team-x"]).items[0] as { due?: string }).due, "2026-02-01");
+    assert.match(cli(root, ["due", VENDOR, "2026-02-01"]), /unchanged/);
+    cli(root, ["due", VENDOR, "none"]);
+    assert.ok(open(root, ["--no-due"]).items.some((r) => r.id === VENDOR));
+
+    // Only open types take a due date; bad dates are rejected.
+    const note = run(root, ["add", "--type", "note", "--title", "A plain note", "--body", "Nothing due.", "--due", "2026-01-09", "--force-new"]);
+    assert.notEqual(note.status, 0);
+    assert.match(note.stderr, /only to todo/);
+    assert.notEqual(run(root, ["due", READOUT, "next friday"]).status, 0);
+
+    // Impossible calendar dates, empty --due, and retyping a settled todo that has a due.
+    assert.notEqual(run(root, ["due", READOUT, "2026-02-30"]).status, 0);
+    assert.match(run(root, ["add", "--type", "todo", "--title", "Bad date", "--body", "x", "--due", "2026-13-45", "--force-new"]).stderr, /real YYYY-MM-DD/);
+    const empty = run(root, ["add", "--update", permit, "--title", "Renew the parking permit", "--body", "Renew it.", "--due", ""]);
+    assert.notEqual(empty.status, 0);
+    assert.match(empty.stderr, /memory due <id> none/);
+    cli(root, ["add", "--type", "event", "--title", "Renewed the parking permit", "--people", "ana-levi",
+      "--date", "2026-01-10", "--follows", permit, "--body", "Done.", "--force-new"]);
+    assert.ok(!open(root, []).items.some((r) => r.id === permit));
+    cli(root, ["add", "--update", permit, "--type", "event", "--title", "Renew the parking permit (done)", "--body", "Renewed."]);
+    // Setting a date on a non-open type is refused, clearing is not.
+    assert.notEqual(run(root, ["due", permit, "2026-01-09"]).status, 0);
+    assert.match(cli(root, ["due", permit, "none"]), /unchanged/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("open: --overdue / --no-due never promote an ambiguous thread to exact", { timeout: 300_000 }, () => {
+  const root = mkdtempSync(join(tmpdir(), "pm-cli-open-due-"));
+  try {
+    seedStore(root, AMBIGUOUS);
+    runInStore(root, `const s = await import(${STORE_MOD}); console.log(JSON.stringify(await s.syncIndex()));`);
+    cli(root, ["due", "2026-01-06-shared-ask-x", "2026-01-09"]);
+
+    const overdue = open(root, ["--source", SHARED_THREAD, "--overdue"]);
+    assert.deepEqual(overdue.items.map((r) => r.id), ["2026-01-06-shared-ask-x"]);
+    assert.deepEqual([overdue.items[0]?.confidence, overdue.items[0]?.evidence.source?.scope], ["candidate", "conversation"]);
+    const undated = open(root, ["--source", SHARED_THREAD, "--no-due"]);
+    assert.deepEqual(undated.items.map((r) => [r.id, r.confidence]), [["2026-01-06-shared-ask-y", "candidate"]]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

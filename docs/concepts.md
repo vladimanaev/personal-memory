@@ -36,12 +36,14 @@ teams: [platform-team]
 tags: [roadmap, partnership]
 source_ids: [slack:C0123ABCD:1700000000.0012]
 follows: [2026-06-20-acme-partnership-pending]
+due: 2026-07-03
 ```
 
 `id` is derived from the date and title. `source_ids` is what makes re-ingesting
 the same Slack thread or email idempotent. `people`, `teams` and `tags` are
 slugs, and reusing an existing slug matters more than picking a pretty one —
-`memory slugs list` shows the vocabulary in use.
+`memory slugs list` shows the vocabulary in use. `due` is optional and applies
+only to `todo` and `pending-decision` entries.
 
 Entries are append-only in spirit: you refresh one in place when the same
 source says more, and you log a *new* linked entry when the situation changes.

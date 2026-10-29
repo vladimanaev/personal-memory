@@ -15,7 +15,7 @@ memory add --title "..." --type <type> [--people a,b] [--teams x,y]
            [--tags a,b] [--date YYYY-MM-DD] [--body "..."]
            [--source-ids slack:C123:1700000000.1,gmail:<thread-id>]
            [--connector raw-capture]
-           [--follows <earlier-id,...>]
+           [--follows <earlier-id,...>] [--due YYYY-MM-DD]
            [--update <id>] [--force-new] [--dup-threshold N]
            [--graph <name>]
 ```
@@ -49,6 +49,19 @@ validated at write time: targets must exist, must not be newer, and cycles are
 rejected. Settle an open matter by logging a new linked entry rather than
 rewriting the old one. See [timeline chains](concepts.md#timeline-chains).
 
+## Due dates
+
+```text
+memory add ... --type todo --due YYYY-MM-DD
+memory due <id> <YYYY-MM-DD|none>
+```
+
+`--due` is accepted on `todo` and `pending-decision` entries only, and must be a
+real calendar date. `memory due` sets it on an existing todo / pending decision
+(settled or not) and clears it from any entry, in every graph that holds a copy.
+Retyping an entry out of those types drops its due date. A due
+date only flags an item as overdue; it never settles it.
+
 ## Retrieval
 
 ```text
@@ -67,6 +80,7 @@ memory query "<question>" ["<alternate phrasing>" ...]
 memory list [--person|--type|--team|--tag|--since|--until|--graph|--limit]
 memory person <slug> [--graph <name>]
 memory open ["<phrasing>" ...] [--source <prefix,...>] [--person X] [--limit N]
+            [--overdue | --no-due]
 ```
 
 Each quoted positional is a separate phrasing; all of them are fused into one
@@ -79,7 +93,9 @@ makes an incomplete answer an error rather than a warning.
 every graph and labels shared memberships `[<graph>,…]`.
 
 `memory open` lists unresolved todos and pending decisions that a new capture
-might settle — pass the confirmed ids to `--follows`.
+might settle — pass the confirmed ids to `--follows`. Items with a due date show
+it, flagged `⚠ overdue` once past; `--overdue` / `--no-due` narrow to those
+past due or without a date.
 
 ## Graphs
 

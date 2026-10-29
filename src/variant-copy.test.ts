@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { REPO, runInStore, seedStore } from "./test-store.js";
+import { GOLDEN_ENTRIES, REPO, runInStore, seedStore } from "./test-store.js";
 
 /**
  * Publishing a redacted copy into a shared graph. The private home keeps the
@@ -202,4 +202,44 @@ test("hashBody ignores a frontmatter bump, so only a body edit goes stale", { ti
     assert.equal(hashes.same, true);
     assert.equal(hashes.diff, true);
   });
+});
+
+test("setting or clearing a due date keeps a variant's approved body and hash", { timeout: 300_000 }, () => {
+  const todoId = "2026-01-08-otter-followup";
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "pm-variant-")));
+  try {
+    seedStore(root, [
+      ...GOLDEN_ENTRIES,
+      { id: todoId, date: "2026-01-08", type: "todo", title: "Otter follow-up", people: ["chen-mizrahi"], body: "Send the private offer numbers to the panel. ".repeat(10).trim() },
+    ]);
+    const shared = join(root, "memory-graphs", "team-x", "entries", "2026", "01", `${todoId}.md`);
+    const approved = "Follow-up is open; details withheld.";
+    runInStore(
+      root,
+      `const m = await import(${MEMBERSHIP});
+       console.log(JSON.stringify(await m.copyEntry({ id: ${JSON.stringify(todoId)}, to: "team-x", variantBody: ${JSON.stringify(approved)} })));`,
+    );
+    const hash = /variant_of_hash:\s*\S+/.exec(readFileSync(shared, "utf8"))?.[0];
+    assert.ok(hash, "the published copy declares variant_of_hash");
+
+    cli(root, ["due", todoId, "2026-03-01"]);
+    const dated = readFileSync(shared, "utf8");
+    assert.match(dated, /due: ['"]?2026-03-01/, "the shared copy's frontmatter got the due date");
+    assert.equal(body(dated), approved, "the approved body survived");
+    assert.doesNotMatch(dated, /private offer numbers/);
+    assert.ok(dated.includes(hash), "variant_of_hash is still declared");
+    const sync1 = cliOutput(root, ["graphs", "sync", "--dry-run"]);
+    assert.match(sync1, /✓ all graphs consistent/, sync1);
+
+    cli(root, ["due", todoId, "none"]);
+    const cleared = readFileSync(shared, "utf8");
+    assert.doesNotMatch(cleared, /^due:/m, "the due date was cleared on the shared copy");
+    assert.equal(body(cleared), approved, "the approved body survived clearing");
+    assert.doesNotMatch(cleared, /private offer numbers/);
+    assert.ok(cleared.includes(hash), "variant_of_hash survives clearing");
+    const sync2 = cliOutput(root, ["graphs", "sync", "--dry-run"]);
+    assert.match(sync2, /✓ all graphs consistent/, sync2);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

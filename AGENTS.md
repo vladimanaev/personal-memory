@@ -39,8 +39,9 @@ Run with `npx tsx src/cli.ts <cmd>` (Node ≥ 20 — `nvm use 20`).
 
 | Command | Purpose |
 |---|---|
-| `add --title … --type … --people a,b --date YYYY-MM-DD --body "…" [--source-ids …] [--follows <id,…>]` | Create/update an entry + index it (dedups on `--source-ids`; `--update <id>`, `--force-new`, `--dup-threshold N` resolve the dup guard; `--follows` chains it to earlier entries). Always lands in the DEFAULT graph (standing rules may then auto-copy it — `→ rule:` output lines); `--graph <name>` is reserved for an explicit user request. Updates refresh EVERY synced copy |
-| `open ["<phrasing>" …] [--source <prefix,…>] [filters] [--limit N] [--format json]` | Unresolved `todo`/`pending-decision` entries a new capture may settle, with per-row evidence (source `exact`/`conversation`, query rank + matched terms) and `confidence` `high`/`candidate`; pass confirmed ids to `add --follows`. `add` refuses to settle an open item by rewriting it (retype or self-follow via its own source id) |
+| `add --title … --type … --people a,b --date YYYY-MM-DD --body "…" [--source-ids …] [--follows <id,…>] [--due YYYY-MM-DD]` | Create/update an entry + index it (dedups on `--source-ids`; `--update <id>`, `--force-new`, `--dup-threshold N` resolve the dup guard; `--follows` chains it to earlier entries; `--due` is todo/pending-decision only). Always lands in the DEFAULT graph (standing rules may then auto-copy it — `→ rule:` output lines); `--graph <name>` is reserved for an explicit user request. Updates refresh EVERY synced copy |
+| `open ["<phrasing>" …] [--source <prefix,…>] [filters] [--overdue \| --no-due] [--limit N] [--format json]` | Unresolved `todo`/`pending-decision` entries a new capture may settle, with per-row evidence (source `exact`/`conversation`, query rank + matched terms) and `confidence` `high`/`candidate`; pass confirmed ids to `add --follows`. `add` refuses to settle an open item by rewriting it (retype or self-follow via its own source id). Rows carry `due` / `overdue`; `--overdue` / `--no-due` filter |
+| `due <id> <YYYY-MM-DD\|none>` | Set a `todo`/`pending-decision`'s due date (settled or not), or clear one from any entry (every graph copy; commits every member store). Flags, never settles |
 | `unlink <id> --follows <earlier-id,…>` | Remove wrong timeline links (commits every member store); the earlier entry is `[open]` again unless another entry follows it |
 | `link <id> --follows <earlier-id,…>` | Add timeline links to an existing entry (validated: targets exist, not newer, no cycles, containment; commits every member store) |
 | `copy <id> --to <graph>` | Add membership: materialize a synced copy in another graph (entry stays in the default graph too; containment validated; checkpoints the target repo). The review queue may pass an approved redaction as the copy's body, recorded as `variant_of_hash` |
@@ -106,6 +107,7 @@ Run with `npx tsx src/cli.ts <cmd>` (Node ≥ 20 — `nvm use 20`).
   tags: [partnership, roadmap]
   source_ids: [slack:C0123ABCD:1700000000.0012]  # canonical external ids — dedup anchor
   follows: [2026-06-20-acme-codev-pending]  # timeline link: earlier entries this one develops/settles
+  due: 2026-07-03                       # todo/pending-decision only: when it is due (open items past it show ⚠ overdue)
   updated: 2026-06-30                   # last refresh (date stays = first-seen)
   # summary entries also carry: sources: [<entry-ids>]
   ```

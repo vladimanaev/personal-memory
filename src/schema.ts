@@ -88,6 +88,17 @@ export const FrontmatterSchema = z
       .string()
       .regex(/^[0-9a-f]{16}$/, "must be a 16-hex body hash")
       .optional(),
+    /**
+     * When an open `todo` / `pending-decision` is due (ISO), inferred at
+     * capture from the entry and its context ("by Thursday", a meeting date).
+     * Lets readers flag overdue items; it never settles one by itself.
+     */
+    due: isoDate
+      .refine((s) => {
+        const t = new Date(`${s}T00:00:00Z`); // Invalid Date (month 13…) throws on toISOString
+        return !Number.isNaN(t.getTime()) && t.toISOString().slice(0, 10) === s;
+      }, "due must be a real calendar date")
+      .optional(),
   })
   .strict();
 

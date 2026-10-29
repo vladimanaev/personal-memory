@@ -499,6 +499,40 @@ export async function removeChainLink(opts: {
   return writeFollows(entry, kept, `Unlink memory: ${entry.id} no longer follows ${opts.follows.join(", ")}`, opts.refreshAudit);
 }
 
+export interface DueDateResult {
+  id: string;
+  due?: string;
+  changed: boolean;
+  path?: string;
+  index?: Awaited<ReturnType<typeof syncIndex>>;
+}
+
+/** Set (or with `due: null` clear) an entry's due date in every graph it lives in; setting is todo / pending-decision only. */
+export async function applyDueDate(opts: { id: string; due: string | null }): Promise<DueDateResult> {
+  const catalog = await openCatalogForWrite();
+  const entry = await requireEntry(catalog, opts.id);
+  // Clearing is allowed on any type (a stale due left on a retyped entry); setting needs an open type.
+  if (opts.due && entry.type !== "todo" && entry.type !== "pending-decision") {
+    throw new Error(`${entry.id} is a ${entry.type} — only todo / pending-decision entries take a due date`);
+  }
+  if ((entry.due ?? null) === opts.due) return { id: entry.id, ...(entry.due ? { due: entry.due } : {}), changed: false };
+
+  const { body, path: _p, graphs, paths, due: _due, variants: _v, ...rest } = entry;
+  const fm = FrontmatterSchema.parse({
+    ...rest,
+    ...(opts.due ? { due: opts.due } : {}),
+    updated: new Date().toISOString().slice(0, 10),
+  }) as Frontmatter;
+  // A declared variant takes the new frontmatter but keeps its approved body.
+  const written = await writeEntryAll(fm, body, graphs, await readVariants(paths));
+  const path = written[DEFAULT_GRAPH] ?? Object.values(written)[0]!;
+  const index = await syncIndex();
+  for (const g of graphs) {
+    await commitMemoryRepo(`Due date: ${entry.id} ${opts.due ? `due ${opts.due}` : "cleared"}`, storeFor(g).dir);
+  }
+  return { id: entry.id, ...(opts.due ? { due: opts.due } : {}), changed: true, path: rel(path), index };
+}
+
 export async function writeGraphMaintenanceAudit(audit: GraphMaintenanceAudit): Promise<void> {
   await mkdir(INDEX_DIR, { recursive: true });
   await writeFile(GRAPH_MAINTENANCE_PATH, JSON.stringify(audit, null, 2), "utf8");

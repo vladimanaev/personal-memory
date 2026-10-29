@@ -44,6 +44,15 @@ index files, and the entry paths that CLI output cites.
      it happens), not a `todo`: nothing will ever log its outcome, so it would
      sit `[open]` forever. "Book an intro with X" is a `todo`; "intro with X
      booked for Mon" is an `event` that `--follows` that todo and closes it.
+   - `due` — for `todo` / `pending-decision` only: pass `--due YYYY-MM-DD`
+     whenever the entry or its context implies one. Resolve relative phrases
+     against the entry's `date`, not today ("by Thursday", "EOW", "before the
+     1:1 on the 28th", a deadline in a linked ticket or calendar event). A
+     stated deadline wins over an inferred one; with no signal, leave it
+     unset rather than guess. Items past `due` show `⚠ overdue` in
+     `memory open` — still open, never auto-settled. Backfill existing items
+     with `memory open --no-due` → read each cited file →
+     `memory due <id> <YYYY-MM-DD>` where the text supports a date.
    - `date` — ISO `YYYY-MM-DD`; default to today if not stated.
    - `people` — kebab-case slugs (e.g. `jane-doe`). **Reuse existing slugs** — run
      `memory people show "<name as the user said it>"` (resolves nicknames,

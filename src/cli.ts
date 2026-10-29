@@ -14,7 +14,7 @@ import {
   ROOT,
 } from "./ingest.js";
 import { search, findSimilar, openCatalogForWrite, syncIndex, type SearchCompleteness, type SearchFilters } from "./store.js";
-import { DEFAULT_GRAPH, sharedGraphs, type GraphId, type MemoryEntry } from "./schema.js";
+import { DEFAULT_GRAPH, sharedGraphs, type GraphId, type MemoryEntry, type MemoryType } from "./schema.js";
 import {
   createGraph,
   ensureStore,
@@ -36,6 +36,16 @@ const rel = (p: string) => relative(ROOT, p);
 const list = (s?: string) =>
   (s ?? "").split(",").map((x) => x.trim()).filter(Boolean);
 const today = () => new Date().toISOString().slice(0, 10);
+/** Today's date on the local calendar (what "overdue" means to the person reading it). */
+const localToday = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+/** YYYY-MM-DD that round-trips as a real calendar date (rejects 2026-02-30). */
+const isRealDate = (s: string) => {
+  const t = new Date(`${s}T00:00:00Z`);
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) && !Number.isNaN(t.getTime()) && t.toISOString().slice(0, 10) === s;
+};
 
 async function readStdin(): Promise<string> {
   if (process.stdin.isTTY) return "";
@@ -168,11 +178,15 @@ async function cmdAdd(argv: string[]) {
       "force-new": { type: "boolean" },
       "dup-threshold": { type: "string" },
       graph: { type: "string" },
+      due: { type: "string" },
     },
     allowPositionals: false,
   });
 
   const date = (values.date as string) || today();
+  const due = values.due as string | undefined;
+  if (due !== undefined && due.trim() === "") throw new Error("--due needs a date; use `memory due <id> none` to clear one");
+  if (due !== undefined && !isRealDate(due)) throw new Error(`--due must be a real YYYY-MM-DD date, got '${due}'`);
   const title = values.title as string;
   if (!title) throw new Error("--title is required");
   const body = (values.body as string) || (await readStdin());
@@ -276,6 +290,9 @@ async function cmdAdd(argv: string[]) {
           ...(target.sources ? { sources: target.sources } : {}),
           ...(mergedFollows.length ? { follows: mergedFollows } : {}),
           ...(mergedSourceIds.length ? { source_ids: mergedSourceIds } : {}),
+          // An inherited due is dropped when the entry is retyped out of the open types; an explicit one errors below.
+          ...((due ?? (OPEN_TYPES.has(((values.type as string) || target.type) as MemoryType) ? target.due : undefined))
+            ? { due: due ?? target.due } : {}),
           updated: today(),
         }
       : {
@@ -289,8 +306,12 @@ async function cmdAdd(argv: string[]) {
           ...(values.sources ? { sources: list(values.sources as string) } : {}),
           ...(follows.length ? { follows } : {}),
           ...(sourceIds.length ? { source_ids: sourceIds } : {}),
+          ...(due ? { due } : {}),
         },
   );
+  if (fm.due && fm.type !== "todo" && fm.type !== "pending-decision") {
+    throw new Error(`--due applies only to todo / pending-decision entries (this one is a ${fm.type})`);
+  }
 
   // --- a brand-new id must be unique across ALL stores (chains/index/move key by id) ---
   if (!target) {
@@ -425,6 +446,21 @@ async function cmdUnlink(argv: string[]) {
   const result = await removeChainLink({ laterId: id, follows });
   console.log(`✓ unlinked ${id} → no longer follows ${follows.join(", ")}` +
     (result.follows.length ? ` (still follows ${result.follows.join(", ")})` : ""));
+  console.log(`  ${result.path}`);
+}
+
+async function cmdDue(argv: string[]) {
+  const [id, when, ...extra] = argv;
+  if (!id || !when || extra.length) throw new Error("usage: memory due <id> <YYYY-MM-DD|none>");
+  const due = when === "none" ? null : when;
+  if (due && !isRealDate(due)) throw new Error(`due date must be a real YYYY-MM-DD date or 'none', got '${when}'`);
+  const { applyDueDate } = await import("./graph-maintenance.js");
+  const result = await applyDueDate({ id, due });
+  if (!result.changed) {
+    console.log(`✓ unchanged ${id} (${result.due ? `due ${result.due}` : "no due date"})`);
+    return;
+  }
+  console.log(`✓ ${id} ${result.due ? `due ${result.due}` : "due date cleared"}`);
   console.log(`  ${result.path}`);
 }
 
@@ -951,6 +987,8 @@ async function cmdOpen(argv: string[]) {
       graph: { type: "string" },
       limit: { type: "string" },
       format: { type: "string" },
+      overdue: { type: "boolean" },
+      "no-due": { type: "boolean" },
       "index-slot": { type: "string" },
     },
     allowPositionals: true,
@@ -958,6 +996,7 @@ async function cmdOpen(argv: string[]) {
   applyIndexSlotFlag(values);
   const format = ((values.format as string | undefined) ?? "text").toLowerCase();
   if (format !== "text" && format !== "json") throw new Error("--format must be one of: text, json");
+  if (values.overdue && values["no-due"]) throw new Error("--overdue and --no-due are mutually exclusive");
   const queries = positionals.map((q) => q.trim()).filter(Boolean);
   // Same normalization as `add` (lowercase scheme); a bare scheme (`slack`) is rejected there.
   const prefixes = list(values.source as string).map((p) => normalizeSourceId(p.replace(/:+$/, "")));
@@ -969,28 +1008,38 @@ async function cmdOpen(argv: string[]) {
   const isOpen = (e: Pick<MemoryEntry, "id" | "type">) => entryStatus(e, chainIndex)?.status === "open";
   const openTypes = [...OPEN_TYPES];
   const ofType = await Promise.all(openTypes.map((type) => catalog.filter({ ...filters, type })));
-  const open = ofType.flat().filter(isOpen);
+  let open = ofType.flat().filter(isOpen);
+  // Uniqueness is judged over EVERY open item, never the filtered ones: a
+  // --person/--graph/--since (or --overdue/--no-due) that hides the thread's
+  // other open ask must not turn an ambiguous prefix into `exact` (which the
+  // skills settle unattended).
+  const narrowed = Object.values(filters).some((v) => v !== undefined) || Boolean(values.overdue || values["no-due"]);
+  const everyOpen = prefixes.length > 0 && narrowed
+    ? (await Promise.all(openTypes.map((type) => catalog.filter({ type })))).flat().filter(isOpen)
+    : open;
+  // `due` lives in the entry file, not the catalog — read it for the (few) open items.
+  // An unreadable file just means "no due" for that entry; it never fails the command.
+  const dueOf = new Map((await Promise.all(open.map(async (m) => {
+    try { const [e] = await catalog.hydrate([m]); return e?.due ? [[m.id, e.due] as const] : []; } catch { return []; }
+  }))).flat());
+  const now = localToday();
+  if (values.overdue) open = open.filter((e) => (dueOf.get(e.id) ?? "9999") < now);
+  if (values["no-due"]) open = open.filter((e) => !dueOf.has(e.id));
 
   type SourceEvidence = { id: string; scope: "exact" | "conversation" };
   type QueryEvidence = { rank: number; score: number; terms: string[] };
   type Row = { id: string; type: string; date: string; title: string; people: string[]; graphs: string[];
-    source_ids: string[]; path: string; snippet?: string;
+    source_ids: string[]; path: string; snippet?: string; due?: string; overdue?: boolean;
     evidence: { source?: SourceEvidence; query?: QueryEvidence }; confidence: "high" | "candidate" };
   const rows = new Map<string, Row>();
   const row = (e: (typeof open)[number]): Row => {
     const r = rows.get(e.id) ?? { id: e.id, type: e.type, date: e.date, title: e.title, people: e.people,
-      graphs: e.graphs, source_ids: e.source_ids ?? [], path: rel(e.path), evidence: {}, confidence: "candidate" };
+      graphs: e.graphs, source_ids: e.source_ids ?? [], path: rel(e.path), evidence: {}, confidence: "candidate",
+      ...(dueOf.has(e.id) ? { due: dueOf.get(e.id)!, overdue: dueOf.get(e.id)! < now } : {}) };
     rows.set(e.id, r);
     return r;
   };
 
-  // Uniqueness is judged over EVERY open item, never the filtered ones: a
-  // --person/--graph/--since that hides the thread's other open ask must not
-  // turn an ambiguous prefix into `exact` (which the skills settle unattended).
-  const narrowed = Object.values(filters).some((v) => v !== undefined);
-  const everyOpen = prefixes.length > 0 && narrowed
-    ? (await Promise.all(openTypes.map((type) => catalog.filter({ type })))).flat().filter(isOpen)
-    : open;
   const matchesIn = (entries: typeof open, p: string) =>
     entries.flatMap((e) => {
       const id = (e.source_ids ?? []).find((s) => sourceIdMatches(s, p));
@@ -1056,7 +1105,10 @@ async function cmdOpen(argv: string[]) {
     Number(b.confidence === "high") - Number(a.confidence === "high") ||
     Number(Boolean(b.evidence.source)) - Number(Boolean(a.evidence.source)) ||
     (b.evidence.query?.terms.length ?? 0) - (a.evidence.query?.terms.length ?? 0) ||
-    rankOf(a) - rankOf(b) || b.date.localeCompare(a.date),
+    rankOf(a) - rankOf(b) ||
+    // Only overdue rows jump ahead (soonest-overdue first); everything else keeps newest-first.
+    Number(Boolean(b.overdue)) - Number(Boolean(a.overdue)) ||
+    (a.overdue && b.overdue ? a.due!.localeCompare(b.due!) : 0) || b.date.localeCompare(a.date),
   );
   const shown = sorted.slice(0, limit);
 
@@ -1073,7 +1125,8 @@ async function cmdOpen(argv: string[]) {
       r.evidence.source ? `source ${r.evidence.source.scope} ${r.evidence.source.id}` : "",
       r.evidence.query ? `query #${r.evidence.query.rank}${r.evidence.query.terms.length ? ` (${r.evidence.query.terms.join(", ")})` : ""}` : "",
     ].filter(Boolean).join("; ");
-    console.log(`${r.date}  ${r.type.padEnd(16)} ${r.title}${graphSuffix(r)}  [${r.confidence}${ev ? `: ${ev}` : ""}]`);
+    const dueTag = r.due ? `  ${r.overdue ? "⚠ overdue" : "due"} ${r.due}` : "";
+    console.log(`${r.date}  ${r.type.padEnd(16)} ${r.title}${graphSuffix(r)}${dueTag}  [${r.confidence}${ev ? `: ${ev}` : ""}]`);
     console.log(`    ${r.id}  (${r.path})`);
   }
   const of = sorted.length > shown.length ? ` of ${sorted.length}` : "";
@@ -1784,6 +1837,7 @@ Usage:
             [--source-ids slack:C123:1700000000.1,gmail:<thread-id>]  # dedup anchor
             [--connector raw-capture]  # extraction prompt/source used for capture bookkeeping
             [--follows <id,…>]   # timeline link: this entry develops/settles the listed earlier entries
+            [--due YYYY-MM-DD]   # todo / pending-decision only: when it is due (infer from the content)
             [--update <id>]      # refresh a specific entry in place
             [--force-new]        # bypass the near-duplicate guard
             [--dup-threshold N]  # cosine threshold for the guard (default 0.92)
@@ -1829,6 +1883,8 @@ Usage:
             # unresolved todo / pending-decision entries a new capture may settle (pass confirmed ids to --follows);
             # --source: narrowest prefix first (slack:C1:<thread_ts> = exact; slack:D123 = whole conversation);
             # each row shows its evidence + confidence (high|candidate); --since/--until filter the OPEN item's date
+            # [--overdue | --no-due]: only items past their due date / without one (for due-date backfill)
+  memory due <id> <YYYY-MM-DD|none>   # set/clear an open todo / pending-decision's due date (all graph copies)
   memory person <slug> [--graph <name>]
   memory digest --person <slug> | --quarter <YYYY-Qn> | --tag <slug> [--graph <name>]
             # shared-graph digest: candidates restricted to that graph's members; written there (id summary-<graph>-…)
@@ -1879,6 +1935,7 @@ async function main() {
     case "add": return cmdAdd(rest);
     case "link": return cmdLink(rest);
     case "unlink": return cmdUnlink(rest);
+    case "due": return cmdDue(rest);
     case "remove": return cmdRemove(rest);
     case "move": return cmdMove(rest);
     case "copy": return cmdCopy(rest);
