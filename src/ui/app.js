@@ -2085,7 +2085,7 @@ async function openBackfillModal(draftRules) {
     return b;
   };
 
-  /** @type {{ plan?: { actions?: { id: string, action: string, graph: string }[], conflicts?: { id: string, reason: string }[] } }} */
+  /** @type {{ skipped?: number, plan?: { actions?: { id: string, action: string, graph: string }[], conflicts?: { id: string, reason: string }[] } }} */
   let preview;
   try {
     const res = await fetch("/api/graphs/rules/apply", {
@@ -2117,9 +2117,12 @@ async function openBackfillModal(draftRules) {
         .map((c) => `<div class="bf-conflict"><code>${esc(c.id)}</code><span>${esc(c.reason)}</span></div>`)
         .join("")}</div>`
     : "";
+  const pendingN = Number(preview.skipped ?? 0);
   const effect = actions.length
     ? `<div class="bf-section">${groupHtml}</div>`
-    : `<div class="bf-empty">no existing entries match — these rules apply to future captures only</div>`;
+    : pendingN > 0
+      ? `<div class="bf-empty">${pendingN} already pending review — nothing new to queue</div>`
+      : `<div class="bf-empty">no existing entries match — these rules apply to future captures only</div>`;
 
   openModal("backfill preview", (body, close) => {
     body.innerHTML = `

@@ -232,7 +232,7 @@ test("tag: removal only reconciles rule rows whose rule lost its tag; dry-run is
     cli(root, ["queue", "dismiss", PLAIN, "--graph", "team-x"]);
     cli(root, ["tag", PLAIN, "--remove", "share"]);
     for (const by of ["sweep", "add"]) {
-      cli(root, ["queue", "add", PLAIN, "--to", "team-x", "--reason", `from ${by}`, "--proposed-by", by, "--force"]);
+      cli(root, ["queue", "add", PLAIN, "--to", "team-x", "--reason", `from ${by}`, "--proposed-by", by]);
       cli(root, ["tag", PLAIN, "--add", "share"]);
       cli(root, ["tag", PLAIN, "--remove", "share"]);
       assert.match(queue(), new RegExp(`${by}: from ${by}`));
@@ -291,7 +291,7 @@ test("tag / rules apply never overwrite a pending sweep row; no conflict noise w
 
     // rules apply honours the same rule: the pending row is skipped, not replaced
     const apply = cli(root, ["rules", "apply"]);
-    assert.doesNotMatch(apply, /queued PLAIN|✓ queued/);
+    assert.doesNotMatch(apply, new RegExp(`queued ${PLAIN}`));
     assert.equal(readFileSync(queueFile, "utf8"), bytes);
 
     cli(root, ["tag", PLAIN, "--remove", "share"]);

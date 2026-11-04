@@ -181,6 +181,7 @@ export async function enqueueRules(
   // by a rule's: enqueueMany overwrites by id+graph, so filter here. Dry-run
   // and the real run therefore agree.
   if (report.plan.actions.length > 0) {
+    // Raw readQueue on purpose: queueView reconciles and would write during a dry-run.
     const pending = new Set((await readQueue()).rows.map((r) => `${r.id}\u0000${r.graph}`));
     const fresh = report.plan.actions.filter((a) => !pending.has(`${a.id}\u0000${a.graph}`));
     report.skipped += report.plan.actions.length - fresh.length;
