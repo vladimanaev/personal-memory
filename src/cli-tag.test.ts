@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import matter from "gray-matter";
@@ -128,6 +128,53 @@ test("tag: add, remove, both, preserved fields, shared copy sync, no-op, errors,
     const bad = run(root, ["tag", SHARED, "--add", "Not A Slug"]);
     assert.notEqual(bad.status, 0);
     assert.equal(commits(join(root, "memory")), 4);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+function shareRule(root: string, tag = "share"): void {
+  mkdirSync(join(root, "memory", "graphs"), { recursive: true });
+  writeFileSync(
+    join(root, "memory", "graphs", "rules.json"),
+    JSON.stringify({ version: 1, rules: [{ match: { tag }, graph: "team-x", mode: "copy" }] }, null, 2),
+    "utf8",
+  );
+}
+
+test("tag: standing rules judge only newly added tags; dry-run previews; removal reconciles", { timeout: 300_000 }, () => {
+  const root = setup();
+  try {
+    shareRule(root);
+    const queue = () => cli(root, ["queue", "list", "--graph", "team-x"]);
+
+    // dry-run previews the rule against the NEW tags and queues nothing
+    const dry = cli(root, ["tag", PLAIN, "--add", "share", "--dry-run"]);
+    assert.match(dry, new RegExp(`would queue ${PLAIN} → team-x`));
+    assert.doesNotMatch(queue(), new RegExp(PLAIN));
+
+    // repeated --add keeps both; the rule queues once
+    const add = cli(root, ["tag", PLAIN, "--add", "share", "--add", "extra"]);
+    assert.deepEqual(tagsOf(files(root, PLAIN).home), ["alpha", "share", "extra"]);
+    assert.match(add, new RegExp(`→ rule: queued ${PLAIN} → team-x`));
+    assert.match(queue(), new RegExp(PLAIN));
+
+    // dismiss, then an unrelated tag must NOT resurrect the declined candidate
+    cli(root, ["queue", "dismiss", PLAIN, "--graph", "team-x"]);
+    const other = cli(root, ["tag", PLAIN, "--add", "unrelated"]);
+    assert.doesNotMatch(other, /rule:/);
+    assert.doesNotMatch(queue(), new RegExp(PLAIN));
+
+    // a pending rule row is dropped when the tag is removed (dry-run says so first)
+    cli(root, ["tag", PLAIN, "--remove", "share"]);
+    cli(root, ["tag", PLAIN, "--add", "share"]);
+    assert.match(queue(), new RegExp(PLAIN));
+    const dryRm = cli(root, ["tag", PLAIN, "--remove", "share", "--dry-run"]);
+    assert.match(dryRm, new RegExp(`would drop pending rule candidate ${PLAIN} → team-x`));
+    assert.match(queue(), new RegExp(PLAIN));
+    const rm = cli(root, ["tag", PLAIN, "--remove", "share"]);
+    assert.match(rm, new RegExp(`dropped pending rule candidate ${PLAIN} → team-x`));
+    assert.doesNotMatch(queue(), new RegExp(PLAIN));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

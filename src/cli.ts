@@ -466,12 +466,12 @@ async function cmdDue(argv: string[]) {
 async function cmdTag(argv: string[]) {
   const { values, positionals } = parseArgs({
     args: argv,
-    options: { add: { type: "string" }, remove: { type: "string" }, "dry-run": { type: "boolean" } },
+    options: { add: { type: "string", multiple: true }, remove: { type: "string", multiple: true }, "dry-run": { type: "boolean" } },
     allowPositionals: true,
   });
   const id = positionals[0];
-  const add = list(values.add as string);
-  const remove = list(values.remove as string);
+  const add = ((values.add as string[] | undefined) ?? []).flatMap((v) => list(v));
+  const remove = ((values.remove as string[] | undefined) ?? []).flatMap((v) => list(v));
   if (!id || positionals.length !== 1 || (add.length === 0 && remove.length === 0)) {
     throw new Error("usage: memory tag <id> [--add a,b] [--remove c] [--dry-run]  (at least one of --add/--remove)");
   }
@@ -491,17 +491,30 @@ async function cmdTag(argv: string[]) {
   if (result.removed.length) console.log(`  removed: ${result.removed.join(", ")}`);
   if (result.path) console.log(`  ${result.path}`);
   if (result.index) console.log(`  indexed (+${result.index.added} changed, ${result.index.unchanged} unchanged)`);
+  for (const d of result.droppedRows) {
+    console.log(`  ${result.dryRun ? "would drop" : "dropped"} pending rule candidate ${d.id} → ${d.graph} (rule no longer matches)`);
+  }
 
   // Like capture, a newly added tag can match a standing distribution rule.
   // Rules only queue candidates for review; removing a tag never touches
   // memberships. A rule failure must not fail the edit.
   if (result.added.length) {
     try {
-      const { enqueueRules } = await import("./graph-rules.js");
-      const report = await enqueueRules({ ids: [id], dryRun: result.dryRun });
+      const { enqueueRules, readRules, planRules } = await import("./graph-rules.js");
+      // Judge only the rules the NEWLY added tags trigger: a retag changes the
+      // content hash, so re-judging everything would resurrect declined candidates.
+      const rules = (await readRules()).filter((r) => r.match.tag !== undefined && result.added.includes(r.match.tag));
       if (result.dryRun) {
-        for (const a of report.plan.actions) console.log(`  → rule: would queue ${a.id} → ${a.graph}`);
+        // Nothing is written, so plan in memory against the post-edit tags.
+        const { openCatalog } = await import("./catalog.js");
+        const entry = (await (await openCatalog()).byIds([id]))[0];
+        if (entry) {
+          for (const a of planRules([{ ...entry, tags: result.after }], rules).actions) {
+            console.log(`  → rule: would queue ${a.id} → ${a.graph}`);
+          }
+        }
       } else {
+        const report = await enqueueRules({ ids: [id], rules });
         for (const line of report.actions) console.log(`  → rule: ${line}`);
         if (report.queued > 0) console.log(`  review queued candidates: memory queue list`);
       }

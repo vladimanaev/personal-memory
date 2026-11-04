@@ -453,6 +453,41 @@ export async function applyChainLink(opts: {
   return writeFollows(entry, mergedFollows, `Link memory: ${entry.id} follows ${mergedFollows.join(", ")}`, opts.refreshAudit);
 }
 
+/**
+ * The one write tail for an in-place frontmatter edit: apply `patch` (an
+ * `undefined` value deletes the key) on top of the home file's frontmatter,
+ * stamp `updated`, write every member copy (a declared variant keeps its own
+ * body, see writeEntryAll), re-sync the index, commit each member store, and
+ * refresh the maintenance audit so tag/slug/link suggestions never go stale.
+ */
+async function rewriteFrontmatter(
+  entry: Awaited<ReturnType<typeof requireEntry>>,
+  patch: Record<string, unknown>,
+  message: string,
+  refreshAudit?: boolean,
+): Promise<{
+  path: string;
+  index: Awaited<ReturnType<typeof syncIndex>>;
+  afterCommit: boolean;
+  audit?: GraphMaintenanceAudit;
+}> {
+  const parsed = matter(await readFile(entry.path, "utf8"));
+  const data: Record<string, unknown> = { ...parsed.data, ...patch, updated: new Date().toISOString().slice(0, 10) };
+  for (const k of Object.keys(data)) if (data[k] === undefined) delete data[k];
+  const fm = FrontmatterSchema.parse(data) as Frontmatter;
+  const written = await writeEntryAll(fm, parsed.content, entry.paths);
+  const path = written[DEFAULT_GRAPH] ?? Object.values(written)[0]!;
+  const index = await syncIndex();
+  // The add-time auto-commit hook only fires on `add`; commit every member
+  // store explicitly (the file changed in all of them).
+  let afterCommit = false;
+  for (const g of entry.graphs) {
+    afterCommit = (await commitMemoryRepo(message, storeFor(g).dir)) || afterCommit;
+  }
+  const audit = refreshAudit === false ? undefined : await refreshGraphMaintenanceAudit();
+  return { path: rel(path), index, afterCommit, ...(audit ? { audit } : {}) };
+}
+
 /** Rewrite an entry's `follows` in every graph it lives in, sync, and commit each member store. */
 async function writeFollows(
   entry: Awaited<ReturnType<typeof requireEntry>>,
@@ -460,24 +495,8 @@ async function writeFollows(
   message: string,
   refreshAudit?: boolean,
 ): Promise<ChainLinkResult> {
-  const { body, path: _p, graphs, paths, follows: _f, variants: _v, ...rest } = entry;
-  const fm = FrontmatterSchema.parse({
-    ...rest,
-    ...(follows.length ? { follows } : {}),
-    updated: new Date().toISOString().slice(0, 10),
-  }) as Frontmatter;
-  // A declared variant takes the new frontmatter but keeps its approved body.
-  const written = await writeEntryAll(fm, body, paths);
-  const path = written[DEFAULT_GRAPH] ?? Object.values(written)[0]!;
-  const index = await syncIndex();
-  // The add-time auto-commit hook only fires on `add`; commit every member
-  // store explicitly (the file changed in all of them).
-  let afterCommit = false;
-  for (const g of graphs) {
-    afterCommit = (await commitMemoryRepo(message, storeFor(g).dir)) || afterCommit;
-  }
-  const audit = refreshAudit === false ? undefined : await refreshGraphMaintenanceAudit();
-  return { laterId: entry.id, follows, changed: true, path: rel(path), index, afterCommit, ...(audit ? { audit } : {}) };
+  const r = await rewriteFrontmatter(entry, { follows: follows.length ? follows : undefined }, message, refreshAudit);
+  return { laterId: entry.id, follows, changed: true, ...r };
 }
 
 /**
@@ -517,20 +536,12 @@ export async function applyDueDate(opts: { id: string; due: string | null }): Pr
   }
   if ((entry.due ?? null) === opts.due) return { id: entry.id, ...(entry.due ? { due: entry.due } : {}), changed: false };
 
-  const { body, path: _p, graphs, paths, due: _due, variants: _v, ...rest } = entry;
-  const fm = FrontmatterSchema.parse({
-    ...rest,
-    ...(opts.due ? { due: opts.due } : {}),
-    updated: new Date().toISOString().slice(0, 10),
-  }) as Frontmatter;
-  // A declared variant takes the new frontmatter but keeps its approved body.
-  const written = await writeEntryAll(fm, body, paths);
-  const path = written[DEFAULT_GRAPH] ?? Object.values(written)[0]!;
-  const index = await syncIndex();
-  for (const g of graphs) {
-    await commitMemoryRepo(`Due date: ${entry.id} ${opts.due ? `due ${opts.due}` : "cleared"}`, storeFor(g).dir);
-  }
-  return { id: entry.id, ...(opts.due ? { due: opts.due } : {}), changed: true, path: rel(path), index };
+  const r = await rewriteFrontmatter(
+    entry,
+    { due: opts.due ?? undefined },
+    `Due date: ${entry.id} ${opts.due ? `due ${opts.due}` : "cleared"}`,
+  );
+  return { id: entry.id, ...(opts.due ? { due: opts.due } : {}), changed: true, path: r.path, index: r.index };
 }
 
 export async function writeGraphMaintenanceAudit(audit: GraphMaintenanceAudit): Promise<void> {
@@ -611,7 +622,8 @@ export interface TagEditResult {
   graphs: string[];
   path?: string;
   index?: { added: number; removed: number; unchanged: number };
-  afterCommit?: boolean;
+  /** Pending rule-proposed queue rows dropped (or, in dry-run, that would be) because no rule matches the new tags. */
+  droppedRows: { id: string; graph: string }[];
 }
 
 /**
@@ -641,24 +653,38 @@ export async function applyTagEdit(opts: {
   const after = [...before.filter((t) => !removed.includes(t)), ...added];
   const graphs = sortGraphs(entry.graphs) as GraphId[];
   const base = { id: entry.id, before, after, added, removed, graphs, dryRun: Boolean(opts.dryRun) };
-  if (!added.length && !removed.length) return { ...base, changed: false };
-  if (opts.dryRun) return { ...base, changed: true };
+  if (!added.length && !removed.length) return { ...base, changed: false, droppedRows: [] };
+  const droppedRows = removed.length ? await staleRuleRows({ id: entry.id, tags: after, type: entry.type }) : [];
+  if (opts.dryRun) return { ...base, changed: true, droppedRows };
 
-  const parsed = matter(await readFile(entry.path, "utf8"));
-  const fm = FrontmatterSchema.parse({
-    ...parsed.data,
-    tags: after,
-    updated: new Date().toISOString().slice(0, 10),
-  }) as Frontmatter;
-  const written = await writeEntryAll(fm, parsed.content, entry.paths);
-  const path = written[DEFAULT_GRAPH] ?? Object.values(written)[0]!;
-  const index = await syncIndex();
   const message = `Tag memory: ${entry.id}` + (added.length ? ` +${added.join(",")}` : "") + (removed.length ? ` -${removed.join(",")}` : "");
-  let afterCommit = false;
-  for (const g of graphs) {
-    afterCommit = (await commitMemoryRepo(message, storeFor(g).dir)) || afterCommit;
+  const { path, index } = await rewriteFrontmatter(entry, { tags: after }, message);
+  if (droppedRows.length) {
+    const { readQueue, writeQueue } = await import("./graph-queue.js");
+    const file = await readQueue();
+    const gone = new Set(droppedRows.map((r) => `${r.id}\u0000${r.graph}`));
+    const rows = file.rows.filter((r) => !gone.has(`${r.id}\u0000${r.graph}`));
+    await writeQueue({ ...file, rows }, `Queue: drop rule-proposed ${entry.id} (rule no longer matches after retag)`);
   }
-  return { ...base, changed: true, path: rel(path), index, afterCommit };
+  return { ...base, changed: true, path, index, droppedRows };
+}
+
+/**
+ * Pending rows proposed by a standing rule for `entry` whose rule no longer
+ * matches the entry as edited. Rows proposed by a sweep or an explicit
+ * --graph are never touched. A rules file that cannot be read leaves rows alone.
+ */
+async function staleRuleRows(entry: { id: string; tags: string[]; type: string }): Promise<{ id: string; graph: string }[]> {
+  try {
+    const [{ readQueue }, { readRules, matchRule }] = await Promise.all([import("./graph-queue.js"), import("./graph-rules.js")]);
+    const rules = await readRules();
+    return (await readQueue()).rows
+      .filter((r) => r.id === entry.id && r.proposedBy === "rules")
+      .filter((r) => !rules.some((rule) => rule.graph === r.graph && matchRule(entry as never, rule)))
+      .map((r) => ({ id: r.id, graph: r.graph }));
+  } catch {
+    return [];
+  }
 }
 
 export async function mergeSlugs(opts: {
