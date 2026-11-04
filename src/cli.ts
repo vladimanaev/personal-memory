@@ -501,20 +501,29 @@ async function cmdTag(argv: string[]) {
   if (result.added.length) {
     try {
       const { enqueueRules, readRules, planRules } = await import("./graph-rules.js");
-      // Judge only the rules the NEWLY added tags trigger: a retag changes the
-      // content hash, so re-judging everything would resurrect declined candidates.
-      const rules = (await readRules()).filter((r) => r.match.tag !== undefined && result.added.includes(r.match.tag));
+      // Plan against ALL rules so conflict guards hold, then keep only actions
+      // into graphs a rule triggered by a NEWLY added tag points at. A retag
+      // changes the content hash, so re-judging everything would resurrect
+      // declined candidates.
+      const allRules = await readRules();
+      const graphs = [...new Set(allRules.filter((r) => r.match.tag !== undefined && result.added.includes(r.match.tag)).map((r) => r.graph))];
       if (result.dryRun) {
         // Nothing is written, so plan in memory against the post-edit tags.
         const { openCatalog } = await import("./catalog.js");
+        const { readQueue } = await import("./graph-queue.js");
         const entry = (await (await openCatalog()).byIds([id]))[0];
         if (entry) {
-          for (const a of planRules([{ ...entry, tags: result.after }], rules).actions) {
+          const plan = planRules([{ ...entry, tags: result.after }], allRules);
+          const pending = (await readQueue()).rows;
+          for (const c of plan.conflicts) console.log(`  ⚠ rule skipped ${c.id}: ${c.reason}`);
+          for (const a of plan.actions) {
+            if (!graphs.includes(a.graph) || pending.some((r) => r.id === a.id && r.graph === a.graph)) continue;
             console.log(`  → rule: would queue ${a.id} → ${a.graph}`);
           }
         }
       } else {
-        const report = await enqueueRules({ ids: [id], rules });
+        const report = await enqueueRules({ ids: [id], rules: allRules, graphs });
+        for (const c of report.plan.conflicts) console.log(`  ⚠ rule skipped ${c.id}: ${c.reason}`);
         for (const line of report.actions) console.log(`  → rule: ${line}`);
         if (report.queued > 0) console.log(`  review queued candidates: memory queue list`);
       }

@@ -157,7 +157,7 @@ export interface RulesReport {
  * now lands in the target graph's queue for the user to approve.
  */
 export async function enqueueRules(
-  opts: { dryRun?: boolean; ids?: string[]; rules?: GraphRule[] } = {},
+  opts: { dryRun?: boolean; ids?: string[]; rules?: GraphRule[]; graphs?: string[] } = {},
 ): Promise<RulesReport & { plan: RulesPlan }> {
   const rules = opts.rules ?? (await readRules());
   const report: RulesReport & { plan: RulesPlan } = {
@@ -172,6 +172,9 @@ export async function enqueueRules(
   let entries: Pick<MemoryEntry, "id" | "tags" | "type" | "graphs">[] = await (await openCatalog()).all();
   if (opts.ids) entries = entries.filter((e) => opts.ids!.includes(e.id));
   report.plan = planRules(entries, rules);
+  // Planned against ALL rules (so conflict guards hold), then narrowed to the
+  // target graphs the caller is actually proposing into.
+  if (opts.graphs) report.plan.actions = report.plan.actions.filter((a) => opts.graphs!.includes(a.graph));
   report.skippedConflicts = report.plan.conflicts.length;
   if (opts.dryRun) return report;
   if (report.plan.actions.length === 0) return report;

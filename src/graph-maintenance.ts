@@ -654,7 +654,7 @@ export async function applyTagEdit(opts: {
   const graphs = sortGraphs(entry.graphs) as GraphId[];
   const base = { id: entry.id, before, after, added, removed, graphs, dryRun: Boolean(opts.dryRun) };
   if (!added.length && !removed.length) return { ...base, changed: false, droppedRows: [] };
-  const droppedRows = removed.length ? await staleRuleRows({ id: entry.id, tags: after, type: entry.type }) : [];
+  const droppedRows = removed.length ? await staleRuleRows({ id: entry.id, tags: after, type: entry.type }, removed) : [];
   if (opts.dryRun) return { ...base, changed: true, droppedRows };
 
   const message = `Tag memory: ${entry.id}` + (added.length ? ` +${added.join(",")}` : "") + (removed.length ? ` -${removed.join(",")}` : "");
@@ -674,12 +674,15 @@ export async function applyTagEdit(opts: {
  * matches the entry as edited. Rows proposed by a sweep or an explicit
  * --graph are never touched. A rules file that cannot be read leaves rows alone.
  */
-async function staleRuleRows(entry: { id: string; tags: string[]; type: string }): Promise<{ id: string; graph: string }[]> {
+async function staleRuleRows(entry: { id: string; tags: string[]; type: string }, removed: string[]): Promise<{ id: string; graph: string }[]> {
   try {
     const [{ readQueue }, { readRules, matchRule }] = await Promise.all([import("./graph-queue.js"), import("./graph-rules.js")]);
     const rules = await readRules();
+    // Only graphs a rule keyed on a REMOVED tag points at can have gone stale.
+    const affected = new Set(rules.filter((r) => r.match.tag !== undefined && removed.includes(r.match.tag)).map((r) => r.graph));
+    if (rules.length === 0 || affected.size === 0) return [];
     return (await readQueue()).rows
-      .filter((r) => r.id === entry.id && r.proposedBy === "rules")
+      .filter((r) => r.id === entry.id && r.proposedBy === "rules" && affected.has(r.graph))
       .filter((r) => !rules.some((rule) => rule.graph === r.graph && matchRule(entry as never, rule)))
       .map((r) => ({ id: r.id, graph: r.graph }));
   } catch {
