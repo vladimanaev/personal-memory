@@ -507,7 +507,9 @@ async function cmdTag(argv: string[]) {
       // declined candidates.
       const allRules = await readRules();
       const graphs = [...new Set(allRules.filter((r) => r.match.tag !== undefined && result.added.includes(r.match.tag)).map((r) => r.graph))];
-      if (result.dryRun) {
+      if (graphs.length === 0) {
+        // no newly added tag triggers a rule: nothing to judge, nothing to warn about
+      } else if (result.dryRun) {
         // Nothing is written, so plan in memory against the post-edit tags.
         const { openCatalog } = await import("./catalog.js");
         const { readQueue } = await import("./graph-queue.js");

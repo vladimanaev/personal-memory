@@ -226,17 +226,19 @@ test("tag: removal only reconciles rule rows whose rule lost its tag; dry-run is
     const queue = () => cli(root, ["queue", "list", "--graph", "team-x"]);
     const queueFile = join(root, "memory", "graphs", "queue.json");
 
-    // sweep and explicit-graph rows survive removal of any tag
+    // a sweep row and an explicit-graph row survive removal of any tag
     setRules(root, [toX({ tag: "share" })]);
     cli(root, ["tag", PLAIN, "--add", "share"]);
     cli(root, ["queue", "dismiss", PLAIN, "--graph", "team-x"]);
+    cli(root, ["tag", PLAIN, "--remove", "share"]);
     for (const by of ["sweep", "add"]) {
       cli(root, ["queue", "add", PLAIN, "--to", "team-x", "--reason", `from ${by}`, "--proposed-by", by, "--force"]);
+      cli(root, ["tag", PLAIN, "--add", "share"]);
       cli(root, ["tag", PLAIN, "--remove", "share"]);
       assert.match(queue(), new RegExp(`${by}: from ${by}`));
       cli(root, ["queue", "dismiss", PLAIN, "--graph", "team-x"]);
-      cli(root, ["tag", PLAIN, "--add", "share"]);
-      cli(root, ["queue", "dismiss", PLAIN, "--graph", "team-x"]);
+      // a dismissal is keyed on content: change it so the next proposal is visible
+      cli(root, ["tag", PLAIN, "--add", `after-${by}`]);
     }
 
     // two rules into the same graph: swapping one matching tag for the other keeps the row
@@ -265,6 +267,42 @@ test("tag: removal only reconciles rule rows whose rule lost its tag; dry-run is
     rmSync(join(root, "memory", "graphs", "rules.json"));
     assert.doesNotMatch(cli(root, ["tag", PLAIN, "--remove", "two"]), /dropped/);
     assert.match(queue(), new RegExp(PLAIN));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("tag / rules apply never overwrite a pending sweep row; no conflict noise without a triggering tag", { timeout: 300_000 }, () => {
+  const root = setup();
+  try {
+    const queueFile = join(root, "memory", "graphs", "queue.json");
+    const summaryFile = join(root, "redacted.txt");
+    writeFileSync(summaryFile, "Redacted wording.", "utf8");
+    cli(root, ["queue", "add", PLAIN, "--to", "team-x", "--reason", "sweep thinks so", "--proposed-by", "sweep", "--summary-file", summaryFile]);
+    const bytes = readFileSync(queueFile, "utf8");
+    assert.match(bytes, /Redacted wording/);
+
+    setRules(root, [toX({ tag: "share" })]);
+    const dry = cli(root, ["tag", PLAIN, "--add", "share", "--dry-run"]);
+    assert.doesNotMatch(dry, /would queue/);
+    const add = cli(root, ["tag", PLAIN, "--add", "share"]);
+    assert.doesNotMatch(add, /rule: queued/);
+    assert.equal(readFileSync(queueFile, "utf8"), bytes);
+
+    // rules apply honours the same rule: the pending row is skipped, not replaced
+    const apply = cli(root, ["rules", "apply"]);
+    assert.doesNotMatch(apply, /queued PLAIN|✓ queued/);
+    assert.equal(readFileSync(queueFile, "utf8"), bytes);
+
+    cli(root, ["tag", PLAIN, "--remove", "share"]);
+    assert.equal(readFileSync(queueFile, "utf8"), bytes);
+
+    // an entry that conflicts on its existing tags: an unrelated --add stays quiet
+    setRules(root, [toX({ tag: "alpha" }, "move"), toX({ type: "note" })]);
+    const quiet = cli(root, ["tag", PLAIN, "--add", "unrelated"]);
+    assert.doesNotMatch(quiet, /rule skipped|rule:/);
+    const quietDry = cli(root, ["tag", PLAIN, "--add", "unrelated2", "--dry-run"]);
+    assert.doesNotMatch(quietDry, /rule skipped|rule:/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

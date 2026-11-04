@@ -176,10 +176,19 @@ export async function enqueueRules(
   // target graphs the caller is actually proposing into.
   if (opts.graphs) report.plan.actions = report.plan.actions.filter((a) => opts.graphs!.includes(a.graph));
   report.skippedConflicts = report.plan.conflicts.length;
+  const { enqueueMany, queueView, readQueue } = await import("./graph-queue.js");
+  // A pending row (a sweep's redaction, an explicit --graph) is never replaced
+  // by a rule's: enqueueMany overwrites by id+graph, so filter here. Dry-run
+  // and the real run therefore agree.
+  if (report.plan.actions.length > 0) {
+    const pending = new Set((await readQueue()).rows.map((r) => `${r.id}\u0000${r.graph}`));
+    const fresh = report.plan.actions.filter((a) => !pending.has(`${a.id}\u0000${a.graph}`));
+    report.skipped += report.plan.actions.length - fresh.length;
+    report.plan.actions = fresh;
+  }
   if (opts.dryRun) return report;
   if (report.plan.actions.length === 0) return report;
 
-  const { enqueueMany, queueView } = await import("./graph-queue.js");
   const results = await enqueueMany(
     report.plan.actions.map((a) => ({
       id: a.id,
