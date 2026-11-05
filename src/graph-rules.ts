@@ -157,7 +157,14 @@ export interface RulesReport {
  * now lands in the target graph's queue for the user to approve.
  */
 export async function enqueueRules(
-  opts: { dryRun?: boolean; ids?: string[]; rules?: GraphRule[] } = {},
+  opts: {
+    dryRun?: boolean;
+    ids?: string[];
+    rules?: GraphRule[];
+    graphs?: string[];
+    /** Judge these entries instead of the catalog's (e.g. an edit not yet written). */
+    entries?: Pick<MemoryEntry, "id" | "tags" | "type" | "graphs">[];
+  } = {},
 ): Promise<RulesReport & { plan: RulesPlan }> {
   const rules = opts.rules ?? (await readRules());
   const report: RulesReport & { plan: RulesPlan } = {
@@ -169,14 +176,27 @@ export async function enqueueRules(
     plan: { actions: [], conflicts: [] },
   };
   if (rules.length === 0) return report;
-  let entries: Pick<MemoryEntry, "id" | "tags" | "type" | "graphs">[] = await (await openCatalog()).all();
+  let entries: Pick<MemoryEntry, "id" | "tags" | "type" | "graphs">[] = opts.entries ?? (await (await openCatalog()).all());
   if (opts.ids) entries = entries.filter((e) => opts.ids!.includes(e.id));
   report.plan = planRules(entries, rules);
+  // Planned against ALL rules (so conflict guards hold), then narrowed to the
+  // target graphs the caller is actually proposing into.
+  if (opts.graphs) report.plan.actions = report.plan.actions.filter((a) => opts.graphs!.includes(a.graph));
   report.skippedConflicts = report.plan.conflicts.length;
+  const { enqueueMany, queueView, readQueue } = await import("./graph-queue.js");
+  // A pending row (a sweep's redaction, an explicit --graph) is never replaced
+  // by a rule's: enqueueMany overwrites by id+graph, so filter here. Dry-run
+  // and the real run therefore agree.
+  if (report.plan.actions.length > 0) {
+    // Raw readQueue on purpose: queueView reconciles and would write during a dry-run.
+    const pending = new Set((await readQueue()).rows.map((r) => `${r.id}\u0000${r.graph}`));
+    const fresh = report.plan.actions.filter((a) => !pending.has(`${a.id}\u0000${a.graph}`));
+    report.skipped += report.plan.actions.length - fresh.length;
+    report.plan.actions = fresh;
+  }
   if (opts.dryRun) return report;
   if (report.plan.actions.length === 0) return report;
 
-  const { enqueueMany, queueView } = await import("./graph-queue.js");
   const results = await enqueueMany(
     report.plan.actions.map((a) => ({
       id: a.id,

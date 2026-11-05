@@ -37,6 +37,17 @@ event, decision, todo, pending-decision, 1on1, hiring, incident,
 achievement, feedback, meeting, note, summary
 ```
 
+## Edit tags
+
+```text
+memory tag <id> [--add a,b] [--remove c] [--dry-run]
+```
+
+Changes only the entry's `tags` (and `updated`) in every graph copy; title and
+body stay as they are. New tags are judged against standing distribution rules
+like a capture (candidates are queued, never published); removing a tag never
+changes graph memberships.
+
 ## Timeline links
 
 ```text
