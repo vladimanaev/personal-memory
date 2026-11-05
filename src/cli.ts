@@ -500,34 +500,31 @@ async function cmdTag(argv: string[]) {
   // memberships. A rule failure must not fail the edit.
   if (result.added.length) {
     try {
-      const { enqueueRules, readRules, planRules } = await import("./graph-rules.js");
+      const { enqueueRules, readRules } = await import("./graph-rules.js");
       // Plan against ALL rules so conflict guards hold, then keep only actions
       // into graphs a rule triggered by a NEWLY added tag points at. A retag
       // changes the content hash, so re-judging everything would resurrect
       // declined candidates.
       const allRules = await readRules();
       const graphs = [...new Set(allRules.filter((r) => r.match.tag !== undefined && result.added.includes(r.match.tag)).map((r) => r.graph))];
-      if (graphs.length === 0) {
-        // no newly added tag triggers a rule: nothing to judge, nothing to warn about
-      } else if (result.dryRun) {
-        // Nothing is written, so plan in memory against the post-edit tags.
-        const { openCatalog } = await import("./catalog.js");
-        const { readQueue } = await import("./graph-queue.js");
-        const entry = (await (await openCatalog()).byIds([id]))[0];
-        if (entry) {
-          const plan = planRules([{ ...entry, tags: result.after }], allRules);
-          const pending = (await readQueue()).rows;
-          for (const c of plan.conflicts) console.log(`  ⚠ rule skipped ${c.id}: ${c.reason}`);
-          for (const a of plan.actions) {
-            if (!graphs.includes(a.graph) || pending.some((r) => r.id === a.id && r.graph === a.graph)) continue;
-            console.log(`  → rule: would queue ${a.id} → ${a.graph}`);
-          }
+      // No newly added tag triggers a rule: nothing to judge, nothing to warn about.
+      if (graphs.length > 0) {
+        // A dry-run writes nothing, so the catalog still holds the old tags:
+        // hand enqueueRules the post-edit entry instead.
+        let entries: Pick<MemoryEntry, "id" | "tags" | "type" | "graphs">[] | undefined;
+        if (result.dryRun) {
+          const { openCatalog } = await import("./catalog.js");
+          const entry = (await (await openCatalog()).byIds([id]))[0];
+          entries = entry ? [{ ...entry, tags: result.after }] : [];
         }
-      } else {
-        const report = await enqueueRules({ ids: [id], rules: allRules, graphs });
+        const report = await enqueueRules({ ids: [id], rules: allRules, graphs, dryRun: result.dryRun, entries });
         for (const c of report.plan.conflicts) console.log(`  ⚠ rule skipped ${c.id}: ${c.reason}`);
-        for (const line of report.actions) console.log(`  → rule: ${line}`);
-        if (report.queued > 0) console.log(`  review queued candidates: memory queue list`);
+        if (result.dryRun) {
+          for (const a of report.plan.actions) console.log(`  → rule: would queue ${a.id} → ${a.graph}`);
+        } else {
+          for (const line of report.actions) console.log(`  → rule: ${line}`);
+          if (report.queued > 0) console.log(`  review queued candidates: memory queue list`);
+        }
       }
     } catch (err) {
       console.warn(`  ⚠ rules not applied: ${err instanceof Error ? err.message : String(err)}`);
