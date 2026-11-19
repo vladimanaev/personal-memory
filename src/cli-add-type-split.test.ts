@@ -94,13 +94,6 @@ test("add: a different --type never overwrites a settled entry; same-type re-run
     assert.match(refreshed.content, /alpha pilot proceeds/);
     assert.deepEqual(refreshed.data.sources, [DEC]);
 
-    // A third capture with yet another type gets its own id and links BOTH matched entries.
-    const r3 = add(root, "event", "A calendar event for the pilot kickoff.");
-    assert.equal(r3.status, 0, r3.stderr);
-    f = files(root);
-    assert.equal(Object.keys(f).length, 3);
-    assert.equal(f[DEC], before);
-    assert.deepEqual(matter(f[`${DEC}-event`]!).data.sources.sort(), [DEC, NOTE].sort());
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -151,6 +144,118 @@ test("add: an open todo with a different --type still errors as before", { timeo
     assert.notEqual(r.status, 0);
     assert.match(r.stderr, /already anchors the open todo 2026-03-01-send-quote — log the outcome as a new entry with --follows 2026-03-01-send-quote/);
     assert.equal(Object.keys(files(root)).length, 1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+const EV = "2026-03-02-vendor-kickoff";
+const SIBLINGS: SeedEntry[] = [
+  ...ENTRIES,
+  { id: EV, date: "2026-03-02", type: "event", title: "Vendor kickoff", body: "Kickoff held for the alpha pilot.", source_ids: [SID] },
+];
+
+test("add: a split links every match; the target never depends on row order", { timeout: 300_000 }, () => {
+  const root = fixture(SIBLINGS);
+  try {
+    const f0 = files(root);
+    const r1 = add(root, "note", "Thread recap for the pilot.");
+    assert.equal(r1.status, 0, r1.stderr);
+    assert.deepEqual(matter(files(root)[`${DEC}-note`]!).data.sources, [DEC, EV]);
+    assert.equal(files(root)[DEC], f0[DEC]);
+    assert.equal(files(root)[EV], f0[EV]);
+
+    // Two same-type matches: each update moves the target's row to the end of the scan,
+    // yet the (date, id)-first one is picked every time and its sibling is never touched.
+    const twin = "2026-03-03-vendor-choice-twin";
+    runInStore(root, `const fs = await import("node:fs"); const p = ${JSON.stringify(join(root, "memory", "entries", "2026", "03", `${twin}.md`))};
+      fs.writeFileSync(p, fs.readFileSync(${JSON.stringify(join(root, "memory", "entries", "2026", "03", `${DEC}.md`))}, "utf8").replace(${JSON.stringify(DEC)}, ${JSON.stringify(twin)}).replace("2026-03-01", "2026-03-03"));
+      const s = await import(${STORE_MOD}); await s.syncIndex(); console.log("{}");`);
+    const twinBefore = files(root)[twin]!;
+    for (const body of ["First revision of the decision.", "Second revision of the decision.", "Third revision of the decision."]) {
+      const r = add(root, "decision", body);
+      assert.equal(r.status, 0, r.stderr);
+      assert.match(r.stdout, new RegExp(`updating ${DEC} \\(decision\\)`));
+      assert.match(matter(files(root)[DEC]!).content, new RegExp(body));
+      assert.equal(files(root)[twin], twinBefore, "the other same-type match is untouched");
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("add: mixed-type matches without --type error and change nothing", { timeout: 300_000 }, () => {
+  const root = fixture(SIBLINGS);
+  try {
+    const before = files(root);
+    const r = run(root, ["add", "--title", "Vendor choice", "--date", "2026-03-01", "--source-ids", SID, "--body", "Another pass."]);
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, new RegExp(`${DEC} is a decision`));
+    assert.match(r.stderr, new RegExp(`${EV} is a event`));
+    assert.match(r.stderr, /--type .*--update <id>/);
+    assert.deepEqual(files(root), before);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("add: a plain note is retyped in place", { timeout: 300_000 }, () => {
+  const note: SeedEntry = { id: "2026-03-01-vendor-note", date: "2026-03-01", type: "note", title: "Vendor note", body: "Early notes on vendors.", source_ids: [SID] };
+  const root = fixture([note]);
+  try {
+    const r = add(root, "decision", "We chose vendor alpha.");
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /↻ matches existing 2026-03-01-vendor-note/);
+    const f = files(root);
+    assert.deepEqual(Object.keys(f), ["2026-03-01-vendor-note"]);
+    assert.equal(matter(f["2026-03-01-vendor-note"]!).data.type, "decision");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("add: an open match that is not first still raises the open-item error", { timeout: 300_000 }, () => {
+  const todo: SeedEntry = { id: "2026-03-05-send-quote", date: "2026-03-05", type: "todo", title: "Send quote", body: "Send the quote to the vendor.", source_ids: [SID] };
+  const root = fixture([...ENTRIES, todo]);
+  try {
+    const before = files(root);
+    const r = add(root, "note", "Recap of the thread.");
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, /already anchors the open todo 2026-03-05-send-quote — log the outcome as a new entry with --follows 2026-03-05-send-quote/);
+    assert.deepEqual(files(root), before);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("add: a taken derived id gets -<type>, then -<type>-N", { timeout: 300_000 }, () => {
+  const taken: SeedEntry = { id: `${DEC}-note`, date: "2026-03-01", type: "event", title: "Unrelated", body: "Holds the first suffixed id.", source_ids: ["slack:CTEST:1700000900.1"] };
+  const root = fixture([...ENTRIES, taken]);
+  try {
+    const r = add(root, "note", "Thread recap.");
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, new RegExp(`created ${DEC}-note-2 \\(note\\)`));
+    assert.deepEqual(matter(files(root)[`${DEC}-note-2`]!).data.sources, [DEC]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("add: --follows combines with a split; a failed check prints no split line", { timeout: 300_000 }, () => {
+  const earlier: SeedEntry = { id: "2026-02-20-earlier-thread", date: "2026-02-20", type: "note", title: "Earlier thread", body: "Background thread before the vendor choice." };
+  const root = fixture([...ENTRIES, earlier]);
+  try {
+    const bad = add(root, "note", "Thread recap.", ["--follows", "2026-02-01-does-not-exist"]);
+    assert.notEqual(bad.status, 0);
+    assert.ok(!bad.stdout.includes("↳"), "no split line when the capture fails");
+    assert.equal(Object.keys(files(root)).length, 2);
+
+    const r = add(root, "note", "Thread recap.", ["--follows", "2026-02-20-earlier-thread"]);
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /↳ .* created /);
+    const created = matter(files(root)[`${DEC}-note`]!).data;
+    assert.deepEqual(created.follows, ["2026-02-20-earlier-thread"]);
+    assert.deepEqual(created.sources, [DEC]);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

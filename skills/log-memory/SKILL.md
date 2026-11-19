@@ -173,9 +173,11 @@ duplicates, **anchor each capture to its source** with `--source-ids`:
   `--connector raw-capture --source-ids slack:C0123ABCD:1700000000.001200`.
 
 What the CLI then does automatically:
-- **Same source id, different `--type`** → never overwrites the existing entry:
-  refreshes your earlier entry of that type, or creates a new one linked to the
-  match via `sources` (prints `↳ <id> is a <type>; not overwriting — …`).
+- **Same source id, different `--type`** → never overwrites a settled entry: refreshes
+  your earlier entry of that type, errors on an open todo/pending-decision, retypes a
+  plain `note` in place, else creates a new entry linked to every match via `sources`
+  (prints `↳ <id> is a <type>; not overwriting — …`). Matches of mixed types with no
+  `--type` are an error: pass `--type` or `--update <id>`.
 - **Same source seen again, nothing new** → prints `✓ unchanged`, no duplicate.
 - **Same source, new content** (e.g. new replies) → **updates the existing entry
   in place**: same `id`/path, body refreshed, `updated` date bumped. One entry
