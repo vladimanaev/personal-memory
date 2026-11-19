@@ -138,7 +138,10 @@ on it — re-fetching the same source **updates that entry in place** (one entry
 thread; `date` = first-seen, `updated` = last refresh) instead of duplicating.
 Captures without a source id hit a near-duplicate guard; resolve it with
 `--update <id>` (same thing) or `--force-new` (genuinely distinct). Don't fold a
-*different* event into an existing entry.
+*different* event into an existing entry. A capture whose `--type` differs from the
+source-id match never overwrites it: the match is left untouched, and a same-type
+match is refreshed or a new entry is created with the match in `sources`
+(prints `↳ <id> is a <type>; not overwriting — …`).
 
 ## More detail
 

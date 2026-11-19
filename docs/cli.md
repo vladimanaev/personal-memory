@@ -25,6 +25,16 @@ email updates that entry in place instead of creating a second one. Without a
 source id a near-duplicate guard catches repeats; resolve it with `--update
 <id>` (same event) or `--force-new` (genuinely different).
 
+A source id never lets a capture overwrite an entry of another type. If
+`--type` differs from the matched entry's type (say a `note` capture whose
+source id already anchors a `decision`), the matched entry is left untouched: a
+matching entry of the requested type is refreshed in place, otherwise a new
+entry is created with the matched entry's id in `sources`. The CLI prints
+`↳ <id> is a <type>; not overwriting — <created|updating> <newid> (<type>) linked via sources`.
+The new entry skips the near-duplicate guard against the entries it links; a
+taken id gets the type as a suffix. Open todos / pending decisions keep their
+own rule (log the outcome with `--follows`).
+
 `--graph` files a new entry into a named graph **and nowhere else** — it leaves
 no copy in the default graph. It is reserved for an explicit request; captures
 otherwise land in the default graph and gain shared memberships through rules or

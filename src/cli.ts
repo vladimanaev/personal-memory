@@ -200,16 +200,29 @@ async function cmdAdd(argv: string[]) {
 
   // --- resolve the target: an existing entry to update in place, or a new one ---
   let target: MemoryEntry | undefined;
+  // Set when `--type` differs from a source-id match's type: that entry is never rewritten.
+  let split: { id: string; type: string; linked: string[] } | undefined;
   if (values.update) {
     const [meta] = await catalog.byIds([values.update as string]);
     if (!meta) throw new Error(`--update: no entry with id '${values.update}'`);
     target = (await catalog.hydrate([meta]))[0]!;
   } else if (sourceIds.length) {
-    const [meta] = await catalog.bySourceIds(sourceIds);
-    target = meta ? (await catalog.hydrate([meta]))[0]! : undefined;
-    if (target) {
+    const matches = await catalog.hydrate(await catalog.bySourceIds(sourceIds));
+    target = matches[0];
+    // A different `--type` never rewrites a settled entry that shares the anchor (a thread-summary
+    // note must not replace the decision it came from). An OPEN item keeps the guard below instead.
+    if (target && values.type && values.type !== target.type &&
+      !(OPEN_TYPES.has(target.type) && entryStatus(target, buildChainIndex(await catalog.linked()))?.status === "open")) {
+      split = { id: target.id, type: target.type, linked: matches.filter((m) => m.type !== values.type).map((m) => m.id) };
+      // Re-running the capture refreshes its own entry in place; otherwise a new one is created below.
+      target = matches.find((m) => m.type === values.type);
+    }
+    if (target && !split) {
       const matched = sourceIds.find((s) => (target!.source_ids ?? []).includes(s));
       console.log(`↻ matches existing ${target.id} via ${matched}`);
+    }
+    if (target && split) {
+      console.log(`↳ ${split.id} is a ${split.type}; not overwriting — updating ${target.id} (${target.type}) linked via sources`);
     }
   }
 
@@ -251,7 +264,8 @@ async function cmdAdd(argv: string[]) {
   if (!target && !values["force-new"]) {
     const minSim = values["dup-threshold"] ? Number(values["dup-threshold"]) : undefined;
     // An outcome naturally resembles the item it settles — its --follows targets aren't duplicates.
-    const settles = new Set(list(values.follows as string));
+    // Likewise the entries a type-split capture links via `sources` — it is their sibling, not a copy.
+    const settles = new Set([...list(values.follows as string), ...(split?.linked ?? [])]);
     const similar = (await findSimilar(`${title}\n${body}`, minSim ? { minSim } : {})).filter((h) => !settles.has(h.id));
     if (similar.length > 0) {
       console.error("✗ this looks like a near-duplicate of:");
@@ -264,10 +278,23 @@ async function cmdAdd(argv: string[]) {
     }
   }
 
+  // A type-split entry usually shares its title (hence makeId) with the entry it links, so a
+  // derived id that is taken gets the type, then a counter, as a deterministic suffix.
+  let newId = (values.id as string) || makeId(date, title);
+  if (!target && split && !values.id) {
+    const base = newId;
+    const type = (values.type as string) || "note";
+    for (let n = 1; (await catalog.byIds([newId])).length > 0; n++) newId = n === 1 ? `${base}-${type}` : `${base}-${type}-${n}`;
+  }
+
+  if (split && !target) {
+    console.log(`↳ ${split.id} is a ${split.type}; not overwriting — created ${newId} (${values.type}) linked via sources`);
+  }
+
   // --- timeline links: validate new targets against the store ---
   const follows = list(values.follows as string);
   if (follows.length) {
-    const sourceId = target?.id ?? ((values.id as string) || makeId(date, title));
+    const sourceId = target?.id ?? newId;
     const sourceDate = target?.date ?? date;
     const ancestry = await chainAncestry((ids) => catalog.byIds(ids), follows);
     validateFollowsTargets(ancestry, { id: sourceId, date: sourceDate }, follows);
@@ -295,14 +322,15 @@ async function cmdAdd(argv: string[]) {
           updated: today(),
         }
       : {
-          id: (values.id as string) || makeId(date, title),
+          id: newId,
           date,
           type: (values.type as string) || "note",
           title,
           people: list(values.people as string),
           teams: list(values.teams as string),
           tags: list(values.tags as string),
-          ...(values.sources ? { sources: list(values.sources as string) } : {}),
+          ...((values.sources || split?.linked.length)
+            ? { sources: uniq([...(split?.linked ?? []), ...list(values.sources as string)]) } : {}),
           ...(follows.length ? { follows } : {}),
           ...(sourceIds.length ? { source_ids: sourceIds } : {}),
           ...(due ? { due } : {}),
@@ -1903,6 +1931,8 @@ Usage:
   memory add --title "…" --type 1on1 --people a,b [--date YYYY-MM-DD] [--tags …] --body "…"
             # types: event|decision|todo|pending-decision|1on1|hiring|incident|achievement|feedback|meeting|note|summary
             [--source-ids slack:C123:1700000000.1,gmail:<thread-id>]  # dedup anchor
+                                 # a different --type never overwrites the matched entry: a same-type match
+                                 # is refreshed, else a NEW entry is created with the match in sources
             [--connector raw-capture]  # extraction prompt/source used for capture bookkeeping
             [--follows <id,…>]   # timeline link: this entry develops/settles the listed earlier entries
             [--due YYYY-MM-DD]   # todo / pending-decision only: when it is due (infer from the content)
