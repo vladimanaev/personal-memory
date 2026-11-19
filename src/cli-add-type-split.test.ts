@@ -86,7 +86,7 @@ test("add: a different --type never overwrites a settled entry; same-type re-run
     // Re-running the same capture refreshes the note, not the decision, and adds no third entry.
     const r2 = add(root, "note", "Updated thread summary: alpha pilot proceeds next month.");
     assert.equal(r2.status, 0, r2.stderr);
-    assert.match(r2.stdout, new RegExp(`↳ ${DEC} is a decision; not overwriting — updating ${NOTE} \\(note\\) linked via sources`));
+    assert.match(r2.stdout, new RegExp(`↳ ${DEC} is a decision; not overwriting — updating ${NOTE} \\(note\\)`));
     f = files(root);
     assert.equal(Object.keys(f).length, 2);
     assert.equal(f[DEC], before);
@@ -256,6 +256,27 @@ test("add: --follows combines with a split; a failed check prints no split line"
     const created = matter(files(root)[`${DEC}-note`]!).data;
     assert.deepEqual(created.follows, ["2026-02-20-earlier-thread"]);
     assert.deepEqual(created.sources, [DEC]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("add: a split-off note is protected from retyping; a third type links both", { timeout: 300_000 }, () => {
+  const root = fixture();
+  try {
+    assert.equal(add(root, "note", "Thread recap for the pilot.").status, 0);
+    const before = files(root);
+    const NOTE = `${DEC}-note`;
+    assert.equal(Object.keys(before).length, 2);
+
+    const r = add(root, "event", "Calendar entry for the pilot kickoff.");
+    assert.equal(r.status, 0, r.stderr);
+    const f = files(root);
+    assert.equal(Object.keys(f).length, 3);
+    assert.equal(f[DEC], before[DEC]);
+    assert.equal(f[NOTE], before[NOTE], "the split-off note is not retyped");
+    assert.deepEqual(matter(f[`${DEC}-event`]!).data.sources.sort(), [DEC, NOTE].sort());
+    assert.match(r.stdout, /created .*-event \(event\) linked via sources/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -230,12 +230,13 @@ async function cmdAdd(argv: string[]) {
       // 3. else a plain note may be retyped; 4. else nothing is modified (split).
       target = matches.find((m) => m.type === t);
       if (!target) for (const m of matches) if (await isOpen(m)) { target = m; break; }
-      if (!target) target = matches.find((m) => m.type === "note");
+      // A note already linking another match (via `sources`) is a split-off note: protected like any other type.
+      if (!target) target = matches.find((m) => m.type === "note" && !(m.sources ?? []).some((id) => matches.some((o) => o !== m && o.id === id)));
       if (!target) split = { linked: matches.map((m) => m.id), first: matches[0]! };
       // Siblings of another type are left untouched; say so when the same-type match is refreshed.
       const others = matches.filter((m) => m.type !== t);
       if (target && target.type === t && others.length) {
-        splitLine = () => `↳ ${others[0]!.id} is a ${others[0]!.type}; not overwriting — updating ${target!.id} (${t}) linked via sources`;
+        splitLine = () => `↳ ${others[0]!.id} is a ${others[0]!.type}; not overwriting — updating ${target!.id} (${t})`;
       }
     } else {
       target = matches[0];
