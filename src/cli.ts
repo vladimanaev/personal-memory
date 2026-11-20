@@ -203,10 +203,9 @@ async function cmdAdd(argv: string[]) {
   // Chain annotations are read at most once per capture.
   let chain: ReturnType<typeof buildChainIndex> | undefined;
   const chainIndex = async () => (chain ??= buildChainIndex(await catalog.linked()));
-  // Set when no source-id match can take the requested `--type`: a NEW entry links all of them.
+  // Set when no source-id match can take the requested `--type`: a NEW entry is created beside them
+  // (the shared source id is the link) and skips the near-duplicate guard against them.
   let split: { linked: string[]; first: { id: string; type: string } } | undefined;
-  // Printed once the capture has passed every check (so it never claims "created" for a failed write).
-  let splitLine: ((newId: string) => string) | undefined;
   if (values.update) {
     const [meta] = await catalog.byIds([values.update as string]);
     if (!meta) throw new Error(`--update: no entry with id '${values.update}'`);
@@ -214,7 +213,7 @@ async function cmdAdd(argv: string[]) {
   } else if (sourceIds.length) {
     // Row order is unstable (an update moves its row), so order the matches by (date, id).
     const matches = (await catalog.hydrate(await catalog.bySourceIds(sourceIds)))
-      .sort((x, y) => (x.date < y.date ? -1 : x.date > y.date ? 1 : x.id < y.id ? -1 : x.id > y.id ? 1 : 0));
+      .sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
     const isOpen = async (m: MemoryEntry) =>
       OPEN_TYPES.has(m.type) && entryStatus(m, await chainIndex())?.status === "open";
     if (matches.length && !values.type && new Set(matches.map((m) => m.type)).size > 1) {
@@ -230,18 +229,14 @@ async function cmdAdd(argv: string[]) {
       // 3. else a plain note may be retyped; 4. else nothing is modified (split).
       target = matches.find((m) => m.type === t);
       if (!target) for (const m of matches) if (await isOpen(m)) { target = m; break; }
-      // A note already linking another match (via `sources`) is a split-off note: protected like any other type.
-      if (!target) target = matches.find((m) => m.type === "note" && !(m.sources ?? []).some((id) => matches.some((o) => o !== m && o.id === id)));
+      // A note beside a settled entry of another type is a split-off note (nothing else marks it), so
+      // it is protected like any other type: only notes among notes are retyped.
+      if (!target && matches.every((m) => m.type === "note")) target = matches[0];
       if (!target) split = { linked: matches.map((m) => m.id), first: matches[0]! };
-      // Siblings of another type are left untouched; say so when the same-type match is refreshed.
-      const others = matches.filter((m) => m.type !== t);
-      if (target && target.type === t && others.length) {
-        splitLine = () => `↳ ${others[0]!.id} is a ${others[0]!.type}; not overwriting — updating ${target!.id} (${t})`;
-      }
     } else {
       target = matches[0];
     }
-    if (target && !splitLine) {
+    if (target) {
       const matched = sourceIds.find((s) => (target!.source_ids ?? []).includes(s));
       console.log(`↻ matches existing ${target.id} via ${matched}`);
     }
@@ -285,7 +280,7 @@ async function cmdAdd(argv: string[]) {
   if (!target && !values["force-new"]) {
     const minSim = values["dup-threshold"] ? Number(values["dup-threshold"]) : undefined;
     // An outcome naturally resembles the item it settles — its --follows targets aren't duplicates.
-    // Likewise the entries a type-split capture links via `sources` — it is their sibling, not a copy.
+    // Likewise the entries a type-split capture sits beside — it is their sibling, not a copy.
     const settles = new Set([...list(values.follows as string), ...(split?.linked ?? [])]);
     const similar = (await findSimilar(`${title}\n${body}`, minSim ? { minSim } : {})).filter((h) => !settles.has(h.id));
     if (similar.length > 0) {
@@ -304,7 +299,7 @@ async function cmdAdd(argv: string[]) {
   let newId = (values.id as string) || makeId(date, title);
   if (!target && split && !values.id) {
     const base = newId;
-    const type = (values.type as string) || "note";
+    const type = values.type as string;
     for (let n = 1; (await catalog.byIds([newId])).length > 0; n++) newId = n === 1 ? `${base}-${type}` : `${base}-${type}-${n}`;
   }
 
@@ -346,8 +341,7 @@ async function cmdAdd(argv: string[]) {
           people: list(values.people as string),
           teams: list(values.teams as string),
           tags: list(values.tags as string),
-          ...((values.sources || split?.linked.length)
-            ? { sources: uniq([...(split?.linked ?? []), ...list(values.sources as string)]) } : {}),
+          ...(values.sources ? { sources: list(values.sources as string) } : {}),
           ...(follows.length ? { follows } : {}),
           ...(sourceIds.length ? { source_ids: sourceIds } : {}),
           ...(due ? { due } : {}),
@@ -377,9 +371,7 @@ async function cmdAdd(argv: string[]) {
 
   // Every check has passed: now the split may be announced (one parseable line).
   if (split && !target) {
-    console.log(`↳ ${split.first.id} is a ${split.first.type}; not overwriting — created ${fm.id} (${fm.type}) linked via sources`);
-  } else if (splitLine) {
-    console.log(splitLine(fm.id));
+    console.log(`↳ ${split.first.id} is a ${split.first.type}; not overwriting — created ${fm.id} (${fm.type})`);
   }
 
   // --- idempotency: skip a re-capture whose content is identical (hash ignores `updated`) ---
@@ -1956,8 +1948,9 @@ Usage:
             # types: event|decision|todo|pending-decision|1on1|hiring|incident|achievement|feedback|meeting|note|summary
             [--source-ids slack:C123:1700000000.1,gmail:<thread-id>]  # dedup anchor
                                  # a --type that differs from a match never overwrites it: a same-type match
-                                 # is refreshed, an open item errors, a note is retyped, else a NEW entry is
-                                 # created with every match in sources. Mixed-type matches need --type/--update.
+                                 # is refreshed, an open item errors, a lone note (or notes only) is retyped,
+                                 # else a NEW entry is created beside the matches. Mixed-type matches need
+                                 # --type or --update.
             [--connector raw-capture]  # extraction prompt/source used for capture bookkeeping
             [--follows <id,…>]   # timeline link: this entry develops/settles the listed earlier entries
             [--due YYYY-MM-DD]   # todo / pending-decision only: when it is due (infer from the content)

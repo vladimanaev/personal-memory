@@ -25,19 +25,19 @@ email updates that entry in place instead of creating a second one. Without a
 source id a near-duplicate guard catches repeats; resolve it with `--update
 <id>` (same event) or `--force-new` (genuinely different).
 
-A source id never lets a capture overwrite an entry of another type, except that a plain, not split-off note may be retyped. When
-several entries share the id they are ordered by (date, id), and with
-`--type X` the capture picks, in order: (1) an entry already of type X, which is
-refreshed in place; (2) otherwise an open todo / pending decision, which errors
-as always (log the outcome with `--follows`); (3) otherwise a plain `note` that is
-not itself split off (its `sources` do not list another match), which is retyped
-to X in place; (4) otherwise nothing is modified: a new entry of type X
-is created with every matched id in `sources` (printing
-`↳ <id> is a <type>; not overwriting — created <newid> (<type>) linked via sources`; a
-same-type refresh with other-type siblings prints `… — updating <id> (<type>)`).
-The new entry skips the near-duplicate guard against the entries it links, and
-a taken id gets the type as a suffix. Without `--type`, matches of mixed types
-are an error: pass `--type` or `--update <id>`.
+A source id never lets a capture overwrite an entry of another type, except that
+a note with no other-type sibling may be retyped. When several entries share the
+id they are ordered by (date, id), and with `--type X` the capture picks, in
+order: (1) an entry already of type X, refreshed in place; (2) otherwise an open
+todo / pending decision, which errors as always (log the outcome with
+`--follows`); (3) otherwise a `note`, when every match is a note, retyped to X in
+place; (4) otherwise nothing is modified: a new entry of type X is created with
+the same source id, which is the link (printing
+`↳ <id> is a <type>; not overwriting — created <newid> (<type>)`). The new entry
+skips the near-duplicate guard against the entries it sits beside, and a taken id
+gets the type as a suffix. Without `--type`, matches of mixed types are an error:
+pass `--type` or `--update <id>`; several same-type matches update the earliest
+by (date, id).
 
 `--graph` files a new entry into a named graph **and nowhere else** — it leaves
 no copy in the default graph. It is reserved for an explicit request; captures

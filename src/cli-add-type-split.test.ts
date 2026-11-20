@@ -73,39 +73,40 @@ test("add: a different --type never overwrites a settled entry; same-type re-run
     const r1 = add(root, "note", DEC_BODY, ["--dup-threshold", "0.01"]);
     assert.equal(r1.status, 0, r1.stderr);
     const NOTE = `${DEC}-note`;
-    assert.match(r1.stdout, new RegExp(`↳ ${DEC} is a decision; not overwriting — created ${NOTE} \\(note\\) linked via sources`));
+    assert.match(r1.stdout, new RegExp(`↳ ${DEC} is a decision; not overwriting — created ${NOTE} \\(note\\)$`, "m"));
     assert.ok(!r1.stdout.includes("↻ matches existing"));
     let f = files(root);
     assert.equal(Object.keys(f).length, 2);
     assert.equal(f[DEC], before, "the decision is untouched byte-for-byte");
     const note = matter(f[NOTE]!);
     assert.equal(note.data.type, "note");
-    assert.deepEqual(note.data.sources, [DEC]);
+    assert.equal(note.data.sources, undefined, "the shared source id is the link; `sources` is not used");
     assert.deepEqual(note.data.source_ids, [SID]);
 
     // Re-running the same capture refreshes the note, not the decision, and adds no third entry.
     const r2 = add(root, "note", "Updated thread summary: alpha pilot proceeds next month.");
     assert.equal(r2.status, 0, r2.stderr);
-    assert.match(r2.stdout, new RegExp(`↳ ${DEC} is a decision; not overwriting — updating ${NOTE} \\(note\\)`));
+    assert.match(r2.stdout, new RegExp(`↻ matches existing ${NOTE} via ${SID}`));
+    assert.ok(!r2.stdout.includes("↳"));
     f = files(root);
     assert.equal(Object.keys(f).length, 2);
     assert.equal(f[DEC], before);
     const refreshed = matter(f[NOTE]!);
     assert.match(refreshed.content, /alpha pilot proceeds/);
-    assert.deepEqual(refreshed.data.sources, [DEC]);
+    assert.equal(refreshed.data.sources, undefined);
 
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-test("add: --sources passed with a type split are merged after the linked ids", { timeout: 300_000 }, () => {
+test("add: an explicit --sources passes through a type split unchanged", { timeout: 300_000 }, () => {
   const other: SeedEntry = { id: "2026-03-02-other", date: "2026-03-02", type: "note", title: "Other", body: "Something unrelated entirely." };
   const root = fixture([...ENTRIES, other]);
   try {
     const r = add(root, "note", "Thread recap of the vendor discussion.", ["--sources", "2026-03-02-other"]);
     assert.equal(r.status, 0, r.stderr);
-    assert.deepEqual(matter(files(root)[`${DEC}-note`]!).data.sources, [DEC, "2026-03-02-other"]);
+    assert.deepEqual(matter(files(root)[`${DEC}-note`]!).data.sources, ["2026-03-02-other"]);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -155,13 +156,14 @@ const SIBLINGS: SeedEntry[] = [
   { id: EV, date: "2026-03-02", type: "event", title: "Vendor kickoff", body: "Kickoff held for the alpha pilot.", source_ids: [SID] },
 ];
 
-test("add: a split links every match; the target never depends on row order", { timeout: 300_000 }, () => {
+test("add: a split sits beside every match; the target never depends on row order", { timeout: 300_000 }, () => {
   const root = fixture(SIBLINGS);
   try {
     const f0 = files(root);
     const r1 = add(root, "note", "Thread recap for the pilot.");
     assert.equal(r1.status, 0, r1.stderr);
-    assert.deepEqual(matter(files(root)[`${DEC}-note`]!).data.sources, [DEC, EV]);
+    assert.deepEqual(matter(files(root)[`${DEC}-note`]!).data.sources, undefined);
+    assert.match(r1.stdout, new RegExp(`↳ ${DEC} is a decision; not overwriting — created ${DEC}-note \\(note\\)`));
     assert.equal(files(root)[DEC], f0[DEC]);
     assert.equal(files(root)[EV], f0[EV]);
 
@@ -175,7 +177,7 @@ test("add: a split links every match; the target never depends on row order", { 
     for (const body of ["First revision of the decision.", "Second revision of the decision.", "Third revision of the decision."]) {
       const r = add(root, "decision", body);
       assert.equal(r.status, 0, r.stderr);
-      assert.match(r.stdout, new RegExp(`updating ${DEC} \\(decision\\)`));
+      assert.match(r.stdout, new RegExp(`↻ matches existing ${DEC} via ${SID}`));
       assert.match(matter(files(root)[DEC]!).content, new RegExp(body));
       assert.equal(files(root)[twin], twinBefore, "the other same-type match is untouched");
     }
@@ -235,7 +237,7 @@ test("add: a taken derived id gets -<type>, then -<type>-N", { timeout: 300_000 
     const r = add(root, "note", "Thread recap.");
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stdout, new RegExp(`created ${DEC}-note-2 \\(note\\)`));
-    assert.deepEqual(matter(files(root)[`${DEC}-note-2`]!).data.sources, [DEC]);
+    assert.deepEqual(matter(files(root)[`${DEC}-note-2`]!).data.sources, undefined);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -255,13 +257,13 @@ test("add: --follows combines with a split; a failed check prints no split line"
     assert.match(r.stdout, /↳ .* created /);
     const created = matter(files(root)[`${DEC}-note`]!).data;
     assert.deepEqual(created.follows, ["2026-02-20-earlier-thread"]);
-    assert.deepEqual(created.sources, [DEC]);
+    assert.equal(created.sources, undefined);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-test("add: a split-off note is protected from retyping; a third type links both", { timeout: 300_000 }, () => {
+test("add: a note beside a decision is protected from retyping; a third type gets its own entry", { timeout: 300_000 }, () => {
   const root = fixture();
   try {
     assert.equal(add(root, "note", "Thread recap for the pilot.").status, 0);
@@ -275,8 +277,96 @@ test("add: a split-off note is protected from retyping; a third type links both"
     assert.equal(Object.keys(f).length, 3);
     assert.equal(f[DEC], before[DEC]);
     assert.equal(f[NOTE], before[NOTE], "the split-off note is not retyped");
-    assert.deepEqual(matter(f[`${DEC}-event`]!).data.sources.sort(), [DEC, NOTE].sort());
-    assert.match(r.stdout, /created .*-event \(event\) linked via sources/);
+    assert.equal(matter(f[`${DEC}-event`]!).data.type, "event");
+    assert.match(r.stdout, /created .*-event \(event\)$/m);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("add: --update bypasses the selection, even with mixed-type matches", { timeout: 300_000 }, () => {
+  const root = fixture(SIBLINGS);
+  try {
+    const before = files(root);
+    const r = run(root, ["add", "--title", "Vendor kickoff", "--date", "2026-03-02", "--source-ids", SID,
+      "--update", EV, "--body", "Kickoff notes, revised."]);
+    assert.equal(r.status, 0, r.stderr);
+    const f = files(root);
+    assert.equal(Object.keys(f).length, 2);
+    assert.equal(f[DEC], before[DEC]);
+    assert.match(matter(f[EV]!).content, /revised/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("add: a resolved todo among the matches splits instead of erroring", { timeout: 300_000 }, () => {
+  const todo: SeedEntry = { id: "2026-03-01-send-quote", date: "2026-03-01", type: "todo", title: "Send quote", body: "Send the quote to the vendor.", source_ids: [SID] };
+  const outcome: SeedEntry = { id: "2026-03-04-quote-sent", date: "2026-03-04", type: "note", title: "Quote sent", body: "The quote went out.", follows: [todo.id], source_ids: ["slack:CTEST:1700000800.1"] };
+  const root = fixture([todo, outcome]);
+  try {
+    const before = files(root);
+    const r = add(root, "note", "Recap of the quote thread.");
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /↳ 2026-03-01-send-quote is a todo; not overwriting — created /);
+    const f = files(root);
+    assert.equal(Object.keys(f).length, 3);
+    assert.equal(f[todo.id], before[todo.id]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("add: --id with a split is used as given; a colliding --id errors", { timeout: 300_000 }, () => {
+  const root = fixture();
+  try {
+    const before = files(root);
+    const bad = add(root, "note", "Thread recap.", ["--id", DEC]);
+    assert.notEqual(bad.status, 0);
+    assert.match(bad.stderr, /already exists/);
+    assert.ok(!bad.stdout.includes("↳"));
+    assert.deepEqual(files(root), before);
+
+    const r = add(root, "note", "Thread recap.", ["--id", "2026-03-01-custom-recap"]);
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /created 2026-03-01-custom-recap \(note\)$/m);
+    assert.equal(Object.keys(files(root)).length, 2);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("add: untyped capture with several same-type matches updates the earliest by (date, id)", { timeout: 300_000 }, () => {
+  const twin: SeedEntry = { id: "2026-03-03-vendor-twin", date: "2026-03-03", type: "decision", title: "Vendor twin", body: "A second decision.", source_ids: [SID] };
+  const root = fixture([twin, ...ENTRIES]);
+  try {
+    const before = files(root);
+    for (const body of ["First untyped revision.", "Second untyped revision."]) {
+      const r = add(root, undefined, body);
+      assert.equal(r.status, 0, r.stderr);
+      assert.match(r.stdout, new RegExp(`↻ matches existing ${DEC} via`));
+      assert.match(matter(files(root)[DEC]!).content, new RegExp(body));
+      assert.equal(files(root)[twin.id], before[twin.id]);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("add: a match living in a shared graph is left byte-identical in every store", { timeout: 300_000 }, () => {
+  const shared: SeedEntry = { ...ENTRIES[0]!, graphs: ["default", "team-x"] };
+  const root = fixture([shared]);
+  try {
+    const copy = join(root, "memory-graphs", "team-x", "entries", "2026", "03", `${DEC}.md`);
+    const before = readFileSync(copy, "utf8");
+    const r = add(root, "note", "Thread recap.");
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(readFileSync(copy, "utf8"), before);
+    assert.equal(files(root)[DEC], before);
+    assert.match(r.stdout, /created /);
+    // The new entry homes in the default graph only.
+    assert.equal(Object.keys(files(root)).length, 2);
+    assert.equal(readdirSync(join(root, "memory-graphs", "team-x", "entries", "2026", "03")).length, 1);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
