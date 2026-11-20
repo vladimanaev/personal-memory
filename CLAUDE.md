@@ -138,7 +138,13 @@ on it — re-fetching the same source **updates that entry in place** (one entry
 thread; `date` = first-seen, `updated` = last refresh) instead of duplicating.
 Captures without a source id hit a near-duplicate guard; resolve it with
 `--update <id>` (same thing) or `--force-new` (genuinely distinct). Don't fold a
-*different* event into an existing entry.
+*different* event into an existing entry. With `--type X`, matches sharing the
+source id are tried in (date, id) order: an entry already of type X is
+refreshed; else an open todo/pending-decision errors; else a `note` (only when
+every match is a note) is retyped to X in place; else nothing is modified and a
+new entry is created beside them (prints `↳ <id> is a <type>; not overwriting —
+created <newid> (<type>)`). Mixed-type matches without `--type` are an error
+(pass `--type` or `--update <id>`).
 
 ## More detail
 
