@@ -72,6 +72,94 @@ JSON
   exit 0
 }
 
+# Heredoc bodies are stdin DATA, not part of the command line: `tool.py msg x
+# <<'EOF' … cat memory/a.md … EOF` runs nothing but tool.py. Matching the body
+# denies harmless commands whose text merely MENTIONS a store, so drop closed
+# heredoc bodies and their terminator lines (the `<<WORD` line stays) before matching.
+#
+# Handled: <<WORD, <<'WORD', <<"WORD", <<\WORD, <<-WORD (tab-stripped terminator),
+# several heredocs on one line, and heredocs inside "$( … )". NOT heredocs: `<<<`
+# here-strings (the word sits on the command line and stays matched), and `<<` in
+# quotes, comments or $(( )) arithmetic.
+#
+# Fails CLOSED. A body is dropped only when its terminator line is found; an
+# UNTERMINATED heredoc keeps its "body" in the matched text (bash would treat the
+# rest as stdin data, but an unterminated heredoc is anomalous, and this is how a
+# false detection could otherwise hide a real command). Anything the scanner is
+# unsure about — an odd quote state at end of line, an unclosed `((` — registers
+# no heredoc, so the text stays matched. Commands after a terminator line are
+# command lines again and are matched.
+strip_heredoc_bodies() {
+  awk -v sqc="'" '
+    function reg(w, d) { nh++; term[nh] = w; dash[nh] = d }
+    function scan(line,    n, i, c, c1, c2, j, d, w, k, found) {
+      n = length(line); i = 1; found = 0
+      while (i <= n) {
+        c = substr(line, i, 1); c1 = substr(line, i + 1, 1); c2 = substr(line, i + 2, 1)
+        if (sq) { if (c == sqc) sq = 0; i++; continue }
+        if (dq) {
+          if (c == "\\") { i += 2; continue }
+          if (c == "$" && c1 == "(" && c2 != "(") { lvl++; cs[lvl] = 1; pd[lvl] = 0; dq = 0; i += 2; continue }
+          if (c == "\"") dq = 0
+          i++; continue
+        }
+        if (c == "\\") { i += 2; continue }
+        if (c == sqc) { sq = 1; i++; continue }
+        if (c == "\"") { dq = 1; i++; continue }
+        if (c == "#" && (i == 1 || substr(line, i - 1, 1) ~ /[ \t;&|(]/)) break
+        if (ar > 0) {
+          if (c == "(") ar++; else if (c == ")") ar--
+          i++; continue
+        }
+        if (c == "$" && c1 == "(" && c2 != "(") { lvl++; cs[lvl] = 0; pd[lvl] = 0; i += 2; continue }
+        if (c == "(" && c1 == "(") { ar = 2; i += 2; continue }
+        if (lvl > 0 && c == "(") { pd[lvl]++; i++; continue }
+        if (lvl > 0 && c == ")") {
+          if (pd[lvl] > 0) pd[lvl]--; else { dq = cs[lvl]; lvl-- }
+          i++; continue
+        }
+        if (c == "<" && c1 == "<") {
+          if (c2 == "<") { i += 3; continue }
+          j = i + 2; d = 0
+          if (substr(line, j, 1) == "-") { d = 1; j++ }
+          while (substr(line, j, 1) ~ /[ \t]/) j++
+          c = substr(line, j, 1); w = ""
+          if (c == sqc || c == "\"") {
+            k = index(substr(line, j + 1), c)
+            if (k == 0) { i += 2; continue }
+            w = substr(line, j + 1, k - 1); j = j + k + 1
+          } else {
+            if (c == "\\") { j++; c = substr(line, j, 1) }
+            if (c !~ /[A-Za-z_]/) { i += 2; continue }
+            k = j
+            while (k <= n && substr(line, k, 1) !~ /[ \t;&|<>()]/) k++
+            w = substr(line, j, k - j); j = k
+          }
+          if (w == "") { i += 2; continue }
+          reg(w, d); found++; i = j; continue
+        }
+        i++
+      }
+      if ((sq || dq) && found) nh -= found
+    }
+    BEGIN { cur = 1 }
+    {
+      if (nh > 0) {
+        t = $0
+        if (dash[cur]) sub(/^\t+/, "", t)
+        if (t == term[cur]) {
+          body[cur] = ""; cur++
+          if (cur > nh) { nh = 0; cur = 1 }
+        } else body[cur] = body[cur] $0 "\n"
+        next
+      }
+      print $0
+      scan($0)
+    }
+    END { for (k = 1; k <= nh; k++) printf "%s", body[k] }
+  '
+}
+
 case "$tool" in
   Grep|Glob)
     path="$(field .tool_input.path)"
@@ -110,7 +198,14 @@ case "$tool" in
     cmd="$(field .tool_input.command)"
     # Extraction failed outright (exotic payload, no jq, no awk) → match against
     # the raw payload rather than waving the call through.
-    [ -n "$cmd" ] || cmd="$input"
+    if [ -n "$cmd" ]; then
+      # Match the command LINES only; heredoc bodies are data (see above). If
+      # stripping yields nothing (no awk), keep the full text.
+      stripped="$(printf '%s\n' "$cmd" | strip_heredoc_bodies)"
+      [ -n "$stripped" ] && cmd="$stripped"
+    else
+      cmd="$input"
+    fi
 
     # Sanctioned retrieval: any memory-CLI invocation passes untouched. This also
     # keeps the repo's own path (…/personal-memory/src/cli.ts) from tripping the

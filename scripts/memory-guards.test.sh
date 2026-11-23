@@ -75,6 +75,17 @@ both_write_bash_case() {
   done
 }
 
+# both_search_bash_case <deny|allow> <command>
+# Same drift concern as the write guards: the .claude and .codex search guards
+# are separate copies, so the heredoc cases run against both.
+both_search_bash_case() {
+  local want="$1" cmd="$2" g
+  for g in "$repo_root/.claude/hooks/guard-memory-search.sh" "$repo_root/.codex/hooks/guard-memory-search.sh"; do
+    expect "$want" "$g" "both[$(basename "$(dirname "$(dirname "$g")")")]: $(printf '%s' "$cmd" | tr '\n\t' '~^')" \
+      "$(jq -nc --arg c "$cmd" '{tool_name:"Bash",tool_input:{command:$c}}')"
+  done
+}
+
 # write_file_case <deny|allow> <file_path>
 write_file_case() {
   local want="$1" file="$2"
@@ -155,6 +166,43 @@ bash_case allow 'ls src/'
 bash_case allow 'ls'
 bash_case allow 'cat package.json'
 bash_case allow 'npm test'
+
+echo
+echo "== search guard: heredoc bodies are data, command lines are not =="
+nl=$'\n'; tab=$'\t'
+# The false positive: prose in a heredoc body that merely mentions a store.
+both_search_bash_case allow "python3 tool.py msg x <<'EOF'${nl}Blocked: could not cat memory/people/a.md or ls memory-graphs/${nl}EOF"
+both_search_bash_case allow "python3 tool.py msg x <<EOF${nl}cat memory/people/a.md${nl}EOF"
+both_search_bash_case allow "python3 tool.py msg x <<\"EOF\"${nl}grep -rli jane .${nl}EOF"
+both_search_bash_case allow "python3 tool.py msg x <<\\EOF${nl}cat memory/x.md${nl}EOF"
+both_search_bash_case allow "cat <<-EOF${nl}${tab}cat memory/x.md${nl}${tab}EOF"
+both_search_bash_case allow "cat <<A <<'B'${nl}ls memory/${nl}A${nl}find memory/ -name x${nl}B"
+both_search_bash_case allow "git commit -m \"\$(cat <<'EOF'${nl}note: ls memory/entries${nl}EOF${nl})\""
+# A real search is still denied around a heredoc: on the command line, before it,
+# after the terminator, between two heredocs, or after a $( ) heredoc.
+both_search_bash_case deny "grep foo memory/ <<'EOF'${nl}harmless${nl}EOF"
+both_search_bash_case deny "cat <<'EOF' memory/x.md${nl}harmless${nl}EOF"
+both_search_bash_case deny "python3 tool.py <<'EOF'${nl}harmless${nl}EOF${nl}cat memory/x.md"
+both_search_bash_case deny "cat <<A${nl}one${nl}A${nl}ls memory/${nl}cat <<B${nl}two${nl}B"
+both_search_bash_case deny "echo \"\$(cat <<'EOF'${nl}x${nl}EOF${nl})\"${nl}ls memory/entries"
+both_search_bash_case deny "cat <<-EOF${nl}x${nl}EOF${nl}cat memory/x.md"
+# A terminator that does not match exactly never closes the heredoc, so the rest
+# stays matched (<<- strips tabs only; plain << strips nothing).
+both_search_bash_case deny "cat <<EOF${nl}x${nl} EOF${nl}cat memory/x.md"
+both_search_bash_case deny "cat <<EOF${nl}x${nl}${tab}EOF${nl}cat memory/x.md"
+# Fail closed: an UNTERMINATED heredoc keeps its body in the matched text.
+both_search_bash_case deny "cat <<EOF${nl}cat memory/x.md"
+# Things that look like heredocs but are not must not hide a later command.
+both_search_bash_case deny "cat <<<EOF${nl}cat memory/x.md"
+both_search_bash_case deny "echo \"<<EOF\"${nl}cat memory/x.md${nl}EOF"
+both_search_bash_case deny "echo '<<EOF'${nl}cat memory/x.md${nl}EOF"
+both_search_bash_case deny "echo \$((1<<EOF))${nl}cat memory/x.md${nl}EOF"
+both_search_bash_case deny "echo hi # <<EOF${nl}cat memory/x.md${nl}EOF"
+# A here-string is a command-line word, not a body: still matched.
+both_search_bash_case deny "cat <<< memory/x.md"
+both_search_bash_case deny "grep -rn jane <<< memory/"
+# Heredoc text never opens the sanctioned-CLI pass-through.
+both_search_bash_case deny "cat memory/x.md <<'EOF'${nl}see src/cli.ts${nl}EOF"
 
 echo
 echo "== search guard: Grep/Glob scoping =="
