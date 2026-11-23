@@ -168,30 +168,73 @@ bash_case allow 'cat package.json'
 bash_case allow 'npm test'
 
 echo
-echo "== search guard: heredoc bodies are data, command lines are not =="
-nl=$'\n'; tab=$'\t'
+echo "== search guard: heredoc bodies are stripped only for data consumers =="
+nl=$'\n'; tab=$'\t'; cr=$'\r'
 # The false positive: prose in a heredoc body that merely mentions a store.
 both_search_bash_case allow "python3 tool.py msg x <<'EOF'${nl}Blocked: could not cat memory/people/a.md or ls memory-graphs/${nl}EOF"
 both_search_bash_case allow "python3 tool.py msg x <<EOF${nl}cat memory/people/a.md${nl}EOF"
 both_search_bash_case allow "python3 tool.py msg x <<\"EOF\"${nl}grep -rli jane .${nl}EOF"
-both_search_bash_case allow "python3 tool.py msg x <<\\EOF${nl}cat memory/x.md${nl}EOF"
-both_search_bash_case allow "cat <<-EOF${nl}${tab}cat memory/x.md${nl}${tab}EOF"
-both_search_bash_case allow "cat <<A <<'B'${nl}ls memory/${nl}A${nl}find memory/ -name x${nl}B"
+both_search_bash_case allow "python scripts/tool.py <<'EOF'${nl}ls memory/entries${nl}EOF"
+both_search_bash_case allow "cat > notes.md <<'EOF'${nl}see cat memory/x.md and ls memory-graphs/${nl}EOF"
+both_search_bash_case allow "cat > notes.md <<-EOF${nl}${tab}cat memory/x.md${nl}${tab}EOF"
+both_search_bash_case allow "cat >> notes.md <<A${nl}ls memory/${nl}A"
+both_search_bash_case allow "cat <<'A' > notes.md <<'B'${nl}ls memory/${nl}A${nl}find memory/ -name x${nl}B"
+both_search_bash_case allow "tee notes.md <<'EOF'${nl}cat memory/x.md${nl}EOF"
+both_search_bash_case allow "git commit -F - <<'EOF'${nl}note: ls memory/entries${nl}EOF"
+both_search_bash_case allow "git commit --file=- <<'EOF'${nl}note: ls memory/entries${nl}EOF"
+both_search_bash_case allow "gh pr create --body-file - <<'EOF'${nl}note: ls memory/entries${nl}EOF"
+both_search_bash_case allow "gh issue comment 1 -F - <<'EOF'${nl}note: ls memory/entries${nl}EOF"
 both_search_bash_case allow "git commit -m \"\$(cat <<'EOF'${nl}note: ls memory/entries${nl}EOF${nl})\""
-# A real search is still denied around a heredoc: on the command line, before it,
-# after the terminator, between two heredocs, or after a $( ) heredoc.
+both_search_bash_case allow "gh pr create --body \"\$(cat <<'EOF'${nl}note: ls memory/entries${nl}EOF${nl})\""
+# A real search is still denied around an allowed heredoc: on the command line,
+# before it, after the terminator, between two heredocs, or after a $( ) heredoc.
 both_search_bash_case deny "grep foo memory/ <<'EOF'${nl}harmless${nl}EOF"
-both_search_bash_case deny "cat <<'EOF' memory/x.md${nl}harmless${nl}EOF"
+both_search_bash_case deny "cat memory/x.md > out.md <<'EOF'${nl}harmless${nl}EOF"
 both_search_bash_case deny "python3 tool.py <<'EOF'${nl}harmless${nl}EOF${nl}cat memory/x.md"
-both_search_bash_case deny "cat <<A${nl}one${nl}A${nl}ls memory/${nl}cat <<B${nl}two${nl}B"
+both_search_bash_case deny "cat > a.md <<A${nl}one${nl}A${nl}ls memory/${nl}cat > b.md <<B${nl}two${nl}B"
 both_search_bash_case deny "echo \"\$(cat <<'EOF'${nl}x${nl}EOF${nl})\"${nl}ls memory/entries"
-both_search_bash_case deny "cat <<-EOF${nl}x${nl}EOF${nl}cat memory/x.md"
-# A terminator that does not match exactly never closes the heredoc, so the rest
-# stays matched (<<- strips tabs only; plain << strips nothing).
-both_search_bash_case deny "cat <<EOF${nl}x${nl} EOF${nl}cat memory/x.md"
-both_search_bash_case deny "cat <<EOF${nl}x${nl}${tab}EOF${nl}cat memory/x.md"
-# Fail closed: an UNTERMINATED heredoc keeps its body in the matched text.
-both_search_bash_case deny "cat <<EOF${nl}cat memory/x.md"
+both_search_bash_case deny "git commit -m \"\$(cat <<'EOF'${nl}x${nl}EOF${nl})\"${nl}cat memory/x.md"
+both_search_bash_case deny "cat > a.md <<-EOF${nl}x${nl}EOF${nl}cat memory/x.md"
+# A heredoc body can be CODE or a LIST OF PATHS: unless the owning command only
+# stores or forwards text, the body stays matched.
+both_search_bash_case deny "bash <<'EOF'${nl}grep -rn jane memory/${nl}EOF"
+both_search_bash_case deny "sh <<EOF${nl}cat memory/entries/x.md${nl}EOF"
+both_search_bash_case deny "zsh <<EOF${nl}cat memory/entries/x.md${nl}EOF"
+both_search_bash_case deny "python3 - <<'EOF'${nl}import subprocess; subprocess.run('grep -r jane memory/', shell=True)${nl}EOF"
+both_search_bash_case deny "python3 -c 'import sys; exec(sys.stdin.read())' <<'EOF'${nl}import os; os.system('cat memory/x.md')${nl}EOF"
+both_search_bash_case deny "node <<'EOF'${nl}require('child_process').execSync('cat memory/x.md')${nl}EOF"
+both_search_bash_case deny "perl <<'EOF'${nl}system('cat memory/x.md')${nl}EOF"
+both_search_bash_case deny "eval \"\$(cat <<'EOF'${nl}grep jane memory/${nl}EOF${nl})\""
+both_search_bash_case deny "source /dev/stdin <<'EOF'${nl}cat memory/x.md${nl}EOF"
+both_search_bash_case deny ". /dev/stdin <<'EOF'${nl}cat memory/x.md${nl}EOF"
+both_search_bash_case deny "xargs cat <<'EOF'${nl}memory/entries/a.md${nl}EOF"
+both_search_bash_case deny "while read f; do cat \"\$f\"; done <<'EOF'${nl}memory/entries/a.md${nl}EOF"
+both_search_bash_case deny "cat <<'EOF' | bash${nl}cat memory/x.md${nl}EOF"
+both_search_bash_case deny "cat <<'EOF'${nl}cat memory/x.md${nl}EOF"
+both_search_bash_case deny "python3 tool.py <<'EOF' | xargs cat${nl}memory/entries/a.md${nl}EOF"
+both_search_bash_case deny "cat > a.md <<'EOF' && bash a.md${nl}cat memory/x.md${nl}EOF"
+# An unusual delimiter or any construct the scanner cannot judge: strip nothing.
+both_search_bash_case deny "cat > a.md <<tr\"u\"e${nl}x${nl}true${nl}cat memory/x.md${nl}tr\"u\"e"
+both_search_bash_case deny "cat > a.md <<EOF'x'${nl}b${nl}EOFx${nl}cat memory/x.md${nl}EOF'x'"
+both_search_bash_case deny "cat > a.md <<E\\OF${nl}b${nl}EOF${nl}cat memory/x.md${nl}E\\OF"
+both_search_bash_case deny "cat > a.md <<\\EOF${nl}cat memory/x.md${nl}EOF"
+both_search_bash_case deny "cat > a.md <<EOF${cr}${nl}x${cr}${nl}EOF${cr}${nl}cat memory/x.md"
+both_search_bash_case deny "echo \${x:-<<true }${nl}cat memory/x.md${nl}true"
+both_search_bash_case deny "echo \$[1<<X]${nl}cat memory/x.md${nl}X]"
+both_search_bash_case deny "echo \$'\\' <<EOF '\\'${nl}cat memory/x.md${nl}EOF"
+both_search_bash_case deny "(echo hi)#<<EOF${nl}cat memory/x.md${nl}EOF"
+both_search_bash_case deny "{ echo; }#<<EOF${nl}cat memory/x.md${nl}EOF"
+both_search_bash_case deny "x=\$(cat > a.md <<EOF${nl}hi${nl}EOF)${nl}cat memory/x.md${nl}EOF"
+both_search_bash_case deny "echo \"\$(case a in a) echo \" <<EOF \";; esac)\"${nl}cat memory/x.md${nl}EOF"
+both_search_bash_case deny "echo \`cat > a.md <<EOF${nl}x${nl}EOF${nl}\`${nl}cat memory/x.md"
+both_search_bash_case deny "bash -c \"cat > a.md <<EOF${nl}x${nl}EOF${nl}cat memory/x.md\""
+# Terminators must match exactly (<<- strips tabs only; plain << strips nothing),
+# and an UNTERMINATED heredoc keeps its body in the matched text.
+both_search_bash_case deny "cat > a.md <<EOF${nl}x${nl} EOF${nl}cat memory/x.md"
+both_search_bash_case deny "cat > a.md <<EOF${nl}x${nl}EOF ${nl}cat memory/x.md"
+both_search_bash_case deny "cat > a.md <<EOF${nl}x${nl}${tab}EOF${nl}cat memory/x.md"
+both_search_bash_case deny "cat > a.md <<-EOF${nl}x${nl}  EOF${nl}cat memory/x.md"
+both_search_bash_case deny "cat > a.md <<EOF${nl}cat memory/x.md"
 # Things that look like heredocs but are not must not hide a later command.
 both_search_bash_case deny "cat <<<EOF${nl}cat memory/x.md"
 both_search_bash_case deny "echo \"<<EOF\"${nl}cat memory/x.md${nl}EOF"
@@ -202,7 +245,7 @@ both_search_bash_case deny "echo hi # <<EOF${nl}cat memory/x.md${nl}EOF"
 both_search_bash_case deny "cat <<< memory/x.md"
 both_search_bash_case deny "grep -rn jane <<< memory/"
 # Heredoc text never opens the sanctioned-CLI pass-through.
-both_search_bash_case deny "cat memory/x.md <<'EOF'${nl}see src/cli.ts${nl}EOF"
+both_search_bash_case deny "cat memory/x.md > out.md <<'EOF'${nl}see src/cli.ts${nl}EOF"
 
 echo
 echo "== search guard: Grep/Glob scoping =="

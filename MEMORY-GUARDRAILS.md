@@ -113,10 +113,11 @@ four things a manual write skips:
   into it anyway** (`grep -rli "jane doe" .`, `rg jane`, `find . -name …`).
   That last shape is the one hand-search actually takes — searching from the
   repo root is not "scoped to code". Shelling out is not a loophole.
-  Only command lines are matched: heredoc bodies (`<<EOF … EOF`) are stdin data
-  and are ignored, so prose that merely mentions a store passes. Fails closed — an
-  unterminated heredoc, a `<<<` here-string, or `<<` inside quotes/`$(( ))` is not
-  stripped.
+  Heredoc bodies are stripped before matching only when every heredoc in the
+  command is owned by a data consumer (`cat > file`, `cat` inside `$( )` of
+  `git commit`/`gh`, `tee file`, `git commit -F -`, `gh --body-file -`,
+  `python <path>.py`) and no shell/interpreter/`eval`/`source`/`xargs`/`read` is on
+  the command line; otherwise, or if the scanner is unsure, the whole text is matched.
   Any `cli.ts` invocation passes untouched, as do plain store git checks
   (`git -C memory log|status`), stdin filtering (`git log | grep …`), and
   searches scoped to a real non-store path (`src/`, `skills/`, `scripts/`).

@@ -72,51 +72,107 @@ JSON
   exit 0
 }
 
-# Heredoc bodies are stdin DATA, not part of the command line: `tool.py msg x
-# <<'EOF' … cat memory/a.md … EOF` runs nothing but tool.py. Matching the body
-# denies harmless commands whose text merely MENTIONS a store, so drop closed
-# heredoc bodies and their terminator lines (the `<<WORD` line stays) before matching.
+# Heredoc bodies are stdin DATA when the command that owns them only stores or
+# forwards text: `tool.py msg x <<'EOF' … cat memory/a.md … EOF` runs nothing but
+# tool.py, so matching the body denies harmless commands whose text merely
+# MENTIONS a store. But a body can equally be CODE (`bash <<EOF`, `python3 - <<EOF`,
+# `eval "$(cat <<EOF …)"`) or a LIST OF PATHS (`xargs cat <<EOF`), and then it must
+# stay matched. So bodies are stripped only in a narrow, known-safe case, and
+# otherwise NOTHING is stripped (the whole command is matched as before).
 #
-# Handled: <<WORD, <<'WORD', <<"WORD", <<\WORD, <<-WORD (tab-stripped terminator),
-# several heredocs on one line, and heredocs inside "$( … )". NOT heredocs: `<<<`
-# here-strings (the word sits on the command line and stays matched), and `<<` in
-# quotes, comments or $(( )) arithmetic.
+# Owner allowlist — every heredoc in the command must be owned by one of:
+#   - cat with its output redirected to a file (`cat > f <<EOF`);
+#   - cat inside "$( … )" used as an argument of `git commit …` or `gh …`;
+#   - tee <file>;
+#   - git commit … -F - / --file=-;   gh … --body-file - / -F -;
+#   - python|python3 <path>.py (the next word is a .py path, not -, -c or -m).
+# And the command lines must contain none of: eval source . xargs read while sh bash
+# zsh dash ksh node perl ruby tsx deno osascript (also as path basenames).
 #
-# Fails CLOSED. A body is dropped only when its terminator line is found; an
-# UNTERMINATED heredoc keeps its "body" in the matched text (bash would treat the
-# rest as stdin data, but an unterminated heredoc is anomalous, and this is how a
-# false detection could otherwise hide a real command). Anything the scanner is
-# unsure about — an odd quote state at end of line, an unclosed `((` — registers
-# no heredoc, so the text stays matched. Commands after a terminator line are
-# command lines again and are matched.
+# Strip nothing when the scanner is unsure: an unterminated heredoc, a delimiter that
+# is not exactly WORD / 'WORD' / "WORD" (WORD = [A-Za-z_][A-Za-z0-9_]*, followed by
+# a blank, ;&|<>() or end of line), `${` `$[` `$'` or a backtick on a line with `<<`,
+# `#` right after `)` or `}`, a body line that is the terminator followed by `)`,
+# `case` in a $( ), or an open quote at the end of a line that carries `<<`.
+# `<<<` here-strings, and `<<` in quotes, comments or $(( )) arithmetic, are not
+# heredocs. Commands after a terminator line are command lines and stay matched.
 strip_heredoc_bodies() {
   awk -v sqc="'" '
-    function reg(w, d) { nh++; term[nh] = w; dash[nh] = d }
-    function scan(line,    n, i, c, c1, c2, j, d, w, k, found) {
-      n = length(line); i = 1; found = 0
+    function trim(s) { gsub(/^[ \t]+/, "", s); gsub(/[ \t]+$/, "", s); return s }
+    function bad_words(text,    t, n, w, i) {
+      t = text; gsub(badre, " ", t)
+      n = split(t, w, /[ \t\r\n]+/)
+      for (i = 1; i <= n; i++) { sub(/^.*\//, "", w[i]); if (w[i] in F) return 1 }
+      return 0
+    }
+    function owner_ok(seg, lv, outer,    n, tk, o, i, red) {
+      n = split(trim(seg), tk, /[ \t]+/)
+      if (tk[1] == "cat") {
+        for (i = 2; i <= n; i++) {
+          if (tk[i] ~ /^[0-9]*>>?$/ && i < n && tk[i + 1] !~ /^&/) red = 1
+          else if (tk[i] ~ /^[0-9]*>>?[^>&]/) red = 1
+        }
+        if (red) return 1
+        split(trim(outer), o, /[ \t]+/)
+        if (lv > 0 && ((o[1] == "git" && o[2] == "commit") || o[1] == "gh")) return 1
+        return 0
+      }
+      if (tk[1] == "tee") {
+        for (i = 2; i <= n; i++) if (tk[i] !~ /^-/ && tk[i] !~ /^[0-9]*[<>]/) return 1
+        return 0
+      }
+      if (tk[1] == "git" && tk[2] == "commit") {
+        for (i = 3; i <= n; i++) {
+          if (tk[i] == "--file=-") return 1
+          if ((tk[i] == "-F" || tk[i] == "--file") && tk[i + 1] == "-") return 1
+        }
+        return 0
+      }
+      if (tk[1] == "gh") {
+        for (i = 2; i <= n; i++) {
+          if (tk[i] == "--body-file=-") return 1
+          if ((tk[i] == "-F" || tk[i] == "--body-file") && tk[i + 1] == "-") return 1
+        }
+        return 0
+      }
+      if (tk[1] ~ /^python3?$/ && tk[2] ~ /\.py$/ && tk[2] !~ /^-/) return 1
+      return 0
+    }
+    function scan(line,    n, i, c, c1, c2, j, d, w, k, first, q, nx, hasw) {
+      n = length(line); i = 1; first = nh + 1; ns = 0; lastsep = 0
+      if (index(line, "<<") && (index(line, "${") || index(line, "$[") || index(line, "$" sqc) || index(line, "`"))) unsure = 1
+      if ((lvl > 0 || index(line, "$(")) && line ~ /(^|[^A-Za-z0-9_])case([^A-Za-z0-9_]|$)/) unsure = 1
       while (i <= n) {
         c = substr(line, i, 1); c1 = substr(line, i + 1, 1); c2 = substr(line, i + 2, 1)
         if (sq) { if (c == sqc) sq = 0; i++; continue }
         if (dq) {
           if (c == "\\") { i += 2; continue }
-          if (c == "$" && c1 == "(" && c2 != "(") { lvl++; cs[lvl] = 1; pd[lvl] = 0; dq = 0; i += 2; continue }
+          if (c == "$" && c1 == "(" && c2 != "(") {
+            lvl++; cs[lvl] = 1; pd[lvl] = 0; dq = 0
+            outer[lvl] = substr(line, lastsep + 1, i - lastsep - 1); lastsep = i + 1; i += 2; continue
+          }
           if (c == "\"") dq = 0
           i++; continue
         }
         if (c == "\\") { i += 2; continue }
         if (c == sqc) { sq = 1; i++; continue }
         if (c == "\"") { dq = 1; i++; continue }
+        if (c == "#" && i > 1 && substr(line, i - 1, 1) ~ /[)}]/) unsure = 1
         if (c == "#" && (i == 1 || substr(line, i - 1, 1) ~ /[ \t;&|(]/)) break
         if (ar > 0) {
           if (c == "(") ar++; else if (c == ")") ar--
           i++; continue
         }
-        if (c == "$" && c1 == "(" && c2 != "(") { lvl++; cs[lvl] = 0; pd[lvl] = 0; i += 2; continue }
+        if (c == "$" && c1 == "(" && c2 != "(") {
+          lvl++; cs[lvl] = 0; pd[lvl] = 0
+          outer[lvl] = substr(line, lastsep + 1, i - lastsep - 1); lastsep = i + 1; i += 2; continue
+        }
         if (c == "(" && c1 == "(") { ar = 2; i += 2; continue }
-        if (lvl > 0 && c == "(") { pd[lvl]++; i++; continue }
-        if (lvl > 0 && c == ")") {
-          if (pd[lvl] > 0) pd[lvl]--; else { dq = cs[lvl]; lvl-- }
-          i++; continue
+        if (c == ";" || c == "&" || c == "|" || c == "(" || c == ")") {
+          sp[++ns] = i
+          if (lvl > 0 && c == "(") pd[lvl]++
+          else if (lvl > 0 && c == ")") { if (pd[lvl] > 0) pd[lvl]--; else { dq = cs[lvl]; lvl-- } }
+          lastsep = i; i++; continue
         }
         if (c == "<" && c1 == "<") {
           if (c2 == "<") { i += 3; continue }
@@ -125,38 +181,57 @@ strip_heredoc_bodies() {
           while (substr(line, j, 1) ~ /[ \t]/) j++
           c = substr(line, j, 1); w = ""
           if (c == sqc || c == "\"") {
-            k = index(substr(line, j + 1), c)
-            if (k == 0) { i += 2; continue }
-            w = substr(line, j + 1, k - 1); j = j + k + 1
-          } else {
-            if (c == "\\") { j++; c = substr(line, j, 1) }
-            if (c !~ /[A-Za-z_]/) { i += 2; continue }
-            k = j
-            while (k <= n && substr(line, k, 1) !~ /[ \t;&|<>()]/) k++
-            w = substr(line, j, k - j); j = k
+            if (match(substr(line, j + 1), /^[A-Za-z_][A-Za-z0-9_]*/) && substr(line, j + 1 + RLENGTH, 1) == c) {
+              w = substr(line, j + 1, RLENGTH); j = j + RLENGTH + 2
+            }
+          } else if (match(substr(line, j), /^[A-Za-z_][A-Za-z0-9_]*/)) {
+            w = substr(line, j, RLENGTH); j = j + RLENGTH
           }
-          if (w == "") { i += 2; continue }
-          reg(w, d); found++; i = j; continue
+          nx = substr(line, j, 1)
+          if (w == "" || (nx != "" && nx !~ /[ \t;&|<>()]/)) { unsure = 1; i += 2; continue }
+          nh++; term[nh] = w; dash[nh] = d; hpos[nh] = i; hprev[nh] = lastsep
+          hlvl[nh] = lvl; hout[nh] = (lvl > 0) ? outer[lvl] : ""
+          i = j; continue
         }
         i++
       }
-      if ((sq || dq) && found) nh -= found
+      if ((sq || dq) && nh >= first) unsure = 1
+      for (q = first; q <= nh; q++) {
+        nx = n + 1
+        for (k = 1; k <= ns; k++) if (sp[k] > hpos[q]) { nx = sp[k]; break }
+        if (!owner_ok(substr(line, hprev[q] + 1, nx - hprev[q] - 1), hlvl[q], hout[q])) badowner = 1
+      }
+      return (nh >= first) ? first : 0
     }
-    BEGIN { cur = 1 }
+    BEGIN {
+      split("eval source . xargs read while sh bash zsh dash ksh node perl ruby tsx deno osascript", fw, " ")
+      for (k in fw) F[fw[k]] = 1
+      badre = "[;&|()\"" sqc "`$<>{}=]"
+    }
     {
-      if (nh > 0) {
+      L[NR] = $0; kind[NR] = 0
+      if (rd > 0) {
         t = $0
-        if (dash[cur]) sub(/^\t+/, "", t)
-        if (t == term[cur]) {
-          body[cur] = ""; cur++
-          if (cur > nh) { nh = 0; cur = 1 }
-        } else body[cur] = body[cur] $0 "\n"
+        if (dash[rd]) sub(/^\t+/, "", t)
+        if (t == term[rd]) { kind[NR] = 2; rd++; if (rd > grpend) rd = 0 }
+        else {
+          kind[NR] = 1
+          if (substr(t, 1, length(term[rd]) + 1) == term[rd] ")") unsure = 1
+        }
         next
       }
-      print $0
-      scan($0)
+      f = scan($0)
+      if (f > 0) { rd = f; grpend = nh }
     }
-    END { for (k = 1; k <= nh; k++) printf "%s", body[k] }
+    END {
+      strip = (nh > 0 && rd == 0 && !unsure && !badowner)
+      if (strip) {
+        cmdtext = ""
+        for (k = 1; k <= NR; k++) if (kind[k] == 0) cmdtext = cmdtext L[k] "\n"
+        if (bad_words(cmdtext)) strip = 0
+      }
+      for (k = 1; k <= NR; k++) if (kind[k] == 0 || !strip) print L[k]
+    }
   '
 }
 
