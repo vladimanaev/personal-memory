@@ -174,7 +174,6 @@ py="import subprocess,sys; subprocess.run('cat memory/x.md', shell=True, stdout=
 # Shape A: python <path>.py T* <<WORD, nothing after the terminator. The motivating
 # false positive: prose in the body that merely mentions a store.
 both_search_bash_case allow "python3 tool.py msg x <<'EOF'${nl}Blocked: could not cat memory/people/a.md or ls memory-graphs/${nl}EOF"
-both_search_bash_case allow "python3 tool.py msg x <<EOF${nl}cat memory/people/a.md${nl}EOF"
 both_search_bash_case allow "python3 tool.py msg x <<\"EOF\"${nl}grep -rli jane .${nl}EOF"
 both_search_bash_case allow "python scripts/tool.py msg 'two words' <<'EOF'${nl}ls memory/entries${nl}EOF${nl}${nl}"
 # Shape B: a commit / PR message.
@@ -184,6 +183,19 @@ both_search_bash_case allow "gh pr create --title x --body \"\$(cat <<'EOF'${nl}
 # Shape C: write a file.
 both_search_bash_case allow "cat > notes.md <<'EOF'${nl}see cat memory/x.md and ls memory-graphs/${nl}EOF"
 both_search_bash_case allow "cat >> notes.md <<'A'${nl}ls memory/${nl}A"
+# An UNQUOTED delimiter lets the shell expand $( ), backticks and ${ } in the body
+# before python starts, so the body is code: never stripped.
+both_search_bash_case deny "python3 tool.py msg x <<EOF${nl}cat memory/people/a.md${nl}EOF"
+both_search_bash_case deny "python3 x.py <<EOF${nl}\$(cat memory/x.md >&2)${nl}EOF"
+both_search_bash_case deny "python3 x.py <<EOF${nl}\`grep -r jane memory/ >&2\`${nl}EOF"
+both_search_bash_case deny "python3 x.py <<EOF${nl}\${x:-\$(cat memory/x.md >&2)}${nl}EOF"
+# bash 3.2 ends a heredoc inside \$( ) on a body line "WORD)": any body line that
+# STARTS with WORD voids the shape, for all three shapes.
+both_search_bash_case deny "git commit --dry-run -m \"\$(cat <<'EOF'${nl}EOF)\"${nl}cat memory/x.md${nl}EOF${nl})\""
+both_search_bash_case deny "python3 x.py <<'EOF'${nl}EOF)${nl}cat memory/x.md${nl}EOF"
+both_search_bash_case deny "python3 x.py <<'EOF'${nl}EOFx${nl}cat memory/x.md${nl}EOF"
+both_search_bash_case deny "cat > s <<'EOF'${nl}EOF)${nl}cat memory/x.md${nl}EOF"
+both_search_bash_case deny "cat > s <<'EOF'${nl}EOF ${nl}cat memory/x.md${nl}EOF"
 # Near misses of A: pipe, redirect, chaining, command after the terminator, a
 # \ continuation, $ / backtick / paren in an arg, a second heredoc, wrong script.
 both_search_bash_case deny "python3 tool.py <<'EOF' | x${nl}cat memory/x.md${nl}EOF"

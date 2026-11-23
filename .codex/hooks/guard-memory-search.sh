@@ -77,8 +77,10 @@ for (const path of paths) {
 # ONLY when the ENTIRE command is exactly one of these shapes; anything else is
 # matched whole (no stripping). T is a plain token [A-Za-z0-9_./~@%+=:,-]+ (or a
 # single-quoted string); WORD is [A-Za-z_][A-Za-z0-9_]*; one heredoc, nothing after
-# the terminator but empty lines (and, in B, the closing line).
-#   A  python|python3 <path>.py T* <<WORD | <<'WORD' | <<"WORD"   ... WORD
+# the terminator but empty lines (and, in B, the closing line). A body line that
+# merely STARTS with WORD (bash 3.2 ends a $( ) heredoc on `WORD)`) voids the shape.
+#   A  python|python3 <path>.py T* <<'WORD' | <<"WORD"   ... WORD   (QUOTED: an unquoted
+#      body is expanded by the shell, so $(…) in it would run)
 #   B  git commit T* -m "$(cat <<'WORD'  ... WORD  )" T*          (or gh T* --body …)
 #   C  cat > T <<'WORD'  ... WORD                                  (or >>; not /dev/*, not -)
 # The command line (and B's closing line) stays matched as before.
@@ -87,7 +89,7 @@ strip_heredoc_bodies() {
     BEGIN {
       T = "([A-Za-z0-9_./~@%+=:,-]+|" sqc "[^" sqc "]*" sqc ")"
       W = "[A-Za-z_][A-Za-z0-9_]*"
-      ra = "^python3?( [A-Za-z0-9_./~@%+=:,][A-Za-z0-9_./~@%+=:,-]*\\.py)( " T ")* <<(" sqc W sqc "|\"" W "\"|" W ")$"
+      ra = "^python3?( [A-Za-z0-9_./~@%+=:,][A-Za-z0-9_./~@%+=:,-]*\\.py)( " T ")* <<(" sqc W sqc "|\"" W "\")$"
       rb = "^(git commit|gh)( " T ")* (-m|--body) \"\\$\\(cat <<" sqc W sqc "$"
       rc = "^cat >>? [A-Za-z0-9_.~@%+=:,][A-Za-z0-9_./~@%+=:,-]* <<" sqc W sqc "$"
       rend = "^\\)\"( " T ")*$"
@@ -106,9 +108,12 @@ strip_heredoc_bodies() {
           w = substr(h, RSTART + 2); gsub(/["\x27]/, "", w)
           last = isb ? n - 1 : n
           if (!isb || L[n] ~ rend) {
-            k = 2
-            while (k <= n && L[k] != w) k++
-            if (k == last && last >= 2) ok = 1
+            k = 2; bad = 0
+            while (k <= n && L[k] != w) {
+              if (substr(L[k], 1, length(w)) == w) bad = 1
+              k++
+            }
+            if (k == last && last >= 2 && !bad) ok = 1
           }
         }
       }

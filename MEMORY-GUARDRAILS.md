@@ -114,9 +114,10 @@ four things a manual write skips:
   That last shape is the one hand-search actually takes — searching from the
   repo root is not "scoped to code". Shelling out is not a loophole.
   A heredoc body is stripped before matching only when the ENTIRE command is
-  exactly one of three shapes: `python <path>.py <plain args> <<WORD`, a
+  exactly one of three shapes: `python <path>.py <plain args> <<'WORD'` (quoted
+  delimiter only — an unquoted body is shell-expanded), a
   `git commit … -m "$(cat <<'WORD' … )"` (or `gh … --body`) message, or
-  `cat > <file> <<'WORD'`, with nothing after the terminator. Any other command
+  `cat > <file> <<'WORD'`, with nothing after the terminator and no body line starting with WORD. Any other command
   (pipes, `;`, redirects, `bash <<EOF`, `xargs`, …) is matched whole, body included.
   Any `cli.ts` invocation passes untouched, as do plain store git checks
   (`git -C memory log|status`), stdin filtering (`git log | grep …`), and
