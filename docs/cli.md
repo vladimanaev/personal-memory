@@ -106,7 +106,7 @@ every graph and labels shared memberships `[<graph>,…]`.
 `memory open` lists unresolved todos and pending decisions that a new capture
 might settle — pass the confirmed ids to `--follows`. Items with a due date show
 it, flagged `⚠ overdue` once past; `--overdue` / `--no-due` narrow to those
-past due or without a date.
+past due or without a date. `--format json` rows carry the entry's `tags` (`[]` when none).
 
 ## Graphs
 
