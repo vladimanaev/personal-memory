@@ -690,6 +690,47 @@ async function staleRuleRows(entry: { id: string; tags: string[]; type: string }
   }
 }
 
+export interface RetitleResult {
+  id: string;
+  before: string;
+  after: string;
+  dryRun: boolean;
+  /** The new title equals the current one (ignoring whitespace): nothing was written. */
+  unchanged: boolean;
+  /** Graphs holding a copy of the entry (home first). */
+  graphs: string[];
+  path?: string;
+  index?: { added: number; removed: number; unchanged: number };
+}
+
+/**
+ * Change ONE entry's title in place — id, file name, body, tags, links, dates,
+ * sources and memberships are untouched (so links and source references keep
+ * working); only `title` and `updated` change. Every copy takes the new
+ * frontmatter (a declared variant keeps its own body and `variant_of_hash`,
+ * see writeEntryAll), the index is re-synced, and each member store is
+ * committed. An empty or multi-line title is rejected; one that differs from
+ * the current only in whitespace is a no-op, so a retried call never fails.
+ */
+export async function applyRetitle(opts: { id: string; title: string; dryRun?: boolean }): Promise<RetitleResult> {
+  const title = opts.title.trim();
+  if (!title) throw new Error("title must not be empty");
+  // list/open/recall print one title per line.
+  if (/[\r\n]/.test(title)) throw new Error("title must be a single line");
+  FrontmatterSchema.shape.title.parse(title);
+
+  const catalog = await openCatalogForWrite();
+  const entry = await requireEntry(catalog, opts.id);
+  const squash = (s: string) => s.replace(/\s+/g, " ").trim();
+  const base = { id: entry.id, before: entry.title, after: title, graphs: sortGraphs(entry.graphs) as GraphId[], dryRun: Boolean(opts.dryRun) };
+  // Whitespace differences do not count: no write, no commit, no index sync.
+  if (squash(entry.title) === squash(title)) return { ...base, after: entry.title, unchanged: true };
+  if (opts.dryRun) return { ...base, unchanged: false };
+
+  const { path, index } = await rewriteFrontmatter(entry, { title }, `Retitle memory: ${entry.id}`);
+  return { ...base, unchanged: false, path, index };
+}
+
 export async function mergeSlugs(opts: {
   kind: SlugKind;
   from: string;

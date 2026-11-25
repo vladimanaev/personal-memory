@@ -48,6 +48,17 @@ body stay as they are. New tags are judged against standing distribution rules
 like a capture (candidates are queued, never published); removing a tag never
 changes graph memberships.
 
+## Change a title
+
+```text
+memory retitle <id> --title "…" [--dry-run]
+```
+
+Changes only the entry's `title` (and `updated`) in every graph copy, shared
+ones included. The id and file name stay, so links and source references keep
+working. An empty or multi-line title is rejected; one that differs from the
+current only in whitespace changes nothing and exits 0, so a retry is safe.
+
 ## Timeline links
 
 ```text
