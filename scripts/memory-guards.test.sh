@@ -19,8 +19,12 @@ failures=0
 checks=0
 
 # run_guard <guard> <json-payload> -> prints guard stdout
+# The guard's own settings come only from the test: a CLAUDE_PROJECT_DIR or
+# MEMORY_GUARD_STDIN_SCRIPTS inherited from the shell running the tests must not
+# change a verdict. GUARD_ENV is one NAME=value to set for a case.
+GUARD_ENV=""
 run_guard() {
-  printf '%s' "$2" | bash "$1"
+  printf '%s' "$2" | env -u CLAUDE_PROJECT_DIR -u MEMORY_GUARD_STDIN_SCRIPTS ${GUARD_ENV:+"$GUARD_ENV"} bash "$1"
 }
 
 # expect <deny|allow> <guard> <label> <json-payload>
@@ -79,11 +83,25 @@ both_write_bash_case() {
 # Same drift concern as the write guards: the .claude and .codex search guards
 # are separate copies, so the heredoc cases run against both.
 both_search_bash_case() {
-  local want="$1" cmd="$2" g
+  both_search_bash_case_at "$1" "$2" "$repo_root" ""
+}
+
+# both_search_bash_case_at <deny|allow> <command> <cwd|-> <NAME=value|"">
+# The payload carries "cwd" like a real hook payload ("-" = no cwd at all); a
+# repo-relative heredoc shape counts only when cwd is the repo top level.
+both_search_bash_case_at() {
+  local want="$1" cmd="$2" cwd="$3" envv="$4" g payload cw=""
+  [ "$cwd" != "$repo_root" ] && cw=" cwd=$cwd"
+  if [ "$cwd" = "-" ]; then
+    payload="$(jq -nc --arg c "$cmd" '{tool_name:"Bash",tool_input:{command:$c}}')"
+  else
+    payload="$(jq -nc --arg c "$cmd" --arg d "$cwd" '{tool_name:"Bash",cwd:$d,tool_input:{command:$c}}')"
+  fi
+  GUARD_ENV="$envv"
   for g in "$repo_root/.claude/hooks/guard-memory-search.sh" "$repo_root/.codex/hooks/guard-memory-search.sh"; do
-    expect "$want" "$g" "both[$(basename "$(dirname "$(dirname "$g")")")]: $(printf '%s' "$cmd" | tr '\n\t' '~^')" \
-      "$(jq -nc --arg c "$cmd" '{tool_name:"Bash",tool_input:{command:$c}}')"
+    expect "$want" "$g" "both[$(basename "$(dirname "$(dirname "$g")")")]${envv:+ env}${cw}: $(printf '%s' "$cmd" | tr '\n\t' '~^')" "$payload"
   done
+  GUARD_ENV=""
 }
 
 # write_file_case <deny|allow> <file_path>
@@ -317,7 +335,6 @@ both_search_bash_case deny "python3 x <<'X'${nl}${sysos}${nl}X"
 both_search_bash_case deny "cat > ~/.zshenv <<'X'${nl}${sysos}${nl}X"
 both_search_bash_case deny "cat > .git/hooks/commit-msg <<'X'${nl}cat memory/entries/a.md${nl}X"
 both_search_bash_case deny "cat > ~/notes.md <<'X'${nl}cat memory/entries/a.md${nl}X"
-both_search_bash_case deny "cat > /tmp/notes.md <<'X'${nl}cat memory/entries/a.md${nl}X"
 both_search_bash_case deny "cat > \$HOME/notes.md <<'X'${nl}cat memory/entries/a.md${nl}X"
 both_search_bash_case deny "cat > \${PWD}/notes.md <<'X'${nl}cat memory/entries/a.md${nl}X"
 both_search_bash_case deny "cat > ../notes.md <<'X'${nl}cat memory/entries/a.md${nl}X"
@@ -347,6 +364,94 @@ both_search_bash_case deny "cat > é.md <<'X'${nl}cat memory/entries/a.md${nl}X"
 both_search_bash_case deny "cat > x.md\$IFS <<'X'${nl}cat memory/entries/a.md${nl}X"
 both_search_bash_case deny "cat >> ~/.zshrc <<'X'${nl}cat memory/entries/a.md${nl}X"
 both_search_bash_case deny "cat >> ~/.bashrc <<'X'${nl}cat memory/entries/a.md${nl}X"
+both_search_bash_case deny "cat > A.MD <<'X'${nl}cat memory/entries/a.md${nl}X"
+both_search_bash_case deny "cat > notes.Md <<'X'${nl}cat memory/entries/a.md${nl}X"
+both_search_bash_case deny "cat > fix.diff <<'X'${nl}cat memory/entries/a.md${nl}X"
+both_search_bash_case deny "cat > fix.patch <<'X'${nl}cat memory/entries/a.md${nl}X"
+both_search_bash_case allow "cat > data.csv <<'X'${nl}ls memory/entries${nl}X"
+both_search_bash_case allow "cat > run.log <<'X'${nl}ls memory/entries${nl}X"
+# cwd binding: a repo-relative A script or C target counts only when the payload cwd
+# is the repo top level. From elsewhere, `code.py` is some other file; no cwd at all
+# (or a subdirectory) is not the top level either.
+elsewhere="/private/tmp/elsewhere"
+both_search_bash_case_at deny "python3 code.py <<'X'${nl}${sysos}${nl}X" "$elsewhere" ""
+both_search_bash_case_at deny "python3 tool.py msg x <<'X'${nl}ls memory/entries${nl}X" "$elsewhere" ""
+both_search_bash_case_at deny "python3 tool.py msg x <<'X'${nl}ls memory/entries${nl}X" "-" ""
+both_search_bash_case_at deny "python3 tool.py msg x <<'X'${nl}ls memory/entries${nl}X" "$repo_root/scripts" ""
+both_search_bash_case_at deny "python3 tool.py msg x <<'X'${nl}ls memory/entries${nl}X" "" ""
+both_search_bash_case_at deny "python3 tool.py msg x <<'X'${nl}ls memory/entries${nl}X" "$repo_root/does-not-exist" ""
+both_search_bash_case_at deny "cat > notes.md <<'X'${nl}ls memory/entries${nl}X" "$elsewhere" ""
+both_search_bash_case_at deny "cat > notes.md <<'X'${nl}ls memory/entries${nl}X" "-" ""
+both_search_bash_case_at allow "python3 tool.py msg x <<'X'${nl}ls memory/entries${nl}X" "$repo_root/" ""
+# A: MEMORY_GUARD_STDIN_SCRIPTS (colon-separated, exact match, leading ~/ = \$HOME),
+# read from the hook's own environment. The scripts are generic examples.
+board="~/example/workflows/board.py"
+boardcmd="python3 ${board} msg worker <<'EOF'${nl}Blocked: could not cat memory/people/a.md${nl}EOF"
+both_search_bash_case_at deny  "$boardcmd" "$repo_root" ""
+both_search_bash_case_at deny  "$boardcmd" "$elsewhere" ""
+both_search_bash_case_at allow "$boardcmd" "$repo_root" "MEMORY_GUARD_STDIN_SCRIPTS=${board}"
+both_search_bash_case_at allow "$boardcmd" "$elsewhere" "MEMORY_GUARD_STDIN_SCRIPTS=${board}"
+both_search_bash_case_at allow "$boardcmd" "-" "MEMORY_GUARD_STDIN_SCRIPTS=${board}"
+both_search_bash_case_at allow "$boardcmd" "$elsewhere" "MEMORY_GUARD_STDIN_SCRIPTS=/opt/other.py:${board}:/opt/more.py"
+both_search_bash_case_at allow "$boardcmd" "$elsewhere" "MEMORY_GUARD_STDIN_SCRIPTS=${HOME}/example/workflows/board.py"
+both_search_bash_case_at allow "python3 ${HOME}/example/workflows/board.py msg w <<'EOF'${nl}ls memory/entries${nl}EOF" "$elsewhere" "MEMORY_GUARD_STDIN_SCRIPTS=${board}"
+both_search_bash_case_at allow "python3 /opt/tools/board.py msg w <<'EOF'${nl}ls memory/entries${nl}EOF" "$elsewhere" "MEMORY_GUARD_STDIN_SCRIPTS=/opt/tools/board.py"
+# ... and nothing the list does not name exactly:
+both_search_bash_case_at deny "$boardcmd" "$repo_root" "MEMORY_GUARD_STDIN_SCRIPTS="
+both_search_bash_case_at deny "$boardcmd" "$repo_root" "MEMORY_GUARD_STDIN_SCRIPTS=~/example/workflows/other.py"
+both_search_bash_case_at deny "$boardcmd" "$repo_root" "MEMORY_GUARD_STDIN_SCRIPTS=~/example/workflows/board.py.py"
+both_search_bash_case_at deny "$boardcmd" "$repo_root" "MEMORY_GUARD_STDIN_SCRIPTS=~/example/workflows"
+both_search_bash_case_at deny "$boardcmd" "$repo_root" "MEMORY_GUARD_STDIN_SCRIPTS=~/example/*/board.py"
+both_search_bash_case_at deny "$boardcmd" "$repo_root" "MEMORY_GUARD_STDIN_SCRIPTS=~/example/workflows/:"
+both_search_bash_case_at deny "$boardcmd" "$repo_root" "MEMORY_GUARD_STDIN_SCRIPTS=board.py"
+both_search_bash_case_at deny "$boardcmd" "$repo_root" "MEMORY_GUARD_STDIN_SCRIPTS=~/example/workflows/Board.py"
+both_search_bash_case_at deny "python3 ~/example/workflows/../board.py msg w <<'EOF'${nl}${sysos}${nl}EOF" "$elsewhere" "MEMORY_GUARD_STDIN_SCRIPTS=~/example/board.py"
+both_search_bash_case_at deny "python3 ~/example/workflows/../board.py msg w <<'EOF'${nl}${sysos}${nl}EOF" "$elsewhere" "MEMORY_GUARD_STDIN_SCRIPTS=~/example/workflows/../board.py"
+both_search_bash_case_at deny "python3 ~/example/../example/board.py msg w <<'EOF'${nl}${sysos}${nl}EOF" "$elsewhere" "MEMORY_GUARD_STDIN_SCRIPTS=~/example/../example/board.py"
+both_search_bash_case_at deny "python3 ../board.py msg w <<'EOF'${nl}${sysos}${nl}EOF" "$repo_root" "MEMORY_GUARD_STDIN_SCRIPTS=../board.py"
+both_search_bash_case_at deny "python3 ${cpy} <<'X'${nl}${sysos}${nl}X" "$repo_root" "MEMORY_GUARD_STDIN_SCRIPTS=${board}"
+both_search_bash_case_at deny "python3 ~root/example/workflows/board.py msg w <<'EOF'${nl}${sysos}${nl}EOF" "$repo_root" "MEMORY_GUARD_STDIN_SCRIPTS=${board}"
+both_search_bash_case_at deny "python3 ~/example/workflows/board.py msg w <<EOF${nl}\$(cat memory/x.md >&2)${nl}EOF" "$repo_root" "MEMORY_GUARD_STDIN_SCRIPTS=${board}"
+both_search_bash_case_at deny "python3 ~/example/workflows/board.py msg w <<'EOF' | sh${nl}cat memory/x.md${nl}EOF" "$repo_root" "MEMORY_GUARD_STDIN_SCRIPTS=${board}"
+both_search_bash_case_at deny "python3 \"\$HOME/example/workflows/board.py\" msg w <<'EOF'${nl}${sysos}${nl}EOF" "$repo_root" "MEMORY_GUARD_STDIN_SCRIPTS=${board}"
+both_search_bash_case_at deny "python3 \$HOME/example/workflows/board.py msg w <<'EOF'${nl}${sysos}${nl}EOF" "$repo_root" "MEMORY_GUARD_STDIN_SCRIPTS=${board}"
+both_search_bash_case_at deny "python3 ~/example/workflows/board.py\\ msg <<'EOF'${nl}${sysos}${nl}EOF" "$repo_root" "MEMORY_GUARD_STDIN_SCRIPTS=${board}"
+# A relative entry never turns a relative script into an allowlisted one elsewhere.
+both_search_bash_case_at deny "python3 tool.py msg x <<'X'${nl}ls memory/entries${nl}X" "$elsewhere" "MEMORY_GUARD_STDIN_SCRIPTS=tool.py"
+# C: temp-dir targets (cwd-independent): the rest of the path is held to the same
+# plain relative rule, and the file must still be a data file.
+scratch="/private/tmp/claude-502/-Users-someone-example-project/0a1b2c3d/scratchpad"
+both_search_bash_case_at allow "cat > ${scratch}/notes.md <<'X'${nl}see cat memory/x.md${nl}X" "$elsewhere" ""
+both_search_bash_case_at allow "cat > ${scratch}/notes.md <<'X'${nl}see cat memory/x.md${nl}X" "-" ""
+both_search_bash_case_at allow "cat >> ${scratch}/notes.md <<'X'${nl}see cat memory/x.md${nl}X" "$repo_root" ""
+both_search_bash_case_at allow "cat > /tmp/notes.md <<'X'${nl}see cat memory/x.md${nl}X" "$elsewhere" ""
+both_search_bash_case_at allow "cat > /tmp/a/b.txt <<'X'${nl}see cat memory/x.md${nl}X" "$elsewhere" ""
+both_search_bash_case_at allow "cat > /var/folders/ab/cd_ef/T/notes.csv <<'X'${nl}see cat memory/x.md${nl}X" "$elsewhere" ""
+both_search_bash_case_at deny "cat > /tmp/../etc/notes.md <<'X'${nl}cat memory/x.md${nl}X" "$elsewhere" ""
+both_search_bash_case_at deny "cat > /tmp/a/../../etc/notes.md <<'X'${nl}cat memory/x.md${nl}X" "$elsewhere" ""
+both_search_bash_case_at deny "cat > /private/tmp/../../etc/notes.md <<'X'${nl}cat memory/x.md${nl}X" "$elsewhere" ""
+both_search_bash_case_at deny "cat > ${scratch}/../../notes.md <<'X'${nl}cat memory/x.md${nl}X" "$elsewhere" ""
+both_search_bash_case_at deny "cat > /tmp/.hidden/notes.md <<'X'${nl}cat memory/x.md${nl}X" "$elsewhere" ""
+both_search_bash_case_at deny "cat > /tmp/.zshenv <<'X'${nl}cat memory/x.md${nl}X" "$elsewhere" ""
+both_search_bash_case_at deny "cat > /tmp/a/.git/notes.md <<'X'${nl}cat memory/x.md${nl}X" "$elsewhere" ""
+both_search_bash_case_at deny "cat > /tmp/run.sh <<'X'${nl}cat memory/x.md${nl}X" "$elsewhere" ""
+both_search_bash_case_at deny "cat > /tmp/fix.patch <<'X'${nl}cat memory/x.md${nl}X" "$elsewhere" ""
+both_search_bash_case_at deny "cat > /tmp/notes <<'X'${nl}cat memory/x.md${nl}X" "$elsewhere" ""
+both_search_bash_case_at deny "cat > /tmp/ <<'X'${nl}cat memory/x.md${nl}X" "$elsewhere" ""
+both_search_bash_case_at deny "cat > /tmp//notes.md <<'X'${nl}cat memory/x.md${nl}X" "$elsewhere" ""
+both_search_bash_case_at deny "cat > /tmpx/notes.md <<'X'${nl}cat memory/x.md${nl}X" "$elsewhere" ""
+both_search_bash_case_at deny "cat > /var/notes.md <<'X'${nl}cat memory/x.md${nl}X" "$elsewhere" ""
+both_search_bash_case_at deny "cat > /var/folders/../notes.md <<'X'${nl}cat memory/x.md${nl}X" "$elsewhere" ""
+both_search_bash_case_at deny "cat > /Users/someone/notes.md <<'X'${nl}cat memory/x.md${nl}X" "$elsewhere" ""
+both_search_bash_case_at deny "cat > /etc/notes.md <<'X'${nl}cat memory/x.md${nl}X" "$elsewhere" ""
+both_search_bash_case_at deny "cat > /tmp/\$HOME/notes.md <<'X'${nl}cat memory/x.md${nl}X" "$elsewhere" ""
+both_search_bash_case_at deny "cat > /tmp/~/notes.md <<'X'${nl}cat memory/x.md${nl}X" "$elsewhere" ""
+both_search_bash_case_at deny "cat > /tmp/a\\ b.md <<'X'${nl}cat memory/x.md${nl}X" "$elsewhere" ""
+both_search_bash_case_at deny "cat > '/tmp/notes.md' <<'X'${nl}cat memory/x.md${nl}X" "$elsewhere" ""
+both_search_bash_case_at deny "cat > /tmp/notes.MD <<'X'${nl}cat memory/x.md${nl}X" "$elsewhere" ""
+# A absolute outside the list stays denied, even under /tmp.
+both_search_bash_case_at deny "python3 /tmp/x.py <<'X'${nl}${sysos}${nl}X" "$repo_root" ""
+both_search_bash_case_at deny "python3 /tmp/x.py <<'X'${nl}${sysos}${nl}X" "$elsewhere" "MEMORY_GUARD_STDIN_SCRIPTS=${board}"
 # Bodies that are CODE or PATH LISTS, and constructs the old scanner mishandled.
 both_search_bash_case deny "bash <<'EOF'${nl}grep -rn jane memory/${nl}EOF"
 both_search_bash_case deny "sh <<EOF${nl}cat memory/entries/x.md${nl}EOF"

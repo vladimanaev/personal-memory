@@ -86,22 +86,39 @@ JSON
 #      body is expanded by the shell, so $(…) in it would run)
 #   B  git commit T* -m "$(cat <<'WORD'  ... WORD  )" T*          (or gh T* --body …)
 #   C  cat > <file> <<'WORD'  ... WORD                             (or >>; not /dev/*, not -)
-# A and C take a REPO-RELATIVE path (see relok): that is what keeps a script that
-# EXECUTES its stdin (python's own code.py, pdb.py) and a file that runs on its own
-# later (~/.zshenv, .git/hooks/*) out of the whitelist. A is assumed to read stdin
-# as data: that is a property of the script, which the guard cannot check.
+# A and C take a PLAIN path (see relok): that is what keeps a script that EXECUTES
+# its stdin (python's own code.py, pdb.py) and a file that runs on its own later
+# (~/.zshenv, .git/hooks/*) out of the whitelist.
+#   - A repo-relative A script or C target counts only when the payload cwd IS the
+#     repo top level (hd_root, else the repo holding this hook): `python3 code.py`
+#     run from another directory is some other file. No cwd in the payload, no strip.
+#   - An ABSOLUTE A script counts only when it equals, character for character, an
+#     entry of MEMORY_GUARD_STDIN_SCRIPTS (colon-separated; a leading ~/ means
+#     $HOME, on the entries and on the command). The hook reads it from ITS OWN
+#     environment, set in user-level settings; a command cannot change it. Every
+#     listed script must read stdin as data: that is a property the guard assumes.
+#   - C also takes /tmp/, /private/tmp/ and /var/folders/ targets (cwd-independent).
+#   - `..` is rejected everywhere. C needs a data file (.md .txt .csv .log).
 # The command line (and B's closing line) stays matched as before.
 strip_heredoc_bodies() {
+  local root cwdc rel=0
+  root="${hd_root:-}"
+  [ -n "$root" ] || root="$(dirname "${BASH_SOURCE[0]}")/../.."
+  root="$(cd -- "$root" 2>/dev/null && pwd -P)"
+  cwdc=""
+  [ -n "${hd_cwd:-}" ] && cwdc="$(cd -- "$hd_cwd" 2>/dev/null && pwd -P)"
+  [ -n "$root" ] && [ "$root" = "$cwdc" ] && rel=1
   # LC_ALL=C: bracket ranges are plain ASCII, so no locale can widen a path class.
-  LC_ALL=C awk -v sqc="'" '
+  # The settings go in through the environment, not -v, so awk never unescapes them.
+  LC_ALL=C MGS_LIST="${MEMORY_GUARD_STDIN_SCRIPTS:-}" MGS_HOME="${HOME:-}" MGS_REL="$rel" awk -v sqc="'" '
     # Repo-relative path, or 0. Plain characters only (the callers match
-    # [A-Za-z0-9_@%+,:./-]: no $ ~ = \ quotes globs braces or non-ASCII), and no
-    # absolute path, `..` segment, empty segment, hidden segment (.git, .claude,
-    # .venv, .envrc …) or vendored-code directory. Lexical only: a symlink inside
-    # the repo is not resolved.
+    # [A-Za-z0-9_@%+,:./-]: no $ = \ quotes globs braces or non-ASCII), and no
+    # absolute path, `~`, `..` segment, empty segment, hidden segment (.git,
+    # .claude, .venv, .envrc …) or vendored-code directory. Lexical only: a
+    # symlink inside the repo is not resolved.
     function relok(p,   n, s, i, c) {
       c = substr(p, 1, 1)
-      if (c == "/" || c == "-") return 0
+      if (c == "/" || c == "-" || index(p, "~")) return 0
       n = split(p, s, "/")
       for (i = 1; i <= n; i++) {
         if (s[i] == "") return 0
@@ -110,11 +127,44 @@ strip_heredoc_bodies() {
       }
       return 1
     }
+    function dd(p,   n, s, i) {
+      n = split(p, s, "/")
+      for (i = 1; i <= n; i++) if (s[i] == "..") return 1
+      return 0
+    }
+    function expand(p) {
+      if (home != "" && substr(p, 1, 2) == "~/") return home substr(p, 2)
+      return p
+    }
+    # Shape A script: an exact entry of the allowlist, or a plain repo-relative path.
+    function astok(t,   e) {
+      if (dd(t)) return 0
+      e = expand(t)
+      if (substr(e, 1, 1) == "/") return (e in allow)
+      return (rel && relok(t))
+    }
+    # Shape C target: a plain repo-relative path (cwd = repo), or a plain path under
+    # a temp dir; and a data file either way.
+    function ctok(t,   r, i) {
+      if (t !~ /[A-Za-z0-9_]\.(md|txt|csv|log)$/) return 0
+      for (i = 1; i <= nt; i++) {
+        if (substr(t, 1, length(tmp[i])) == tmp[i]) return relok(substr(t, length(tmp[i]) + 1))
+      }
+      return (rel && relok(t))
+    }
     BEGIN {
+      home = ENVIRON["MGS_HOME"]; rel = (ENVIRON["MGS_REL"] == "1")
+      nt = split("/tmp/ /private/tmp/ /var/folders/", tmp, " ")
+      m = split(ENVIRON["MGS_LIST"], ent, ":")
+      for (i = 1; i <= m; i++) {
+        e = expand(ent[i])
+        if (e ~ /^\/[A-Za-z0-9_@%+,.\/-]+\.py$/ && !dd(e) && e !~ /\/\//) allow[e] = 1
+      }
       T = "([A-Za-z0-9_./~@%+=:,-]+|" sqc "[^" sqc "]*" sqc ")"
       W = "[A-Za-z_][A-Za-z0-9_]*"
       P = "[A-Za-z0-9_@%+,:./-]+"
-      ra = "^python3? " P "\\.py( " T ")* <<(" sqc W sqc "|\"" W "\")$"
+      PA = "[A-Za-z0-9_@%+,:./~-]+"
+      ra = "^python3? " PA "\\.py( " T ")* <<(" sqc W sqc "|\"" W "\")$"
       rb = "^(git commit|gh)( " T ")* (-m|--body) \"\\$\\(cat <<" sqc W sqc "$"
       rc = "^cat >>? " P " <<" sqc W sqc "$"
       rend = "^\\)\"( " T ")*$"
@@ -129,13 +179,8 @@ strip_heredoc_bodies() {
       if (n >= 2) {
         h = L[1]
         isa = (h ~ ra); isb = (h ~ rb); isc = (h ~ rc)
-        if (isa) { split(h, hp, " "); if (!relok(hp[2])) isa = 0 }
-        if (isc) {
-          # A data file only: an executable or auto-run target (no extension, .sh,
-          # .py, .json hook config …) is a payload, not data.
-          split(h, hp, " ")
-          if (!relok(hp[3]) || hp[3] !~ /[A-Za-z0-9_]\.(md|txt|csv|log|diff|patch)$/) isc = 0
-        }
+        if (isa) { split(h, hp, " "); if (!astok(hp[2])) isa = 0 }
+        if (isc) { split(h, hp, " "); if (!ctok(hp[3])) isc = 0 }
         if (isa || isb || isc) {
           match(h, rq)
           w = substr(h, RSTART + 2); gsub(qs, "", w)
@@ -198,6 +243,8 @@ case "$tool" in
     if [ -n "$cmd" ]; then
       # Match the command LINES only; heredoc bodies are data (see above). If
       # stripping yields nothing (no awk), keep the full text.
+      hd_cwd="$(field .cwd)"
+      hd_root="${CLAUDE_PROJECT_DIR:-}"
       stripped="$(printf '%s\n' "$cmd" | strip_heredoc_bodies)"
       [ -n "$stripped" ] && cmd="$stripped"
     else
