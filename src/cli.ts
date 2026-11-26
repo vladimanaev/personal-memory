@@ -157,6 +157,12 @@ function statusSuffix(e: Pick<MemoryEntry, "id" | "type">, chainIndex: Map<strin
 
 // ---------------- commands ----------------
 
+/** "a decision", "an event": the indefinite article for an entry type in a message. */
+const typeWithArticle = (type: string) => `${/^[aeiou]/i.test(type) ? "an" : "a"} ${type}`;
+
+/** Most matched entries a split line names before it summarises the rest as "+N more". */
+const SPLIT_LINE_CAP = 5;
+
 async function cmdAdd(argv: string[]) {
   const { values } = parseArgs({
     args: argv,
@@ -205,7 +211,7 @@ async function cmdAdd(argv: string[]) {
   const chainIndex = async () => (chain ??= buildChainIndex(await catalog.linked()));
   // Set when no source-id match can take the requested `--type`: a NEW entry is created beside them
   // (the shared source id is the link) and skips the near-duplicate guard against them.
-  let split: { linked: string[]; first: { id: string; type: string } } | undefined;
+  let split: { matches: { id: string; type: string }[] } | undefined;
   if (values.update) {
     const [meta] = await catalog.byIds([values.update as string]);
     if (!meta) throw new Error(`--update: no entry with id '${values.update}'`);
@@ -218,7 +224,7 @@ async function cmdAdd(argv: string[]) {
       OPEN_TYPES.has(m.type) && entryStatus(m, await chainIndex())?.status === "open";
     if (matches.length && !values.type && new Set(matches.map((m) => m.type)).size > 1) {
       throw new Error(
-        `${sourceIds.join(", ")} matches entries of different types (${matches.map((m) => `${m.id} is a ${m.type}`).join("; ")}) — ` +
+        `${sourceIds.join(", ")} matches entries of different types (${matches.map((m) => `${m.id} is ${typeWithArticle(m.type)}`).join("; ")}) — ` +
           `pass --type <type> to pick which one this capture is, or --update <id>`,
       );
     }
@@ -232,7 +238,7 @@ async function cmdAdd(argv: string[]) {
       // A note beside a settled entry of another type is a split-off note (nothing else marks it), so
       // it is protected like any other type: only notes among notes are retyped.
       if (!target && matches.every((m) => m.type === "note")) target = matches[0];
-      if (!target) split = { linked: matches.map((m) => m.id), first: matches[0]! };
+      if (!target) split = { matches: matches.map((m) => ({ id: m.id, type: m.type })) };
     } else {
       target = matches[0];
     }
@@ -281,7 +287,7 @@ async function cmdAdd(argv: string[]) {
     const minSim = values["dup-threshold"] ? Number(values["dup-threshold"]) : undefined;
     // An outcome naturally resembles the item it settles — its --follows targets aren't duplicates.
     // Likewise the entries a type-split capture sits beside — it is their sibling, not a copy.
-    const settles = new Set([...list(values.follows as string), ...(split?.linked ?? [])]);
+    const settles = new Set([...list(values.follows as string), ...(split?.matches.map((m) => m.id) ?? [])]);
     const similar = (await findSimilar(`${title}\n${body}`, minSim ? { minSim } : {})).filter((h) => !settles.has(h.id));
     if (similar.length > 0) {
       console.error("✗ this looks like a near-duplicate of:");
@@ -371,7 +377,9 @@ async function cmdAdd(argv: string[]) {
 
   // Every check has passed: now the split may be announced (one parseable line).
   if (split && !target) {
-    console.log(`↳ ${split.first.id} is a ${split.first.type}; not overwriting — created ${fm.id} (${fm.type})`);
+    const named = split.matches.slice(0, SPLIT_LINE_CAP).map((m) => `${m.id} is ${typeWithArticle(m.type)}`);
+    const more = split.matches.length - named.length;
+    console.log(`↳ ${named.join(", ")}${more > 0 ? `, +${more} more` : ""}; not overwriting — created ${fm.id} (${fm.type})`);
   }
 
   // --- idempotency: skip a re-capture whose content is identical (hash ignores `updated`) ---

@@ -163,7 +163,7 @@ test("add: a split sits beside every match; the target never depends on row orde
     const r1 = add(root, "note", "Thread recap for the pilot.");
     assert.equal(r1.status, 0, r1.stderr);
     assert.deepEqual(matter(files(root)[`${DEC}-note`]!).data.sources, undefined);
-    assert.match(r1.stdout, new RegExp(`↳ ${DEC} is a decision; not overwriting — created ${DEC}-note \\(note\\)`));
+    assert.match(r1.stdout, new RegExp(`↳ ${DEC} is a decision, ${EV} is an event; not overwriting — created ${DEC}-note \\(note\\)`));
     assert.equal(files(root)[DEC], f0[DEC]);
     assert.equal(files(root)[EV], f0[EV]);
 
@@ -186,6 +186,46 @@ test("add: a split sits beside every match; the target never depends on row orde
   }
 });
 
+test("add: the split line names every match, capped with +N more", { timeout: 300_000 }, () => {
+  const many: SeedEntry[] = Array.from({ length: 7 }, (_, i) => ({
+    id: `2026-03-0${i + 1}-vendor-step-${i + 1}`, date: `2026-03-0${i + 1}`, type: "decision",
+    title: `Vendor step ${i + 1}`, body: `Decision number ${i + 1} on the pilot.`, source_ids: [SID],
+  }));
+  const root = fixture(many);
+  try {
+    const before = files(root);
+    const r = add(root, "note", "Recap of the whole thread.");
+    assert.equal(r.status, 0, r.stderr);
+    const line = r.stdout.split("\n").find((l) => l.startsWith("↳"))!;
+    for (const m of many.slice(0, 5)) assert.ok(line.includes(`${m.id} is a decision`), line);
+    for (const m of many.slice(5)) assert.ok(!line.includes(m.id), "beyond the cap is summarised");
+    assert.match(line, /, \+2 more; not overwriting — created /);
+    const after = files(root);
+    assert.equal(Object.keys(after).length, 8);
+    for (const m of many) assert.equal(after[m.id], before[m.id], "every match is untouched");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("add: an incident and an achievement read with 'an'", { timeout: 300_000 }, () => {
+  const pair: SeedEntry[] = [
+    { id: "2026-03-01-vendor-outage", date: "2026-03-01", type: "incident", title: "Vendor outage", body: "The vendor API was down.", source_ids: [SID] },
+    { id: "2026-03-02-vendor-launch", date: "2026-03-02", type: "achievement", title: "Vendor launch", body: "The pilot launched.", source_ids: [SID] },
+  ];
+  const root = fixture(pair);
+  try {
+    const bad = run(root, ["add", "--title", "Vendor wrap", "--date", "2026-03-03", "--source-ids", SID, "--body", "Wrap-up."]);
+    assert.notEqual(bad.status, 0);
+    assert.match(bad.stderr, /vendor-outage is an incident; 2026-03-02-vendor-launch is an achievement/);
+    const r = add(root, "note", "Recap of the incident thread.");
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /↳ 2026-03-01-vendor-outage is an incident, 2026-03-02-vendor-launch is an achievement; not overwriting/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("add: mixed-type matches without --type error and change nothing", { timeout: 300_000 }, () => {
   const root = fixture(SIBLINGS);
   try {
@@ -193,7 +233,7 @@ test("add: mixed-type matches without --type error and change nothing", { timeou
     const r = run(root, ["add", "--title", "Vendor choice", "--date", "2026-03-01", "--source-ids", SID, "--body", "Another pass."]);
     assert.notEqual(r.status, 0);
     assert.match(r.stderr, new RegExp(`${DEC} is a decision`));
-    assert.match(r.stderr, new RegExp(`${EV} is a event`));
+    assert.match(r.stderr, new RegExp(`${EV} is an event`));
     assert.match(r.stderr, /--type .*--update <id>/);
     assert.deepEqual(files(root), before);
   } finally {
