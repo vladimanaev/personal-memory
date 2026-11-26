@@ -113,6 +113,36 @@ four things a manual write skips:
   into it anyway** (`grep -rli "jane doe" .`, `rg jane`, `find . -name …`).
   That last shape is the one hand-search actually takes — searching from the
   repo root is not "scoped to code". Shelling out is not a loophole.
+  A heredoc body is stripped before matching only when the ENTIRE command is
+  exactly one of three shapes: `python <script>.py <plain args> <<'WORD'` (quoted
+  delimiter only — an unquoted body is shell-expanded), a
+  `git commit … -m "$(cat <<'WORD' … )"` (or `gh … --body`) message, or
+  `cat > <file> <<'WORD'`, with nothing after the terminator and no body line
+  starting with WORD. Any other command (pipes, `;`, redirects, `bash <<EOF`,
+  `xargs`, …) is matched whole, body included. Paths are plain text, checked
+  lexically (symlinks are not followed), and `..` is rejected everywhere:
+  - A repo-relative script or file (no leading `/`, `~`, `-` or `$`, no hidden
+    segment such as `.git`, `.claude` or `.venv`, no `site-packages` or
+    `node_modules`) counts only when the hook payload's `cwd` is the repo top
+    level. From another directory, or with no `cwd` in the payload, the body is
+    matched as before. Under Codex, the payload's `workdir` (resolved against
+    `cwd` when relative) counts as the `cwd`, because that is where the command
+    runs.
+  - The script of the first shape may also be an absolute path that equals,
+    exactly, an entry of `MEMORY_GUARD_STDIN_SCRIPTS`: a colon-separated list in
+    the hook's environment, with a leading `~/` meaning `$HOME`, for example
+    `MEMORY_GUARD_STDIN_SCRIPTS=~/tools/board.py:/opt/tools/notify.py`. Set it in
+    your user-level settings (`env` in `~/.claude/settings.json`); the hook reads
+    its own environment, so an agent's command cannot change it. Every listed
+    script must read stdin as data: the guard cannot check that, and a script
+    that executes its stdin defeats it (the same holds for a repo-relative one).
+  - The file of the third shape must be a data file (`.md`, `.txt`, `.csv`,
+    `.log`), never a script, hook or startup file. It may be repo-relative, or
+    under `/tmp/`, `/private/tmp/` or `/var/folders/` (the rest of the path
+    follows the same rules, and `cwd` does not matter).
+  - Out of scope: a two-step write-then-run (`bash notes.md`,
+    `exec(open("notes.md").read())`). The second command names no store, and the
+    Write tool can create the same file anyway.
   Any `cli.ts` invocation passes untouched, as do plain store git checks
   (`git -C memory log|status`), stdin filtering (`git log | grep …`), and
   searches scoped to a real non-store path (`src/`, `skills/`, `scripts/`).
