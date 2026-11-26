@@ -1096,13 +1096,13 @@ async function cmdOpen(argv: string[]) {
 
   type SourceEvidence = { id: string; scope: "exact" | "conversation" };
   type QueryEvidence = { rank: number; score: number; terms: string[] };
-  type Row = { id: string; type: string; date: string; title: string; people: string[]; graphs: string[];
+  type Row = { id: string; type: string; date: string; title: string; people: string[]; tags: string[]; graphs: string[];
     source_ids: string[]; path: string; snippet?: string; due?: string; overdue?: boolean;
     evidence: { source?: SourceEvidence; query?: QueryEvidence }; confidence: "high" | "candidate" };
   const rows = new Map<string, Row>();
   const row = (e: (typeof open)[number]): Row => {
     const r = rows.get(e.id) ?? { id: e.id, type: e.type, date: e.date, title: e.title, people: e.people,
-      graphs: e.graphs, source_ids: e.source_ids ?? [], path: rel(e.path), evidence: {}, confidence: "candidate",
+      tags: e.tags, graphs: e.graphs, source_ids: e.source_ids ?? [], path: rel(e.path), evidence: {}, confidence: "candidate",
       ...(dueOf.has(e.id) ? { due: dueOf.get(e.id)!, overdue: dueOf.get(e.id)! < now } : {}) };
     rows.set(e.id, r);
     return r;

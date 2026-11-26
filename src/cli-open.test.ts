@@ -27,7 +27,7 @@ function cli(cwd: string, args: string[]): string {
   return r.stdout;
 }
 
-type Item = { id: string; graphs: string[]; confidence: string;
+type Item = { id: string; graphs: string[]; tags: string[]; confidence: string;
   evidence: { source?: { id: string; scope: string }; query?: { rank: number; terms: string[] } } };
 
 function open(cwd: string, args: string[]): { total: number; shown: number; items: Item[] } {
@@ -44,7 +44,7 @@ const ENTRIES: SeedEntry[] = [
     body: "Waiting for Boris to approve expense EX-1 for the keyboard.", source_ids: ["slack:D9:1700000000.1"] },
   { id: READOUT, date: "2026-01-06", type: "todo", title: "Send onboarding readout to Boris", people: ["boris-cohen"],
     body: "Write the onboarding readout and share it.", source_ids: ["slack:D9:1700000100.1"] },
-  { id: VENDOR, date: "2026-01-06", type: "pending-decision", title: "Decide on the vendor contract", people: ["ana-levi"],
+  { id: VENDOR, date: "2026-01-06", type: "pending-decision", title: "Decide on the vendor contract", people: ["ana-levi"], tags: ["vendors", "q1"],
     body: "Pick between the two vendor offers.", source_ids: ["slack:C7:1700000200.1"], graphs: ["default", "team-x"] },
   { id: THREAD, date: "2026-01-06", type: "todo", title: "Answer the staging question", people: ["ana-levi"],
     body: "Reply in the thread about staging.", source_ids: ["slack:C8:1700000300.1"] },
@@ -81,6 +81,10 @@ test("open: evidence, confidence, prefix rules, graphs, crowding, and settle gua
       "2026-01-06-marketing-signoff", "2026-01-06-level-review"];
     assert.deepEqual(all.items.map((r) => r.id).sort(), [...MINE].sort());
     assert.deepEqual(all.items.find((r) => r.id === VENDOR)?.graphs, ["default", "team-x"]);
+    // Every row carries its tags: the entry's own, or [] when it has none.
+    assert.ok(all.items.every((r) => Array.isArray(r.tags)));
+    assert.deepEqual(all.items.find((r) => r.id === VENDOR)?.tags, ["vendors", "q1"]);
+    assert.deepEqual(all.items.find((r) => r.id === EXPENSE)?.tags, []);
 
     // A conversation-level prefix matches every open item in the DM — as candidates only.
     const dm = open(root, ["--source", "slack:D9"]);
