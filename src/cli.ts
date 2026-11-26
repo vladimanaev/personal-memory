@@ -548,12 +548,12 @@ async function cmdRetitle(argv: string[]) {
     return;
   }
   const change = `${JSON.stringify(result.before)} → ${JSON.stringify(result.after)}`;
-  if (result.dryRun) {
-    console.log(`✓ would retitle ${id}: ${change}`);
-    console.log(`  copies: ${result.graphs.join(", ")}`);
-    return;
-  }
-  console.log(`✓ retitled ${id}: ${change}`);
+  console.log(`${result.dryRun ? "✓ would retitle" : "✓ retitled"} ${id}: ${change}`);
+  // Shared copies take the new title as is, with no review, and a title cannot be redacted.
+  console.log(`  copies: ${result.graphs.join(", ")}`);
+  const shared = result.graphs.filter((g) => g !== DEFAULT_GRAPH);
+  if (shared.length) console.log(`  ${result.dryRun ? "would publish" : "published"} the title, unreviewed, to shared graph${shared.length > 1 ? "s" : ""}: ${shared.join(", ")}`);
+  if (result.dryRun) return;
   if (result.path) console.log(`  ${result.path}`);
   if (result.index) console.log(`  indexed (+${result.index.added} changed, ${result.index.unchanged} unchanged)`);
 }
@@ -1947,7 +1947,7 @@ Usage:
             # edit one entry's tags in place (every copy; title/body untouched); new tags are
             # judged against standing rules like a capture; removing never changes memberships
   memory retitle <id> --title "…" [--dry-run]
-            # change one entry's title in place (every copy; id, file name, body untouched)
+            # change one entry's title in place (every copy, shared graphs too, unreviewed; id, file name, body untouched)
   memory remove <id>   # delete ALL of an entry's copies + sync index (content stays in each repo's history)
   memory copy <id> --to <graph>
             # add membership: materialize the entry into another graph (it stays private too);

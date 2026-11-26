@@ -84,6 +84,7 @@ test("retitle: both copies change, everything else stays, one commit per store, 
     const dry = cli(root, ["retitle", SHARED, "--title", "Alpha decision, renamed", "--dry-run"]);
     assert.match(dry, new RegExp(`would retitle ${SHARED}: "${OLD_TITLE}" → "Alpha decision, renamed"`));
     assert.match(dry, /copies: default, team-x/);
+    assert.match(dry, /would publish the title, unreviewed, to shared graph: team-x/);
     assert.equal(readFileSync(f.home, "utf8"), beforeHome);
     assert.equal(commits(HOME_STORE(root)), 1);
     assert.equal(commits(SHARED_STORE(root)), 1);
@@ -91,6 +92,9 @@ test("retitle: both copies change, everything else stays, one commit per store, 
     const out = cli(root, ["retitle", SHARED, "--title", "  Alpha decision, renamed  "]);
     assert.match(out, new RegExp(`✓ retitled ${SHARED}: "${OLD_TITLE}" → "Alpha decision, renamed"`));
     assert.match(out, /indexed \(\+\d+ changed, \d+ unchanged\)/);
+    // a real run prints the copies and the shared graphs too, not only --dry-run
+    assert.match(out, /copies: default, team-x/);
+    assert.match(out, /published the title, unreviewed, to shared graph: team-x/);
 
     // both copies carry the (trimmed) title; nothing else but `updated` moved
     for (const file of [f.home, f.shared]) {
@@ -118,7 +122,9 @@ test("retitle: both copies change, everything else stays, one commit per store, 
     assert.match(cli(root, ["graphs", "sync", "--dry-run"]), /✓ all graphs consistent/);
 
     // an unshared entry only touches the home store
-    cli(root, ["retitle", PLAIN, "--title", "Plain note, renamed"]);
+    const plain = cli(root, ["retitle", PLAIN, "--title", "Plain note, renamed"]);
+    assert.match(plain, /copies: default\n/);
+    assert.doesNotMatch(plain, /shared graph/);
     assert.equal(titleOf(files(root, PLAIN).home), "Plain note, renamed");
     assert.equal(commits(SHARED_STORE(root)), 2);
   } finally {
@@ -162,12 +168,16 @@ test("retitle: bad input exits non-zero, the same title is a no-op, neither chan
     fails(["retitle", SHARED, "--title", ""], /title must not be empty/);
     fails(["retitle", SHARED, "--title", "   "], /title must not be empty/);
     fails(["retitle", SHARED, "--title", "First line\nSecond line"], /single line/);
+    // every control character (NUL cannot be passed in argv) and line separator, not only \r and \n
+    for (const bad of ["a\rb", "a\u2028b", "a\u2029b", "a\u0085b", "a\tb", "a\u001bb", "a\u007fb", "a\u009fb", "a\u000bb", "a\u000cb"]) {
+      fails(["retitle", SHARED, `--title=${bad}`], /single line without control characters/);
+    }
     fails(["retitle", SHARED], /usage: memory retitle/);
     fails(["retitle", SHARED, PLAIN, "--title", "Anything"], /usage: memory retitle/);
 
-    // The same title (whitespace differences do not count) is a no-op that exits 0,
+    // The exact same title (surrounding whitespace is trimmed) is a no-op that exits 0,
     // dry-run or not, so a retried call never fails.
-    for (const args of [["--title", OLD_TITLE], ["--title", `  Alpha   shared\tdecision `], ["--title", OLD_TITLE, "--dry-run"]]) {
+    for (const args of [["--title", OLD_TITLE], ["--title", `  ${OLD_TITLE} `], ["--title", OLD_TITLE, "--dry-run"]]) {
       const out = cli(root, ["retitle", SHARED, ...args]);
       assert.equal(out.trim(), `✓ unchanged ${SHARED}: "${OLD_TITLE}"`);
     }
@@ -175,6 +185,28 @@ test("retitle: bad input exits non-zero, the same title is a no-op, neither chan
     assert.equal(readFileSync(f.home, "utf8"), beforeHome);
     assert.equal(readFileSync(f.shared, "utf8"), beforeShared);
     assert.deepEqual(head(), heads);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("retitle: a whitespace-only change applies, and repeating it is then a no-op", { timeout: 300_000 }, () => {
+  const root = setup();
+  try {
+    const f = files(root, SHARED);
+    const messy = "Alpha   shared  decision";
+    cli(root, ["retitle", SHARED, "--title", messy]);
+    for (const file of [f.home, f.shared]) assert.strictEqual(titleOf(file), messy);
+
+    // cleaning the doubled spaces up is a real change, in every copy
+    const out = cli(root, ["retitle", SHARED, "--title", OLD_TITLE]);
+    assert.match(out, /✓ retitled /);
+    for (const file of [f.home, f.shared]) assert.strictEqual(titleOf(file), OLD_TITLE);
+    assert.equal(commits(HOME_STORE(root)), 3);
+
+    // and the retry changes nothing
+    assert.equal(cli(root, ["retitle", SHARED, "--title", OLD_TITLE]).trim(), `✓ unchanged ${SHARED}: "${OLD_TITLE}"`);
+    assert.equal(commits(HOME_STORE(root)), 3);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
