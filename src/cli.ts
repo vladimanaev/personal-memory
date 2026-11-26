@@ -551,7 +551,7 @@ async function cmdRetitle(argv: string[]) {
   console.log(`${result.dryRun ? "✓ would retitle" : "✓ retitled"} ${id}: ${change}`);
   // Shared copies take the new title as is, with no review, and a title cannot be redacted.
   console.log(`  copies: ${result.graphs.join(", ")}`);
-  const shared = result.graphs.filter((g) => g !== DEFAULT_GRAPH);
+  const shared = sharedGraphs({ graphs: result.graphs });
   if (shared.length) console.log(`  ${result.dryRun ? "would publish" : "published"} the title, unreviewed, to shared graph${shared.length > 1 ? "s" : ""}: ${shared.join(", ")}`);
   if (result.dryRun) return;
   if (result.path) console.log(`  ${result.path}`);

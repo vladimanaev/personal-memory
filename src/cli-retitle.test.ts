@@ -170,10 +170,19 @@ test("retitle: bad input exits non-zero, the same title is a no-op, neither chan
     fails(["retitle", SHARED, "--title", "First line\nSecond line"], /single line/);
     // every control character (NUL cannot be passed in argv) and line separator, not only \r and \n
     for (const bad of ["a\rb", "a\u2028b", "a\u2029b", "a\u0085b", "a\tb", "a\u001bb", "a\u007fb", "a\u009fb", "a\u000bb", "a\u000cb"]) {
-      fails(["retitle", SHARED, `--title=${bad}`], /single line without control characters/);
+      fails(["retitle", SHARED, `--title=${bad}`], /single line without control or invisible formatting characters/);
     }
     fails(["retitle", SHARED], /usage: memory retitle/);
     fails(["retitle", SHARED, PLAIN, "--title", "Anything"], /usage: memory retitle/);
+
+    // bidi embeddings/overrides/isolates, zero-width space and BOM are rejected too,
+    // inside the title and (for BOM, which trim() would drop) at its ends
+    const invisible = ["\u202A", "\u202B", "\u202C", "\u202D", "\u202E", "\u2066", "\u2067", "\u2068", "\u2069", "\u200B", "\uFEFF"];
+    for (const ch of invisible) {
+      fails(["retitle", SHARED, `--title=a${ch}b`], /single line without control or invisible formatting characters/);
+    }
+    fails(["retitle", SHARED, "--title=\uFEFFLeading BOM"], /invisible formatting/);
+    fails(["retitle", SHARED, "--title=Trailing BOM\uFEFF"], /invisible formatting/);
 
     // The exact same title (surrounding whitespace is trimmed) is a no-op that exits 0,
     // dry-run or not, so a retried call never fails.
@@ -207,6 +216,20 @@ test("retitle: a whitespace-only change applies, and repeating it is then a no-o
     // and the retry changes nothing
     assert.equal(cli(root, ["retitle", SHARED, "--title", OLD_TITLE]).trim(), `✓ unchanged ${SHARED}: "${OLD_TITLE}"`);
     assert.equal(commits(HOME_STORE(root)), 3);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("retitle: LRM, RLM, ZWJ, ZWNJ and the soft hyphen stay allowed", { timeout: 300_000 }, () => {
+  const root = setup();
+  try {
+    const f = files(root, SHARED);
+    const titles = ["Review \u200Fsummary\u200E (v2)", "Team \u{1F469}\u200D\u{1F4BB} sync", "mi\u200Cx ed", "co\u00ADoperate plan"];
+    for (const title of titles) {
+      cli(root, ["retitle", SHARED, `--title=${title}`]);
+      for (const file of [f.home, f.shared]) assert.strictEqual(titleOf(file), title);
+    }
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -179,8 +179,9 @@ What the CLI then does automatically:
   per source thread.
 - **On a source-id refresh, keep the entry's current title.** `add` sets the
   title to whatever the capture passes, so a title changed with
-  `memory retitle` is undone unless you pass the current one (the title shown by `memory list`/`recall`
-  for that entry).
+  `memory retitle` is undone by the next refresh. Before `add`, look up the
+  existing entry (by its source id, or with `recall`) and pass its current
+  title as `--title`.
 
 For manual notes with **no** source id, `add` runs a near-duplicate guard. If it
 reports a candidate and exits, decide:

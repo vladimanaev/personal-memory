@@ -718,7 +718,14 @@ export async function applyRetitle(opts: { id: string; title: string; dryRun?: b
   if (!title) throw new Error("title must not be empty");
   // list/open/recall print one title per line: no line breaks (\r \n, U+0085,
   // U+2028, U+2029) and no other control character (C0, DEL, C1, tab included).
-  if (/[\p{Cc}\p{Zl}\p{Zp}]/u.test(title)) throw new Error("title must be a single line without control characters");
+  // Also no invisible or direction-spoofing character: bidi embeddings,
+  // overrides and isolates (U+202A-U+202E, U+2066-U+2069), zero-width space
+  // (U+200B) and BOM (U+FEFF). LRM/RLM, ZWJ, ZWNJ and the soft hyphen stay
+  // allowed (mixed-direction and emoji titles need them). The invisible set is
+  // checked on the raw input, since trim() would drop a leading or trailing BOM.
+  if (/[\p{Cc}\p{Zl}\p{Zp}]/u.test(title) || /[\u200B\uFEFF\u202A-\u202E\u2066-\u2069]/.test(opts.title)) {
+    throw new Error("title must be a single line without control or invisible formatting characters");
+  }
   FrontmatterSchema.shape.title.parse(title);
 
   const catalog = await openCatalogForWrite();
