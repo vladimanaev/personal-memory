@@ -25,6 +25,23 @@ email updates that entry in place instead of creating a second one. Without a
 source id a near-duplicate guard catches repeats; resolve it with `--update
 <id>` (same event) or `--force-new` (genuinely different).
 
+A source id never lets a capture overwrite an entry of another type, except that
+a note with no other-type sibling may be retyped. When several entries share the
+id they are ordered by (date, id), and with `--type X` the capture picks, in
+order: (1) an entry already of type X, refreshed in place; (2) otherwise an open
+todo / pending decision, which errors as always (log the outcome with
+`--follows`); (3) otherwise a `note`, when every match is a note, retyped to X in
+place; (4) otherwise nothing is modified: a new entry of type X is created with
+the same source id, which is the link (printing
+`↳ <id> is a <type>; not overwriting — created <newid> (<type>)`, naming every
+matched entry, or the first five and `+N more`). The new entry
+skips the near-duplicate guard against the entries it sits beside, and a taken id
+gets the type as a suffix. Without `--type`, matches of mixed types are an error:
+pass `--type` or `--update <id>`; several same-type matches update the earliest
+by (date, id). This never-overwrite rule applies only when `--type` is given:
+an add without `--type` updates a single match in place and keeps its type, as
+before.
+
 `--graph` files a new entry into a named graph **and nowhere else** — it leaves
 no copy in the default graph. It is reserved for an explicit request; captures
 otherwise land in the default graph and gain shared memberships through rules or

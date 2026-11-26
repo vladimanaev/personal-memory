@@ -116,8 +116,12 @@ Run with `npx tsx src/cli.ts <cmd>` (Node ≥ 20 — `nvm use 20`).
   **Source ids** are canonical `scheme:rest` external references and are the
   dedup key: `slack:<channel>:<ts>`, `gmail:<thread-id>`,
   `gchat:<space-id>:<thread-id>`, `gcal:<event-id>`, `gdrive:<file-id>`. A re-capture carrying a known source id **updates the
-  existing entry in place** rather than creating a duplicate. Captures without a
-  source id pass through a semantic near-duplicate guard at `add` time.
+  existing entry in place** rather than creating a duplicate — except with `--type`: a
+  match of another type is never overwritten (an open item errors; notes-only
+  matches are retyped), so the capture refreshes a same-type sibling or creates
+  a second entry with the same source id (see `docs/cli.md`).
+  Captures without a source id pass through a semantic near-duplicate guard at
+  `add` time.
 
 - **Timeline chains (`follows`):** a matter that evolves across entries (note →
   `pending-decision` → `decision`) is chained by setting `follows` on each later
@@ -267,9 +271,10 @@ Run with `npx tsx src/cli.ts <cmd>` (Node ≥ 20 — `nvm use 20`).
    `memory/graphs/rules.json`, `GRAPH.md` manifests).
 3. **One entry per source thread — a living record, not append-on-refetch.** A
    re-capture with a known `source_id` updates that entry in place (`date` =
-   first-seen, `updated` = last refresh). Don't hand-rewrite history to tidy up,
-   and don't fold a *different* event into an existing entry — genuinely new or
-   different events are new entries.
+   first-seen, `updated` = last refresh); with `--type`, a capture that no
+   match can take creates a second entry with the same source id instead. Don't hand-rewrite
+   history to tidy up, and don't fold a *different* event into an existing entry
+   — genuinely new or different events are new entries.
 4. **Slug discipline** — the same person/team always gets the same kebab slug;
    check existing entries (`memory list`, `memory/people/`) before inventing one.
    Before minting a **new** person/team slug, consult an enabled reference
