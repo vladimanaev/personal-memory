@@ -449,6 +449,35 @@ both_search_bash_case_at deny "cat > /tmp/~/notes.md <<'X'${nl}cat memory/x.md${
 both_search_bash_case_at deny "cat > /tmp/a\\ b.md <<'X'${nl}cat memory/x.md${nl}X" "$elsewhere" ""
 both_search_bash_case_at deny "cat > '/tmp/notes.md' <<'X'${nl}cat memory/x.md${nl}X" "$elsewhere" ""
 both_search_bash_case_at deny "cat > /tmp/notes.MD <<'X'${nl}cat memory/x.md${nl}X" "$elsewhere" ""
+# Codex exec shape: the command runs in tool_input.workdir, not in the payload cwd.
+# codex_workdir_case <deny|allow> <command> <cwd> <workdir> [NAME=value]
+codex_workdir_case() {
+  local want="$1" cmd="$2" cwd="$3" wd="$4" envv="${5:-}"
+  GUARD_ENV="$envv"
+  expect "$want" "$repo_root/.codex/hooks/guard-memory-search.sh" \
+    "codex[workdir=$wd]${envv:+ env}: $(printf '%s' "$cmd" | tr '\n\t' '~^')" \
+    "$(jq -nc --arg c "$cmd" --arg d "$cwd" --arg w "$wd" '{tool_name:"Bash",cwd:$d,tool_input:{cmd:$c,workdir:$w}}')"
+  GUARD_ENV=""
+}
+pycmd="python3 code.py <<'X'${nl}${sysos}${nl}X"
+stdlib="/opt/homebrew/opt/python@3.11/Frameworks/Python.framework/Versions/3.11/lib/python3.11"
+codex_workdir_case deny  "$pycmd" "$repo_root" "$stdlib"
+codex_workdir_case deny  "$pycmd" "$repo_root" "$elsewhere"
+codex_workdir_case deny  "$pycmd" "$repo_root" "../../.."
+codex_workdir_case deny  "$pycmd" "$repo_root" "scripts"
+codex_workdir_case deny  "$pycmd" "$repo_root" "~"
+codex_workdir_case deny  "$pycmd" "$repo_root" "\$HOME"
+codex_workdir_case deny  "$pycmd" "$repo_root" "$repo_root/../elsewhere"
+codex_workdir_case deny  "$pycmd" "" "relative/dir"
+codex_workdir_case deny  "cat > notes.md <<'X'${nl}ls memory/entries${nl}X" "$repo_root" "$elsewhere"
+codex_workdir_case deny  "cat > notes.md <<'X'${nl}ls memory/entries${nl}X" "$repo_root" "../elsewhere"
+codex_workdir_case allow "python3 tool.py msg x <<'X'${nl}ls memory/entries${nl}X" "$repo_root" "$repo_root"
+codex_workdir_case allow "python3 tool.py msg x <<'X'${nl}ls memory/entries${nl}X" "$repo_root" "."
+codex_workdir_case allow "python3 tool.py msg x <<'X'${nl}ls memory/entries${nl}X" "$elsewhere" "$repo_root"
+codex_workdir_case allow "cat > notes.md <<'X'${nl}ls memory/entries${nl}X" "$repo_root" "$repo_root"
+# An allowlisted absolute script and a temp-dir target do not depend on the workdir.
+codex_workdir_case allow "$boardcmd" "$repo_root" "$elsewhere" "MEMORY_GUARD_STDIN_SCRIPTS=${board}"
+codex_workdir_case allow "cat > ${scratch}/notes.md <<'X'${nl}ls memory/entries${nl}X" "$repo_root" "$elsewhere"
 # A absolute outside the list stays denied, even under /tmp.
 both_search_bash_case_at deny "python3 /tmp/x.py <<'X'${nl}${sysos}${nl}X" "$repo_root" ""
 both_search_bash_case_at deny "python3 /tmp/x.py <<'X'${nl}${sysos}${nl}X" "$elsewhere" "MEMORY_GUARD_STDIN_SCRIPTS=${board}"

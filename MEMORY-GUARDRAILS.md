@@ -125,7 +125,9 @@ four things a manual write skips:
     segment such as `.git`, `.claude` or `.venv`, no `site-packages` or
     `node_modules`) counts only when the hook payload's `cwd` is the repo top
     level. From another directory, or with no `cwd` in the payload, the body is
-    matched as before.
+    matched as before. Under Codex, the payload's `workdir` (resolved against
+    `cwd` when relative) counts as the `cwd`, because that is where the command
+    runs.
   - The script of the first shape may also be an absolute path that equals,
     exactly, an entry of `MEMORY_GUARD_STDIN_SCRIPTS`: a colon-separated list in
     the hook's environment, with a leading `~/` meaning `$HOME`, for example

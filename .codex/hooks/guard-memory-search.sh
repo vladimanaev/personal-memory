@@ -203,7 +203,17 @@ cmd="$(field tool_input.command tool_input.cmd command cmd)"
 if [ -n "$cmd" ]; then
   # Match the command LINES only; heredoc bodies are data (see above). If
   # stripping yields nothing (no awk), keep the full text.
+  # The command runs in tool_input.workdir when the payload has one (the exec
+  # shape), else in cwd. A relative workdir is resolved against cwd; with no cwd
+  # to resolve it, hd_cwd stays empty and nothing is stripped.
   hd_cwd="$(field cwd)"
+  hd_wd="$(field tool_input.workdir workdir)"
+  if [ -n "$hd_wd" ]; then
+    case "$hd_wd" in
+      /*) hd_cwd="$hd_wd" ;;
+      *) if [ -n "$hd_cwd" ]; then hd_cwd="$hd_cwd/$hd_wd"; fi ;;
+    esac
+  fi
   hd_root=""
   stripped="$(printf '%s\n' "$cmd" | strip_heredoc_bodies)"
   [ -n "$stripped" ] && cmd="$stripped"
