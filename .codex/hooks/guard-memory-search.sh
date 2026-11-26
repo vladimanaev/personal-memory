@@ -82,17 +82,41 @@ for (const path of paths) {
 #   A  python|python3 <path>.py T* <<'WORD' | <<"WORD"   ... WORD   (QUOTED: an unquoted
 #      body is expanded by the shell, so $(…) in it would run)
 #   B  git commit T* -m "$(cat <<'WORD'  ... WORD  )" T*          (or gh T* --body …)
-#   C  cat > T <<'WORD'  ... WORD                                  (or >>; not /dev/*, not -)
+#   C  cat > <file> <<'WORD'  ... WORD                             (or >>; not /dev/*, not -)
+# A and C take a REPO-RELATIVE path (see relok): that is what keeps a script that
+# EXECUTES its stdin (python's own code.py, pdb.py) and a file that runs on its own
+# later (~/.zshenv, .git/hooks/*) out of the whitelist. A is assumed to read stdin
+# as data: that is a property of the script, which the guard cannot check.
 # The command line (and B's closing line) stays matched as before.
 strip_heredoc_bodies() {
-  awk -v sqc="'" '
+  # LC_ALL=C: bracket ranges are plain ASCII, so no locale can widen a path class.
+  LC_ALL=C awk -v sqc="'" '
+    # Repo-relative path, or 0. Plain characters only (the callers match
+    # [A-Za-z0-9_@%+,:./-]: no $ ~ = \ quotes globs braces or non-ASCII), and no
+    # absolute path, `..` segment, empty segment, hidden segment (.git, .claude,
+    # .venv, .envrc …) or vendored-code directory. Lexical only: a symlink inside
+    # the repo is not resolved.
+    function relok(p,   n, s, i, c) {
+      c = substr(p, 1, 1)
+      if (c == "/" || c == "-") return 0
+      n = split(p, s, "/")
+      for (i = 1; i <= n; i++) {
+        if (s[i] == "") return 0
+        if (s[i] != "." && substr(s[i], 1, 1) == ".") return 0
+        if (s[i] == "site-packages" || s[i] == "dist-packages" || s[i] == "node_modules") return 0
+      }
+      return 1
+    }
     BEGIN {
       T = "([A-Za-z0-9_./~@%+=:,-]+|" sqc "[^" sqc "]*" sqc ")"
       W = "[A-Za-z_][A-Za-z0-9_]*"
-      ra = "^python3?( [A-Za-z0-9_./~@%+=:,][A-Za-z0-9_./~@%+=:,-]*\\.py)( " T ")* <<(" sqc W sqc "|\"" W "\")$"
+      P = "[A-Za-z0-9_@%+,:./-]+"
+      ra = "^python3? " P "\\.py( " T ")* <<(" sqc W sqc "|\"" W "\")$"
       rb = "^(git commit|gh)( " T ")* (-m|--body) \"\\$\\(cat <<" sqc W sqc "$"
-      rc = "^cat >>? [A-Za-z0-9_.~@%+=:,][A-Za-z0-9_./~@%+=:,-]* <<" sqc W sqc "$"
+      rc = "^cat >>? " P " <<" sqc W sqc "$"
       rend = "^\\)\"( " T ")*$"
+      rq = "<<[\"" sqc "]?" W "[\"" sqc "]?$"
+      qs = "[\"" sqc "]"
     }
     { L[NR] = $0 }
     END {
@@ -102,10 +126,16 @@ strip_heredoc_bodies() {
       if (n >= 2) {
         h = L[1]
         isa = (h ~ ra); isb = (h ~ rb); isc = (h ~ rc)
-        if (isc && h ~ /^cat >>? \/dev\//) isc = 0
+        if (isa) { split(h, hp, " "); if (!relok(hp[2])) isa = 0 }
+        if (isc) {
+          # A data file only: an executable or auto-run target (no extension, .sh,
+          # .py, .json hook config …) is a payload, not data.
+          split(h, hp, " ")
+          if (!relok(hp[3]) || hp[3] !~ /[A-Za-z0-9_]\.(md|txt|csv|log|diff|patch)$/) isc = 0
+        }
         if (isa || isb || isc) {
-          match(h, /<<["\x27]?[A-Za-z_][A-Za-z0-9_]*["\x27]?$/)
-          w = substr(h, RSTART + 2); gsub(/["\x27]/, "", w)
+          match(h, rq)
+          w = substr(h, RSTART + 2); gsub(qs, "", w)
           last = isb ? n - 1 : n
           if (!isb || L[n] ~ rend) {
             k = 2; bad = 0

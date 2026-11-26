@@ -117,8 +117,17 @@ four things a manual write skips:
   exactly one of three shapes: `python <path>.py <plain args> <<'WORD'` (quoted
   delimiter only — an unquoted body is shell-expanded), a
   `git commit … -m "$(cat <<'WORD' … )"` (or `gh … --body`) message, or
-  `cat > <file> <<'WORD'`, with nothing after the terminator and no body line starting with WORD. Any other command
-  (pipes, `;`, redirects, `bash <<EOF`, `xargs`, …) is matched whole, body included.
+  `cat > <file> <<'WORD'`, with nothing after the terminator and no body line
+  starting with WORD. Any other command (pipes, `;`, redirects, `bash <<EOF`,
+  `xargs`, …) is matched whole, body included. The script in the first shape and
+  the file in the third must be a plain repo-relative path: no leading `/`, `~`,
+  `-` or `$`, no `..` or hidden (`.git`, `.claude`, `.venv`, …) segment, no
+  `site-packages` or `node_modules`; the file in the third must also be a data
+  file (`.md`, `.txt`, `.csv`, `.log`, `.diff`, `.patch`), never a script, hook
+  or startup file that runs later on its own. Checked lexically, symlinks are not
+  followed. The first shape assumes the script reads stdin as data: that is a
+  property of the script, which the guard cannot check, so a repo-relative script
+  that executes its stdin defeats it.
   Any `cli.ts` invocation passes untouched, as do plain store git checks
   (`git -C memory log|status`), stdin filtering (`git log | grep …`), and
   searches scoped to a real non-store path (`src/`, `skills/`, `scripts/`).
