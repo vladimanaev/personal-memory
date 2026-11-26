@@ -144,9 +144,10 @@ refreshed; else an open todo/pending-decision errors; else a `note` (only when
 every match is a note) is retyped to X in place; else nothing is modified and a
 new entry is created beside them (prints `↳ <id> is a <type>; not overwriting —
 created <newid> (<type>)`, listing every match or the first five and `+N
-more`). The rule applies only with `--type`: without it, a single match of
-another type is still updated in place. Mixed-type matches without `--type`
-are an error (pass `--type` or `--update <id>`).
+more`). The rule applies only with `--type`: without it, a single match is
+updated in place and keeps its type, and several same-type matches update the
+earliest by (date, id). Mixed-type matches without `--type` are an error (pass
+`--type` or `--update <id>`).
 
 ## More detail
 

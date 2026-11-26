@@ -39,8 +39,8 @@ skips the near-duplicate guard against the entries it sits beside, and a taken i
 gets the type as a suffix. Without `--type`, matches of mixed types are an error:
 pass `--type` or `--update <id>`; several same-type matches update the earliest
 by (date, id). This never-overwrite rule applies only when `--type` is given:
-an add without `--type` whose single match is of another type still updates that
-entry in place, as before.
+an add without `--type` updates a single match in place and keeps its type, as
+before.
 
 `--graph` files a new entry into a named graph **and nowhere else** — it leaves
 no copy in the default graph. It is reserved for an explicit request; captures

@@ -20,8 +20,9 @@ to capture, what to ignore, and how to write entries.
 
 The whole run is **idempotent**: every capture is anchored with `--source-ids`,
 so re-pulling the same window updates entries in place (`↻ matches existing` /
-`↳ <id> is a <type>; not overwriting — …` / `✓ unchanged` outputs are expected and fine,
-not errors; `↳` means a different-type capture became a new entry instead of overwriting).
+`↳ <id> is a <type>; not overwriting — …` (lists every match, up to five, then
+`+N more`) / `✓ unchanged` outputs are expected and fine, not errors; `↳` means a
+different-type capture became a new entry instead of overwriting).
 
 ## Locating the store
 
