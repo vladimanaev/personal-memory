@@ -690,6 +690,56 @@ async function staleRuleRows(entry: { id: string; tags: string[]; type: string }
   }
 }
 
+export interface RetitleResult {
+  id: string;
+  before: string;
+  after: string;
+  dryRun: boolean;
+  /** The (trimmed) new title equals the current one exactly: nothing was written. */
+  unchanged: boolean;
+  /** Graphs holding a copy of the entry (home first). */
+  graphs: string[];
+  path?: string;
+  index?: { added: number; removed: number; unchanged: number };
+}
+
+/**
+ * Change ONE entry's title in place — id, file name, body, tags, links, dates,
+ * sources and memberships are untouched (so links and source references keep
+ * working); only `title` and `updated` change. Every copy takes the new
+ * frontmatter (a declared variant keeps its own body and `variant_of_hash`,
+ * see writeEntryAll), the index is re-synced, and each member store is
+ * committed. An empty title, or one with a line break or other control
+ * character, is rejected; the exact same title is a no-op, so a retried call
+ * never fails. A whitespace-only difference is applied.
+ */
+export async function applyRetitle(opts: { id: string; title: string; dryRun?: boolean }): Promise<RetitleResult> {
+  const title = opts.title.trim();
+  if (!title) throw new Error("title must not be empty");
+  // list/open/recall print one title per line: no line breaks (\r \n, U+0085,
+  // U+2028, U+2029) and no other control character (C0, DEL, C1, tab included).
+  // Also no invisible or direction-spoofing character: bidi embeddings,
+  // overrides and isolates (U+202A-U+202E, U+2066-U+2069), zero-width space
+  // (U+200B) and BOM (U+FEFF). LRM/RLM, ZWJ, ZWNJ and the soft hyphen stay
+  // allowed (mixed-direction and emoji titles need them). The invisible set is
+  // checked on the raw input, since trim() would drop a leading or trailing BOM.
+  if (/[\p{Cc}\p{Zl}\p{Zp}]/u.test(title) || /[\u200B\uFEFF\u202A-\u202E\u2066-\u2069]/.test(opts.title)) {
+    throw new Error("title must be a single line without control or invisible formatting characters");
+  }
+  FrontmatterSchema.shape.title.parse(title);
+
+  const catalog = await openCatalogForWrite();
+  const entry = await requireEntry(catalog, opts.id);
+  const base = { id: entry.id, before: entry.title, after: title, graphs: sortGraphs(entry.graphs) as GraphId[], dryRun: Boolean(opts.dryRun) };
+  // The exact same title: no write, no commit, no index sync. A whitespace-only
+  // difference (doubled spaces) is a real change, so it can be cleaned up.
+  if (entry.title === title) return { ...base, unchanged: true };
+  if (opts.dryRun) return { ...base, unchanged: false };
+
+  const { path, index } = await rewriteFrontmatter(entry, { title }, `Retitle memory: ${entry.id}`);
+  return { ...base, unchanged: false, path, index };
+}
+
 export async function mergeSlugs(opts: {
   kind: SlugKind;
   from: string;

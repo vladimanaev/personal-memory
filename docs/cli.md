@@ -48,6 +48,33 @@ body stay as they are. New tags are judged against standing distribution rules
 like a capture (candidates are queued, never published); removing a tag never
 changes graph memberships.
 
+## Change a title
+
+```text
+memory retitle <id> --title "…" [--dry-run]
+```
+
+Changes only the entry's `title` (and `updated`) in every graph copy, shared
+ones included. The id and file name stay, so links and source references keep
+working. An empty title, or one with a line break or any other control
+character (tab, U+0085, U+2028, U+2029, C0/C1), is rejected, as are invisible
+or direction-spoofing characters (bidi embeddings, overrides and isolates
+U+202A-U+202E and U+2066-U+2069, zero-width space U+200B, BOM U+FEFF). LRM,
+RLM, ZWJ, ZWNJ and the soft hyphen are allowed. The exact same
+title changes nothing and exits 0, so a retry is safe; a difference in
+whitespace alone (doubled spaces) is a real change and is applied.
+
+The new title goes to every shared copy as is, with no review, and a title
+cannot be redacted. The command prints the copies it touches, and the shared
+graphs among them, on a real run as well as on `--dry-run`; run it with
+`--dry-run` first if the entry is shared.
+
+A later `memory add` of the same `--source-ids` sets the title back to whatever
+that capture passes, so a retitle is undone by the next sweep. When refreshing
+an entry from its source, look up the existing entry (by source id, or with
+`recall`) and pass its current title (see the log-memory skill's Dedup
+section).
+
 ## Timeline links
 
 ```text

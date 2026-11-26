@@ -194,6 +194,22 @@ test("memory tag edits a variant's tags without republishing the private body", 
   });
 });
 
+test("memory retitle changes a variant's title without republishing the private body", { timeout: 300_000 }, () => {
+  withStore((root) => {
+    publishVariant(root);
+    const hash = /variant_of_hash:\s*\S+/.exec(readFileSync(sharedPath(root), "utf8"))?.[0];
+    assert.ok(hash, "the published copy declares variant_of_hash");
+
+    cli(root, ["retitle", ID, "--title", "Hiring loop recap"]);
+    const retitled = readFileSync(sharedPath(root), "utf8");
+    assert.match(retitled, /title: Hiring loop recap/, "the new title reached the shared copy");
+    assert.match(retitled, /Hiring loop ran/, "the approved wording survived");
+    assert.doesNotMatch(retitled, /interviews and offers/, "the private body did NOT get republished");
+    assert.ok(retitled.includes(hash), "variant_of_hash is still declared");
+    assert.match(cliOutput(root, ["graphs", "sync", "--dry-run"]), /✓ all graphs consistent/);
+  });
+});
+
 test("moving an entry that has a published variant is refused", { timeout: 300_000 }, () => {
   withStore((root) => {
     publishVariant(root);

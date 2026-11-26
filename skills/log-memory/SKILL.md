@@ -177,6 +177,11 @@ What the CLI then does automatically:
 - **Same source, new content** (e.g. new replies) → **updates the existing entry
   in place**: same `id`/path, body refreshed, `updated` date bumped. One entry
   per source thread.
+- **On a source-id refresh, keep the entry's current title.** `add` sets the
+  title to whatever the capture passes, so a title changed with
+  `memory retitle` is undone by the next refresh. Before `add`, look up the
+  existing entry (by its source id, or with `recall`) and pass its current
+  title as `--title`.
 
 For manual notes with **no** source id, `add` runs a near-duplicate guard. If it
 reports a candidate and exits, decide:

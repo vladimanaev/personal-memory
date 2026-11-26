@@ -25,7 +25,7 @@ import {
 import { copyEntry, deleteGraph, moveEntry, removeEntry, syncGraphs } from "./membership.js";
 import { commitMemoryRepo } from "./memory-git.js";
 import { buildChainIndex, chainAncestry, entryStatus, OPEN_TYPES, validateFollowsTargets, type ChainAnnotation } from "./chains.js";
-import { applyChainLink, applyTagEdit, dismissSlugSuggestion, removeChainLink, mergeSlugs, proposeSlugMerge, slugUsage, type SlugKind } from "./graph-maintenance.js";
+import { applyChainLink, applyRetitle, applyTagEdit, dismissSlugSuggestion, removeChainLink, mergeSlugs, proposeSlugMerge, slugUsage, type SlugKind } from "./graph-maintenance.js";
 import { recall, type RecallReport } from "./recall.js";
 import { keywordPhrase } from "./recall-queries.js";
 import { resolveIndexSlotDetailed } from "./index-slots.js";
@@ -530,6 +530,32 @@ async function cmdTag(argv: string[]) {
       console.warn(`  ⚠ rules not applied: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
+}
+
+async function cmdRetitle(argv: string[]) {
+  const { values, positionals } = parseArgs({
+    args: argv,
+    options: { title: { type: "string" }, "dry-run": { type: "boolean" } },
+    allowPositionals: true,
+  });
+  const id = positionals[0];
+  if (!id || positionals.length !== 1 || values.title === undefined) {
+    throw new Error('usage: memory retitle <id> --title "…" [--dry-run]');
+  }
+  const result = await applyRetitle({ id, title: values.title, dryRun: Boolean(values["dry-run"]) });
+  if (result.unchanged) {
+    console.log(`✓ unchanged ${id}: ${JSON.stringify(result.before)}`);
+    return;
+  }
+  const change = `${JSON.stringify(result.before)} → ${JSON.stringify(result.after)}`;
+  console.log(`${result.dryRun ? "✓ would retitle" : "✓ retitled"} ${id}: ${change}`);
+  // Shared copies take the new title as is, with no review, and a title cannot be redacted.
+  console.log(`  copies: ${result.graphs.join(", ")}`);
+  const shared = sharedGraphs({ graphs: result.graphs });
+  if (shared.length) console.log(`  ${result.dryRun ? "would publish" : "published"} the title, unreviewed, to shared graph${shared.length > 1 ? "s" : ""}: ${shared.join(", ")}`);
+  if (result.dryRun) return;
+  if (result.path) console.log(`  ${result.path}`);
+  if (result.index) console.log(`  indexed (+${result.index.added} changed, ${result.index.unchanged} unchanged)`);
 }
 
 async function cmdRemove(argv: string[]) {
@@ -1920,6 +1946,8 @@ Usage:
   memory tag <id> [--add a,b] [--remove c] [--dry-run]
             # edit one entry's tags in place (every copy; title/body untouched); new tags are
             # judged against standing rules like a capture; removing never changes memberships
+  memory retitle <id> --title "…" [--dry-run]
+            # change one entry's title in place (every copy, shared graphs too, unreviewed; id, file name, body untouched)
   memory remove <id>   # delete ALL of an entry's copies + sync index (content stays in each repo's history)
   memory copy <id> --to <graph>
             # add membership: materialize the entry into another graph (it stays private too);
@@ -2008,6 +2036,7 @@ async function main() {
     case "unlink": return cmdUnlink(rest);
     case "due": return cmdDue(rest);
     case "tag": return cmdTag(rest);
+    case "retitle": return cmdRetitle(rest);
     case "remove": return cmdRemove(rest);
     case "move": return cmdMove(rest);
     case "copy": return cmdCopy(rest);
